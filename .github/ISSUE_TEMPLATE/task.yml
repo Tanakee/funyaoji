@@ -1,0 +1,25 @@
+name: タスク
+description: 作る機能・作業
+labels: ["feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 何をするか
+      description: 終わったときに、何ができるようになっているか
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 終わりの条件
+      description: これが確かめられたら閉じてよい、というもの
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: 手がかり
+      description: 関わるファイル・参考になるリンク・先に終わっている必要がある Issue など
