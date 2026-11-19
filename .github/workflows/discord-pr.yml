@@ -1,0 +1,50 @@
+# PR が作られたら Discord に知らせる
+# 送り先は リポジトリの Secrets の DISCORD_WEBHOOK_URL。無ければ何もしない
+name: Discord に PR を知らせる
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 送る
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          URL: ${{ github.event.pull_request.html_url }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          AVATAR: ${{ github.event.pull_request.user.avatar_url }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_WEBHOOK_URL が無いので知らせない"
+            exit 0
+          fi
+          status="レビュー待ち"
+          [ "$DRAFT" = "true" ] && status="下書き"
+          # allowed_mentions を空にして、タイトルに @everyone などがあってもメンションにしない
+          jq -n \
+            --arg title "#$NUMBER $TITLE" --arg url "$URL" \
+            --arg author "$AUTHOR" --arg avatar "$AVATAR" \
+            --arg head "$HEAD" --arg status "$status" \
+            '{
+              allowed_mentions: {parse: []},
+              embeds: [{
+                title: ($title | .[0:256]),
+                url: $url,
+                color: 5793266,
+                author: {name: $author, icon_url: $avatar},
+                fields: [
+                  {name: "ブランチ", value: ("`" + $head + "`"), inline: true},
+                  {name: "状態", value: $status, inline: true}
+                ]
+              }]
+            }' \
+          | curl -fsS -H "Content-Type: application/json" -d @- "$WEBHOOK"
