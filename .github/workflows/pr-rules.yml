@@ -1,0 +1,30 @@
+# PR のタイトルとブランチ名が docs/development.md の形になっているかを確かめる
+name: PR の形
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: タイトルを確かめる
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! printf '%s' "$TITLE" | grep -Eq '^(feat|fix|docs|refactor|chore): .+'; then
+            echo "::error::タイトルは「<種類>: <何をしたか>」の形にする（docs/development.md）。今のタイトル：$TITLE"
+            exit 1
+          fi
+
+      - name: ブランチ名を確かめる
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if ! printf '%s' "$BRANCH" | grep -Eq '^(feat|fix|docs|refactor|chore)/[a-z0-9-]+$'; then
+            echo "::error::ブランチ名は「<種類>/<短い英語>」の形にする（docs/development.md）。今のブランチ名：$BRANCH"
+            exit 1
+          fi
