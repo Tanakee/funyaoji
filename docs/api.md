@@ -1,0 +1,189 @@
+# API
+
+スマホ・サーバー・スクリーンの間の通信の仕様。メッセージの型定義は `src/shared/` に置く。型定義を変更する PR ではこのドキュメントも合わせて変更する。
+
+## シーケンス
+
+1回のプレイのメッセージの流れ。
+
+```mermaid
+sequenceDiagram
+  participant P as スマホ
+  participant S as サーバー
+  participant C as スクリーン
+  C->>S: POST /api/rooms
+  S-->>C: ルームコード
+  C->>S: WebSocket で接続
+  P->>S: WebSocket で接続
+  S-->>P: joined
+  S-->>C: room
+  Note over C: 4人が参加し、PC で開始
+  C->>S: phase（playing）
+  S-->>P: phase（playing）
+  loop 毎秒30回
+    P->>S: tilt
+    S-->>C: tilt（joint を付与）
+  end
+  C->>S: status
+  S-->>P: status
+  Note over C: ゴール・転倒・タイムアウト
+  C->>S: phase（result）
+  S-->>P: phase（result）
+```
+
+サーバーはルームごとに1つの Durable Object。物理演算は行わず、メッセージを中継する。
+
+## エンドポイント
+
+| エンドポイント | クライアント | 説明 |
+|---|---|---|
+| `GET /screen` | スクリーン | スクリーンのページ |
+| `GET /play?room=<ルームコード>` | スマホ | スマホのページ。QR コードの URL |
+| `POST /api/rooms` | スクリーン | ルームを作成する |
+| `GET /api/rooms/<ルームコード>/ws` | スクリーン、スマホ | WebSocket で接続する |
+| `GET /api/rankings` | スクリーン | ランキングを取得する（Should。仕様はランキングの実装時に決める） |
+
+### POST /api/rooms
+
+ルームを作成する。リクエストボディは無い。レスポンスはルームコード（英数字4文字）。
+
+```json
+{ "roomCode": "K7Q2" }
+```
+
+### GET /api/rooms/&lt;ルームコード&gt;/ws
+
+WebSocket で接続する。クエリパラメータ `role` に、スクリーンは `screen`、スマホは `phone` を指定する。接続後、スマホは `joined` か `rejected` を、スクリーンは `room` を受信する。
+
+```
+wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone
+```
+
+## メッセージ
+
+メッセージは JSON で送る。種類は `type` フィールドで区別する。
+
+| メッセージ | 送信元 → 送信先 | 到達保証 |
+|---|---|---|
+| `joined` | サーバー → スマホ | 必要 |
+| `rejected` | サーバー → スマホ | 必要 |
+| `room` | サーバー → スクリーン、すべてのスマホ | 必要 |
+| `phase` | スクリーン → サーバー → すべてのスマホ | 必要 |
+| `tilt` | スマホ → サーバー → スクリーン | 不要 |
+| `status` | スクリーン → サーバー → すべてのスマホ | 不要 |
+| `ping`、`pong` | スクリーン ⇄ スマホ | 不要 |
+
+到達保証が不要なメッセージは繰り返し送るもの。1つ失われても次のメッセージで回復する。WebRTC DataChannel に移すのはこの種類だけ。
+
+### joined
+
+ルームに参加できた。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `joint` | `Joint` | 担当の関節。`rightHip`・`leftHip`・`rightKnee`・`leftKnee` のいずれか |
+
+```json
+{ "type": "joined", "joint": "rightHip" }
+```
+
+### rejected
+
+ルームに参加できなかった。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `reason` | `string` | `full`：満員。`playing`：プレイ中。`no-room`：ルームが無い |
+
+```json
+{ "type": "rejected", "reason": "full" }
+```
+
+### room
+
+ルームの参加者が変わった。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `roomCode` | `string` | ルームコード |
+| `joints` | `Joint[]` | 接続中のスマホが担当する関節。4つそろうと開始できる |
+
+```json
+{ "type": "room", "roomCode": "K7Q2", "joints": ["rightHip", "leftHip"] }
+```
+
+### phase
+
+ルームの状態が変わった。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `phase` | `string` | `lobby`：ロビー。`playing`：プレイ中。`result`：結果 |
+| `mode` | `string` | `playing` のときだけ。現在は `10m` のみ |
+| `result.outcome` | `string` | `result` のときだけ。`goal`：ゴール。`fell`：転倒。`timeout`：タイムアウト。`disconnected`：切断 |
+| `result.distanceM` | `number` | 進んだ距離（m）。後ろに進むと負の値 |
+| `result.timeMs` | `number` | ゴールまでの時間（ミリ秒）。`goal` のときだけ |
+
+```json
+{ "type": "phase", "phase": "playing", "mode": "10m" }
+{ "type": "phase", "phase": "result", "result": { "outcome": "goal", "distanceM": 10, "timeMs": 32500 } }
+```
+
+### tilt
+
+スマホの傾き。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `seq` | `number` | シーケンス番号。受信側は受信済みの番号より小さいものを破棄する |
+| `angle` | `number` | 傾きの角度（度）。0 が水平、90 が手前に立てた状態 |
+| `joint` | `Joint` | サーバーがスクリーンに中継するときに付与する。スマホは送らない |
+
+```json
+{ "type": "tilt", "seq": 128, "angle": 42 }
+{ "type": "tilt", "seq": 128, "angle": 42, "joint": "rightHip" }
+```
+
+上がスマホの送信、下がスクリーンの受信。
+
+### status
+
+入力の状態。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `active` | `Joint[]` | スクリーンが直近0.5秒の間に `tilt` を受信した関節 |
+
+```json
+{ "type": "status", "active": ["rightHip", "leftKnee"] }
+```
+
+### ping、pong
+
+遅延の計測。スクリーンが `ping` を送信し、スマホが同じ `id` の `pong` を返す。スクリーンは往復時間の半分を片道の遅延とする。WebSocket のプロトコルが持つ ping・pong フレームとは別のもの。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | `number` | 計測の番号 |
+| `joint` | `Joint` | `ping` では宛先のスマホ。`pong` ではサーバーがスクリーンに中継するときに付与する |
+
+```json
+{ "type": "ping", "id": 7, "joint": "rightHip" }
+{ "type": "pong", "id": 7 }
+```
+
+## 設計方針
+
+| 方針 | 理由 |
+|---|---|
+| ルームの状態はスクリーンが決める。サーバーは最後に受信した状態を保持する | ゴールや転倒を判定できるのは、物理演算を行うスクリーンだけ |
+| `tilt` は差分ではなく現在の値を送る | 1つ失われても次のメッセージで回復する |
+| `tilt` にシーケンス番号を付け、受信側で古いものを破棄する | WebRTC では順序が入れ替わって届くことがある |
+| 到達保証が必要なメッセージと不要なメッセージを分ける | WebRTC を追加するとき、不要なものだけを移せる |
+| メッセージの形式をトランスポート（WebSocket・WebRTC）から分離する | トランスポートを追加しても、メッセージを変更しなくて済む |
+| `tilt` の `joint` はサーバーが付与する | スマホが担当を偽れない |
+| 角度は度のまま送り、関節の目標角度への変換はスクリーンで行う | 調整する値をスクリーンの定数に集約できる |
+| 担当の関節は参加順に `rightHip`・`leftHip`・`rightKnee`・`leftKnee` を割り当てる。切断した関節は空きになり、次の参加者に割り当てる | 4つの関節が重複せずに埋まる |
+| プレイ中は参加を受け付けない | プレイの途中で担当が変わらない |
+| `tilt` の送信は毎秒30回から始める | 遅延と通信量を計測してから決める |
+| 受信したメッセージは検証してから使う | TypeScript の型は実行時には検査されない |
