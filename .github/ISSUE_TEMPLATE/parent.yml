@@ -1,0 +1,25 @@
+name: 親タスク
+description: 動かして確かめられるまとまり。子の Issue を sub-issue としてつなぐ
+labels: ["type: parent"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 概要
+      description: 終わったときに、何が動くようになっているか
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: 子の Issue がそろったあとに、通して確かめること
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: 関連情報
+      description: 参考になるリンク・先に終わっている必要がある Issue など
