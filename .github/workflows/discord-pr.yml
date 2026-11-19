@@ -27,6 +27,15 @@ jobs:
             echo "::warning::DISCORD_WEBHOOK_URL が無いので知らせない"
             exit 0
           fi
+          # 登録のときに混ざりやすい空白・改行・引用符を取り除く
+          WEBHOOK=$(printf '%s' "$WEBHOOK" | tr -d "[:space:]\"'")
+          case "$WEBHOOK" in
+            https://discord.com/api/webhooks/*|https://discordapp.com/api/webhooks/*) ;;
+            *)
+              echo "::error::DISCORD_WEBHOOK_URL が Discord の Webhook URL の形になっていない（https://discord.com/api/webhooks/ で始まるか見る）"
+              exit 1
+              ;;
+          esac
           status="レビュー待ち"
           [ "$DRAFT" = "true" ] && status="下書き"
           # allowed_mentions を空にして、タイトルに @everyone などがあってもメンションにしない
