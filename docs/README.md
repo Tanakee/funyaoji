@@ -13,4 +13,25 @@
 
 ## 動かし方
 
-（雛形を置いたら書く）
+Node.js 24（24.11 以上）と npm を使う。
+
+```sh
+npm install
+npm run dev
+```
+
+開発サーバーが動き、ターミナルに URL（`http://localhost:5173/`）が表示される。
+
+| URL | ページ |
+|---|---|
+| `/screen` | スクリーンのページ |
+| `/play` | スマホのページ |
+
+| コマンド | 内容 |
+|---|---|
+| `npm run dev` | 開発サーバーを動かす |
+| `npm run build` | 本番用にビルドする（`dist/` に出力する） |
+| `npm run preview` | ビルドした結果をローカルで開く |
+| `npx vp check` | フォーマット・lint・型の検査をする。`--fix` を付けると、直せるものを直す |
+
+ツールは [Vite+](https://viteplus.dev/guide/)（`vp`）を使う。`vp` はプロジェクトに入っているので、別にインストールしなくてよい。
