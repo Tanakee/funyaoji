@@ -116,14 +116,38 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
   },
 ];
 
+// フィールドを1つ消した形と、1つを null にした形。result の中のフィールドも対象にする
+function brokenForms(message: object): { label: string; message: unknown }[] {
+  const forms: { label: string; message: unknown }[] = [];
+  for (const [key, value] of Object.entries(message)) {
+    const { [key]: _removed, ...rest } = message as Record<string, unknown>;
+    forms.push({ label: `${key} が無い`, message: rest });
+    forms.push({ label: `${key} が null`, message: { ...message, [key]: null } });
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      for (const form of brokenForms(value)) {
+        forms.push({ label: `${key}.${form.label}`, message: { ...message, [key]: form.message } });
+      }
+    }
+  }
+  return forms;
+}
+
+const broken = accepted.flatMap((c) =>
+  brokenForms(c.message as object).map((form) => ({
+    name: `${c.name}: ${form.label}`,
+    message: form.message,
+    directions: c.directions,
+  })),
+);
+
 const rejected: { name: string; message: unknown }[] = [
   { name: "未知の type", message: { type: "hello" } },
   { name: "type が無い", message: { seq: 1, angle: 0 } },
   { name: "オブジェクトではない", message: "tilt" },
   { name: "未知の joint (joined)", message: { type: "joined", joint: "head" } },
   { name: "未知の joint (room)", message: { type: "room", roomCode: "K7Q2", joints: ["head"] } },
-  { name: "joint が無い (joined)", message: { type: "joined" } },
-  { name: "joint が無い (ping)", message: { type: "ping", id: 7 } },
+  { name: "未知の joint (ping)", message: { type: "ping", id: 7, joint: "head" } },
+  { name: "未知の joint (status)", message: { type: "status", active: ["head"] } },
   { name: "未知の reason", message: { type: "rejected", reason: "banned" } },
   { name: "phase が未知", message: { type: "phase", phase: "paused" } },
   { name: "playing に mode が無い", message: { type: "phase", phase: "playing" } },
@@ -153,6 +177,13 @@ describe("メッセージのスキーマ", () => {
     expect(acceptedBy(c.message)).toEqual(c.directions);
   });
 
+  // 必須のフィールドが欠けたメッセージを、元と同じ送信方向がすべて受け入れることは無い
+  test.each(broken)("$name は、受け入れる送信方向が減る", (c) => {
+    const still = acceptedBy(c.message);
+    expect(c.directions).toEqual(expect.arrayContaining(still));
+    expect(still.length).toBeLessThan(c.directions.length);
+  });
+
   test.each(rejected)("$name は、どの送信方向でも拒否する", (c) => {
     expect(acceptedBy(c.message)).toEqual([]);
   });
@@ -162,14 +193,18 @@ describe("メッセージのスキーマ", () => {
     expect(result.success).toBe(false);
   });
 
-  test("スクリーンが受信する tilt は、未知の joint を拒否する", () => {
-    const result = v.safeParse(ServerToScreenMessage, {
-      type: "tilt",
-      seq: 1,
-      angle: 0,
-      joint: "head",
-    });
-    expect(result.success).toBe(false);
+  test.each([
+    { name: "tilt", message: { type: "tilt", seq: 1, angle: 0, joint: "head" } },
+    { name: "pong", message: { type: "pong", id: 7, joint: "head" } },
+  ])("スクリーンが受信する $name は、未知の joint を拒否する", (c) => {
+    expect(v.safeParse(ServerToScreenMessage, c.message).success).toBe(false);
+  });
+
+  test.each([
+    { name: "seq", text: '{"type":"tilt","seq":1e999,"angle":42}' },
+    { name: "angle", text: '{"type":"tilt","seq":1,"angle":-1e999}' },
+  ])("JSON で有限でない数になる $name の tilt は、サーバーが拒否する", (c) => {
+    expect(v.safeParse(PhoneToServerMessage, JSON.parse(c.text)).success).toBe(false);
   });
 
   test("スマホが joint を付けて tilt を送っても、サーバーが受け取る値には joint が残らない", () => {
