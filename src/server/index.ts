@@ -10,7 +10,7 @@ app.get("/api/ping", async (c) => {
   return c.json<PingResponse>({ count });
 });
 
-app.get("/api/rooms/:roomCode/ws", (c) => {
+app.get("/api/rooms/:roomCode/ws", async (c) => {
   if (c.req.header("Upgrade") !== "websocket") {
     return c.text("WebSocket の接続が必要です", 426);
   }

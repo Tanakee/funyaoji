@@ -1,10 +1,19 @@
 import { DurableObject } from "cloudflare:workers";
 
-export class Room extends DurableObject {
+export class Room extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY CHECK (id = 1), count INTEGER NOT NULL)",
+    );
+  }
+
   async countCall(): Promise<number> {
-    const count = (this.ctx.storage.kv.get<number>("count") ?? 0) + 1;
-    this.ctx.storage.kv.put("count", count);
-    return count;
+    return this.ctx.storage.sql
+      .exec<{ count: number }>(
+        "INSERT INTO calls (id, count) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET count = count + 1 RETURNING count",
+      )
+      .one().count;
   }
 
   override fetch(): Response {
