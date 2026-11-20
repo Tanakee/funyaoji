@@ -8,5 +8,6 @@ export default defineConfig({
     entrypoint,
     assets: { runWorkerFirst: ["/api/*"] },
     exports: { Room: exports.durableObject({ storage: "sqlite" }) },
+    observability: { enabled: true },
   }),
 });
