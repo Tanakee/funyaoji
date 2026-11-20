@@ -13,7 +13,7 @@
 
 ## 動かし方
 
-Node.js 24（24.11 以上）と npm を使う。
+Node.js 24（24.22 以上）と npm を使う。
 
 ```sh
 npm install
