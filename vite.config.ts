@@ -1,12 +1,16 @@
+import { cloudflare } from "@cloudflare/vite-plugin";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
-  plugins: [react()],
-  appType: "mpa",
-  build: {
-    rolldownOptions: {
-      input: ["index.html", "screen.html", "play.html"],
+  plugins: [react(), cloudflare()],
+  environments: {
+    client: {
+      build: {
+        rolldownOptions: {
+          input: ["index.html", "screen.html", "play.html"],
+        },
+      },
     },
   },
   fmt: {
