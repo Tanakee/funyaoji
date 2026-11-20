@@ -1,0 +1,51 @@
+# lint・型チェック・ビルドが通るかを確かめる
+# package.json が無いあいだは何もしない。雛形を置いたら、使うパッケージマネージャーとスクリプト名に合わせて直す
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: package.json があるか
+        id: pkg
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package.json が無いので飛ばす"
+          fi
+
+      - uses: actions/setup-node@v5
+        if: steps.pkg.outputs.exists == 'true'
+        with:
+          node-version: 24
+
+      - name: 依存を入れる
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm ci
+
+      - name: lint
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm run lint --if-present
+
+      - name: 型チェック
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm run typecheck --if-present
+
+      - name: ビルド
+        if: steps.pkg.outputs.exists == 'true'
+        run: npm run build --if-present
