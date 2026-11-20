@@ -37,8 +37,10 @@ npm run dev
 |---|---|
 | `npm run dev` | 開発サーバーを動かす |
 | `npm run build` | 本番用にビルドする（`.cloudflare/output/` に出力する） |
-| `npm run preview` | ビルドした結果をローカルで開く。先に `npm run build` を実行する |
-| `npx vp check` | フォーマット・lint・型の検査をする。`--fix` を付けると、直せるものを直す |
+| `npm run preview` | ビルドした結果をローカルで開く。先に `npm run build` を実行する。`npm run check` はビルドの出力を消すので、そのあとはビルドし直す |
+| `npm run check` | フォーマット・lint・型の検査とテストを順に実行する。PR の CI も同じコマンドを実行する |
+| `npm test` | テストだけを1回実行する |
+| `npx vp check --fix` | フォーマットと lint の指摘のうち、直せるものを直す |
 
 ツールは [Vite+](https://viteplus.dev/guide/)（`vp`）を使う。`vp` はプロジェクトに入っているので、別にインストールしなくてよい。
 
