@@ -20,18 +20,26 @@ npm install
 npm run dev
 ```
 
-開発サーバーが動き、ターミナルに URL（`http://localhost:5173/`）が表示される。
+開発サーバーが動き、ターミナルに URL（`http://localhost:5173/`）が表示される。サーバー（Hono と Durable Objects）も同じコマンドでローカルで動く。
 
 | URL | ページ |
 |---|---|
-| `/screen` | スクリーンのページ |
+| `/screen` | スクリーンのページ。サーバーを呼んだ回数を表示する |
 | `/play` | スマホのページ |
+
+| エンドポイント | 内容 |
+|---|---|
+| `GET /api/ping` | Durable Objects が数えた、呼ばれた回数を返す |
+
+ローカルの Durable Objects のデータは、Local Explorer（`http://localhost:5173/cdn-cgi/local/explorer`）で見られる。
 
 | コマンド | 内容 |
 |---|---|
 | `npm run dev` | 開発サーバーを動かす |
-| `npm run build` | 本番用にビルドする（`dist/` に出力する） |
+| `npm run build` | 本番用にビルドする（`.cloudflare/output/` に出力する） |
 | `npm run preview` | ビルドした結果をローカルで開く |
 | `npx vp check` | フォーマット・lint・型の検査をする。`--fix` を付けると、直せるものを直す |
 
 ツールは [Vite+](https://viteplus.dev/guide/)（`vp`）を使う。`vp` はプロジェクトに入っているので、別にインストールしなくてよい。
+
+Worker の名前・Durable Objects・バインディングは `cloudflare.config.ts` に書く。CLI の `cf` もプロジェクトに入っている（`npx cf`）。
