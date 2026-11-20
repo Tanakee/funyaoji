@@ -65,7 +65,7 @@
 - Squash and merge でマージする（マージしたブランチは自動で消える）。PR のタイトルが main のコミットメッセージに、PR の本文がその本文になるので、空の欄は消してからマージする
 - PR を出すと GitHub Actions が次を確かめる。落ちていたら直してからマージする
   - PR の形：タイトルとブランチ名が上の形になっているか
-  - CI：lint・型チェック・ビルドが通るか（`.github/workflows/ci.yml`）
+  - CI：lint・型チェック・テスト・ビルドが通るか（`.github/workflows/ci.yml`）
 
 ## レビュー
 
