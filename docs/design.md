@@ -29,6 +29,7 @@
 | フロントエンド | React、Vite+ | チームに React の経験がある。Cloudflare の公式ガイドがある | フレームワークなし、Svelte 5 |
 | 言語 | TypeScript | クライアントとサーバーで型定義を共有できる | |
 | ホスティング | Cloudflare Workers | 静的アセットと API を同じ Worker にデプロイできる。HTTPS が標準で付き、無料枠で足りる | |
+| 環境とデプロイ | ローカル・プレビュー・本番の3つ。プレビューは Workers Previews で PR ごとに自動で作り、本番は手動でデプロイする | PR ごとに別の URL と別の Durable Objects のストレージができ、並行して開発してもぶつからない。本番を手動にすると、発表の前に壊れた変更が出ない | GitHub Actions、プレビューを作らない、共有のステージングを1つ持つ（[環境とデプロイ](#環境とデプロイ)） |
 | CLI | `cf` | `wrangler` の後継。公開ベータなので、未対応の操作は `wrangler` を使う | |
 
 ### リアルタイム通信
@@ -41,6 +42,30 @@
 
 - React が担当するのは UI（ロビー・タイム・結果・ランキングと、スマホのボタン）だけ。フレームごとの描画と通信は React の外に置く
 - Vite+ が Cloudflare の Vite プラグインと Durable Objects で動作しなければ Vite に切り替える
+
+### 環境とデプロイ
+
+| 環境 | 内容 | 更新の方法 |
+|---|---|---|
+| ローカル | 各自の PC。Hono も Durable Objects もローカルで動く。スマホの実機では Cloudflare Tunnel（Quick Tunnel）の HTTPS の URL で開く | 開発サーバーを動かす |
+| プレビュー | Cloudflare の Workers Previews。PR ごとに URL と Durable Objects のストレージが作られ、URL は PR のコメントに表示される | PR に push すると、Cloudflare の GitHub App が自動で更新する |
+| 本番 | 発表で使う環境。URL は `workers.dev` | 手動でデプロイする（`wrangler deploy` か、Cloudflare のダッシュボード） |
+
+- 傾きの読み取りには HTTPS が要る。ローカルの開発サーバーを Tunnel で公開すると、デプロイせずにスマホの実機で確かめられる
+- プレビューと本番は、Durable Objects のストレージが分かれる。ルームとランキングのデータは混ざらない
+- 本番は main にマージしても更新しない。main を試すときは、各自のローカルで動かす
+- 本番が壊れたときは `wrangler rollback` で前の版に戻す
+- GitHub の連携は、Cloudflare の GitHub App を使う。App はリポジトリの所有者がインストールする。インストールされるまでは、プレビューも手元から `wrangler preview` で作る
+- Workers Previews の操作（`wrangler preview`）は `cf` で行えないため、`wrangler` を使う
+- 独自ドメインは、余裕があれば設定する
+
+| 見送った案 | 理由 |
+|---|---|
+| GitHub Actions でデプロイする | Cloudflare の API トークンをリポジトリの Secrets に登録する必要があり、ワークフローと PR へのコメントを自作することになる。GitHub App で同じことができる |
+| プレビューを作らない | レビューする人が自分で動かす必要があり、スマホ4台での確認がしにくい |
+| 共有のステージングを1つ持つ | 2人が同時に試すと上書きし合う |
+| 本番を main へのマージで自動で更新する | 発表の直前に、壊れた変更がそのまま本番に出るおそれがある |
+| Version URLs（以前の Preview URLs） | Durable Objects を使う Worker では作られない |
 
 ### 物理エンジン
 
@@ -94,3 +119,4 @@ docs/       ドキュメント
 | 2026-11-19 | 開始とやり直しはスクリーンの PC で操作する。スマホからの「もう一度」は Should | MVP で作る量を減らす。スマホからやり直せると快適なので、次に足す |
 | 2026-11-19 | 距離はマイナスも扱う | 後ろに進むことがあり、それも結果として見せる |
 | 2026-11-20 | Cloudflare の CLI は `cf` を使う | `wrangler` の後継。公開ベータなので、未対応の操作は `wrangler` を使う |
+| 2026-11-20 | 環境はローカル・プレビュー・本番の3つ。プレビューは PR ごとに自動で作り、本番は手動でデプロイする | PR ごとに試せて、並行して開発してもぶつからない。本番を手動にすると、発表の前に壊れた変更が出ない |
