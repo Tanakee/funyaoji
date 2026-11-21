@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   HEARTBEAT,
-  HEARTBEAT_INTERVAL_MS,
   JOINTS,
   PhoneToServerMessage,
   ScreenToServerMessage,
@@ -29,8 +28,8 @@ const CLOSE_TIMEOUT = 4002;
 
 /** この時間、ハートビートもメッセージも届かない接続を、切れたとみなして閉じる */
 const HEARTBEAT_TIMEOUT_MS = 15_000;
-/** 接続があるあいだ、切れた接続を調べる間隔 */
-const STALE_CHECK_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
+/** 切れた接続を調べるアラームを、これより短い間隔では置かない */
+const MIN_STALE_CHECK_INTERVAL_MS = 1_000;
 /** 誰もいなくなってから（作ってから誰も接続しないときは、作ってから）ルームを消すまでの時間 */
 const ROOM_TTL_MS = 10 * 60_000;
 
@@ -53,7 +52,7 @@ export class Room extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // ハートビートにはランタイムが返す。Durable Object を起こさないので、休止したまま接続を保てる
+    // ハートビートにはランタイムが返す。ハートビートのたびには Durable Object を起こさない
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT, HEARTBEAT));
   }
 
@@ -168,20 +167,21 @@ export class Room extends DurableObject<Env> {
 
   /**
    * 1つのアラームで、2つの仕事をする。
-   * 接続があるあいだは、STALE_CHECK_INTERVAL_MS ごとに切れた接続を閉じる。
+   * 接続があるあいだは、いちばん古い接続が期限を迎える時刻に起きて、切れた接続を閉じる。
+   * ハートビートが5秒ごとに届くので、起きるのはおよそ10〜15秒ごと。5秒ごとに調べるより、リクエストと起きている時間が減る。
    * 誰もいなくなったら、DELETE_AT_KEY の時刻にルームを消す
    */
   override async alarm(): Promise<void> {
     const now = Date.now();
-    await this.closeStaleSockets(now);
-    if (this.openSockets().length > 0) {
-      await this.ctx.storage.setAlarm(now + STALE_CHECK_INTERVAL_MS);
+    const nextCheckAt = await this.closeStaleSockets(now);
+    if (nextCheckAt !== undefined) {
+      await this.ctx.storage.setAlarm(Math.max(nextCheckAt, now + MIN_STALE_CHECK_INTERVAL_MS));
       return;
     }
     const deleteAt = await this.ctx.storage.get<number>(DELETE_AT_KEY);
     if (deleteAt !== undefined && deleteAt <= now) {
       // ルームコードと phase も消え、同じコードでまたルームを作れるようになる。
-      // deleteAll はアラームを消さないので、先に消す
+      // deleteAll がアラームも消すかは互換性の日付で変わるので、先に消しておく
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       return;
@@ -199,13 +199,14 @@ export class Room extends DurableObject<Env> {
    * - メッセージ：メモリだけに置いている。休止から戻ると分からない
    * - 接続した時刻：attachment に置いている。接続した直後の接続を閉じないための猶予
    *
-   * 休止から戻ってメッセージの時刻が分からなくても、生きている接続を閉じることはほぼ無い。
-   * 休止するのは、どの接続からもメッセージが届かずに10秒ほど経ったときだけ。
-   * そのあいだも、決まりどおりにハートビートを送っているクライアントは、ハートビートの時刻で生きていると分かる。
+   * メモリの時刻が消えるのは、休止や追い出しで Durable Object が作り直されたとき。
+   * そのときも、決まりどおりにハートビートを送っているクライアントは、ハートビートの時刻で生きていると分かる。
    * 休止から戻った時刻を猶予の起点にすることもできるが、それはしない。
    * 休止と復帰が繰り返されると、切れた接続をいつまでも閉じられなくなるため
    */
-  private async closeStaleSockets(now: number): Promise<void> {
+  /** 残った接続のうち、いちばん早く期限を迎える時刻を返す。接続が残らなければ undefined */
+  private async closeStaleSockets(now: number): Promise<number | undefined> {
+    let nextCheckAt: number | undefined;
     for (const ws of this.openSockets()) {
       const attachment = ws.deserializeAttachment() as Attachment | null;
       const lastSeenAt = Math.max(
@@ -213,7 +214,11 @@ export class Room extends DurableObject<Env> {
         this.lastMessageAt.get(ws) ?? 0,
         attachment?.connectedAt ?? 0,
       );
-      if (now - lastSeenAt < HEARTBEAT_TIMEOUT_MS) continue;
+      const expiresAt = lastSeenAt + HEARTBEAT_TIMEOUT_MS;
+      if (now < expiresAt) {
+        nextCheckAt = Math.min(nextCheckAt ?? expiresAt, expiresAt);
+        continue;
+      }
       try {
         ws.close(CLOSE_TIMEOUT, "timeout");
       } catch {
@@ -222,6 +227,7 @@ export class Room extends DurableObject<Env> {
       // 切れた接続からは close が返ってこないことがあるので、webSocketClose を待たずに切断として扱う
       await this.depart(ws);
     }
+    return nextCheckAt;
   }
 
   /** 切断を処理する。スマホなら関節を空け、参加者が変わったことを知らせる。すでに処理していれば false */
@@ -257,7 +263,8 @@ export class Room extends DurableObject<Env> {
       await this.ctx.storage.delete(DELETE_AT_KEY);
     }
     // 接続があるあいだのアラームは、alarm() が次を決める。それより遅いアラーム（消す予定）だけを早める
-    const next = Date.now() + STALE_CHECK_INTERVAL_MS;
+    // 新しい接続は、接続してから HEARTBEAT_TIMEOUT_MS は閉じないので、そのときに調べればよい
+    const next = Date.now() + HEARTBEAT_TIMEOUT_MS;
     const alarm = await this.ctx.storage.getAlarm();
     if (alarm === null || alarm > next) await this.ctx.storage.setAlarm(next);
   }
