@@ -1,14 +1,19 @@
 import { DurableObject } from "cloudflare:workers";
-import * as v from "valibot";
 import {
   JOINTS,
   PhoneToServerMessage,
+  ScreenToServerMessage,
   type Joint,
   type JoinedMessage,
+  type PhaseMessage,
   type RejectedMessage,
+  type RelayedPongMessage,
   type RelayedTiltMessage,
   type RoomMessage,
+  type ServerToPhoneMessage,
+  type ServerToScreenMessage,
 } from "../shared/messages.ts";
+import { parseMessage } from "../shared/parse.ts";
 
 /** WebSocket に付けておく情報。休止（Hibernation）から戻っても残る */
 type Attachment = { role: "screen" } | { role: "phone"; joint: Joint };
@@ -18,6 +23,11 @@ const CLOSE_REPLACED = 4000;
 /** 参加を断ったときの close コード */
 const CLOSE_REJECTED = 4001;
 
+/** ストレージのキー。休止から戻っても残るように、メモリではなくストレージに置く */
+const ROOM_CODE_KEY = "roomCode";
+/** スクリーンから最後に受信した phase */
+const PHASE_KEY = "phase";
+
 /** ルームごとに1つ。WebSocket の接続を持ち、スマホとスクリーンの間でメッセージを中継する */
 export class Room extends DurableObject<Env> {
   /** 切断を処理し終えた接続 */
@@ -25,8 +35,8 @@ export class Room extends DurableObject<Env> {
 
   /** ルームを作る。同じコードのルームがすでにあれば false */
   async create(roomCode: string): Promise<boolean> {
-    if ((await this.ctx.storage.get<string>("roomCode")) !== undefined) return false;
-    await this.ctx.storage.put("roomCode", roomCode);
+    if ((await this.ctx.storage.get<string>(ROOM_CODE_KEY)) !== undefined) return false;
+    await this.ctx.storage.put(ROOM_CODE_KEY, roomCode);
     return true;
   }
 
@@ -48,26 +58,66 @@ export class Room extends DurableObject<Env> {
       return new Response("role には screen か phone を指定してください", { status: 400 });
     }
     const { 0: client, 1: server } = new WebSocketPair();
-    const roomCode = await this.ctx.storage.get<string>("roomCode");
+    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
 
+    // 断る理由は no-room → playing → full の順に調べる
     if (roomCode === undefined) {
       this.reject(server, "no-room");
     } else if (role === "screen") {
       this.acceptScreen(server, roomCode);
     } else {
-      this.acceptPhone(server, roomCode);
+      const phase = await this.ctx.storage.get<PhaseMessage>(PHASE_KEY);
+      if (phase?.phase === "playing") {
+        this.reject(server, "playing");
+      } else {
+        this.acceptPhone(server, roomCode, phase);
+      }
     }
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    // 送信元が送れないメッセージ・形の違うメッセージは、何も返さずに捨てる
     const attachment = ws.deserializeAttachment() as Attachment | null;
-    if (attachment?.role !== "phone") return;
+    if (attachment?.role === "phone") {
+      this.receiveFromPhone(attachment.joint, message);
+    } else if (attachment?.role === "screen") {
+      await this.receiveFromScreen(message);
+    }
+  }
 
+  private receiveFromPhone(joint: Joint, message: string | ArrayBuffer): void {
     const received = parseMessage(PhoneToServerMessage, message);
-    if (received?.type === "tilt") {
-      const tilt: RelayedTiltMessage = { ...received, joint: attachment.joint };
-      this.sendToScreens(tilt);
+    if (received === undefined) return;
+    // joint はサーバーが付ける。スマホは担当を偽れない
+    switch (received.type) {
+      case "tilt":
+        this.sendToScreens({ ...received, joint } satisfies RelayedTiltMessage);
+        break;
+      case "pong":
+        this.sendToScreens({ ...received, joint } satisfies RelayedPongMessage);
+        break;
+    }
+  }
+
+  private async receiveFromScreen(message: string | ArrayBuffer): Promise<void> {
+    const received = parseMessage(ScreenToServerMessage, message);
+    if (received === undefined) return;
+    switch (received.type) {
+      case "phase":
+        // プレイ中の参加を断るためと、あとから参加したスマホに送るために保持する
+        await this.ctx.storage.put(PHASE_KEY, received);
+        this.sendToPhones(received);
+        break;
+      case "status":
+        this.sendToPhones(received);
+        break;
+      case "ping": {
+        // 宛先の関節のスマホがいなければ捨てる
+        const target = this.openPhones().find((ws) => phoneJoint(ws) === received.joint);
+        if (target !== undefined) send(target, received);
+        break;
+      }
     }
   }
 
@@ -77,7 +127,7 @@ export class Room extends DurableObject<Env> {
     this.departed.add(ws);
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.role !== "phone") return;
-    const roomCode = await this.ctx.storage.get<string>("roomCode");
+    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
     if (roomCode !== undefined) this.broadcastRoom(roomCode, ws);
   }
 
@@ -99,7 +149,8 @@ export class Room extends DurableObject<Env> {
     send(ws, this.roomMessage(roomCode));
   }
 
-  private acceptPhone(ws: WebSocket, roomCode: string): void {
+  /** phase は保持している最後の phase。あれば joined のあとに送り、スマホの表示をルームの状態に合わせる */
+  private acceptPhone(ws: WebSocket, roomCode: string, phase: PhaseMessage | undefined): void {
     const taken = new Set(this.phoneJoints());
     const joint = JOINTS.find((j) => !taken.has(j));
     if (joint === undefined) {
@@ -109,6 +160,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(ws, ["phone"]);
     ws.serializeAttachment({ role: "phone", joint } satisfies Attachment);
     send(ws, { type: "joined", joint } satisfies JoinedMessage);
+    if (phase !== undefined) send(ws, phase);
     this.broadcastRoom(roomCode);
   }
 
@@ -134,15 +186,27 @@ export class Room extends DurableObject<Env> {
 
   /** 接続中のスマホが担当する関節。閉じかけ・閉じた接続は除く */
   private phoneJoints(closing?: WebSocket): Joint[] {
-    return this.ctx
-      .getWebSockets("phone")
-      .filter((ws) => ws !== closing && ws.readyState === WebSocket.OPEN)
-      .map((ws) => (ws.deserializeAttachment() as Attachment & { role: "phone" }).joint);
+    return this.openPhones(closing).map(phoneJoint);
   }
 
-  private sendToScreens(message: RelayedTiltMessage): void {
+  /** 接続中のスマホ。閉じかけ・閉じた接続は除く */
+  private openPhones(closing?: WebSocket): WebSocket[] {
+    return this.ctx
+      .getWebSockets("phone")
+      .filter((ws) => ws !== closing && ws.readyState === WebSocket.OPEN);
+  }
+
+  private sendToScreens(message: ServerToScreenMessage): void {
     for (const ws of this.ctx.getWebSockets("screen")) send(ws, message);
   }
+
+  private sendToPhones(message: ServerToPhoneMessage): void {
+    for (const ws of this.openPhones()) send(ws, message);
+  }
+}
+
+function phoneJoint(ws: WebSocket): Joint {
+  return (ws.deserializeAttachment() as Attachment & { role: "phone" }).joint;
 }
 
 function send(ws: WebSocket, message: object): void {
@@ -151,20 +215,4 @@ function send(ws: WebSocket, message: object): void {
   } catch {
     // 閉じかけの接続には送れない。次の room で状態がそろうので無視する
   }
-}
-
-/** JSON の文字列を読み、スキーマに合えば値を返す。合わなければ undefined */
-function parseMessage<const S extends v.GenericSchema>(
-  schema: S,
-  data: string | ArrayBuffer,
-): v.InferOutput<S> | undefined {
-  if (typeof data !== "string") return undefined;
-  let json: unknown;
-  try {
-    json = JSON.parse(data);
-  } catch {
-    return undefined;
-  }
-  const result = v.safeParse(schema, json);
-  return result.success ? result.output : undefined;
 }
