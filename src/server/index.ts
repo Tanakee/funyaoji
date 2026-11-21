@@ -19,14 +19,14 @@ const CREATE_ROOM_ATTEMPTS = 10;
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/api/ping", async (c) => {
-  const count = await c.env.ROOMS.getByName(PING_OBJECT_NAME).countCall();
+  const count = await c.executionCtx.exports.Room.getByName(PING_OBJECT_NAME).countCall();
   return c.json<PingResponse>({ count });
 });
 
 app.post("/api/rooms", async (c) => {
   for (let i = 0; i < CREATE_ROOM_ATTEMPTS; i++) {
     const roomCode = generateRoomCode();
-    if (await c.env.ROOMS.getByName(roomCode).create(roomCode)) {
+    if (await c.executionCtx.exports.Room.getByName(roomCode).create(roomCode)) {
       return c.json<CreateRoomResponse>({ roomCode });
     }
   }
@@ -48,7 +48,7 @@ app.get("/api/rooms/:roomCode/ws", (c) => {
   }
   const url = new URL(c.req.url);
   url.searchParams.set("role", role);
-  return c.env.ROOMS.getByName(roomCode).fetch(new Request(url, c.req.raw));
+  return c.executionCtx.exports.Room.getByName(roomCode).fetch(new Request(url, c.req.raw));
 });
 
 /** 文字の出やすさが偏らないように、文字の数で割り切れない範囲の乱数は捨てて引き直す */
