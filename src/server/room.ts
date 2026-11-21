@@ -1,5 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  HEARTBEAT,
+  HEARTBEAT_INTERVAL_MS,
   JOINTS,
   PhoneToServerMessage,
   ScreenToServerMessage,
@@ -15,28 +17,52 @@ import {
 } from "../shared/messages.ts";
 import { parseMessage } from "../shared/parse.ts";
 
-/** WebSocket に付けておく情報。休止（Hibernation）から戻っても残る */
-type Attachment = { role: "screen" } | { role: "phone"; joint: Joint };
+/** WebSocket に付けておく情報。休止（Hibernation）から戻っても残る。connectedAt は接続した時刻（ミリ秒） */
+type Attachment = { connectedAt: number } & ({ role: "screen" } | { role: "phone"; joint: Joint });
 
 /** スクリーンを新しい接続で置き換えたときの close コード */
 const CLOSE_REPLACED = 4000;
 /** 参加を断ったときの close コード */
 const CLOSE_REJECTED = 4001;
+/** ハートビートもメッセージも届かなくなった接続を閉じたときの close コード */
+const CLOSE_TIMEOUT = 4002;
+
+/** この時間、ハートビートもメッセージも届かない接続を、切れたとみなして閉じる */
+const HEARTBEAT_TIMEOUT_MS = 15_000;
+/** 接続があるあいだ、切れた接続を調べる間隔 */
+const STALE_CHECK_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
+/** 誰もいなくなってから（作ってから誰も接続しないときは、作ってから）ルームを消すまでの時間 */
+const ROOM_TTL_MS = 10 * 60_000;
 
 /** ストレージのキー。休止から戻っても残るように、メモリではなくストレージに置く */
 const ROOM_CODE_KEY = "roomCode";
 /** スクリーンから最後に受信した phase */
 const PHASE_KEY = "phase";
+/** 誰もいないルームを消す時刻（ミリ秒）。誰かが接続しているあいだは無い */
+const DELETE_AT_KEY = "deleteAt";
 
 /** ルームごとに1つ。WebSocket の接続を持ち、スマホとスクリーンの間でメッセージを中継する */
 export class Room extends DurableObject<Env> {
   /** 切断を処理し終えた接続 */
   private readonly departed = new WeakSet<WebSocket>();
+  /**
+   * 接続ごとに、最後にメッセージ（ハートビート以外）を受信した時刻。
+   * ストレージに書くと受信のたびに書き込みが増えるので、メモリだけに置く。休止から戻ると空になる
+   */
+  private readonly lastMessageAt = new WeakMap<WebSocket, number>();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // ハートビートにはランタイムが返す。Durable Object を起こさないので、休止したまま接続を保てる
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT, HEARTBEAT));
+  }
 
   /** ルームを作る。同じコードのルームがすでにあれば false */
   async create(roomCode: string): Promise<boolean> {
     if ((await this.ctx.storage.get<string>(ROOM_CODE_KEY)) !== undefined) return false;
     await this.ctx.storage.put(ROOM_CODE_KEY, roomCode);
+    // 誰も接続しないまま放っておかれたルームも消す
+    await this.scheduleDeletion(Date.now());
     return true;
   }
 
@@ -66,17 +92,20 @@ export class Room extends DurableObject<Env> {
       this.reject(server, "no-room");
     } else if (role === "screen") {
       this.acceptScreen(server, roomCode, phase);
+      await this.cancelDeletion();
     } else {
       if (phase?.phase === "playing") {
         this.reject(server, "playing");
-      } else {
-        this.acceptPhone(server, roomCode, phase);
+      } else if (this.acceptPhone(server, roomCode, phase)) {
+        await this.cancelDeletion();
       }
     }
     return new Response(null, { status: 101, webSocket: client });
   }
 
   override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+    // 形の違うメッセージでも、届いたなら接続は生きている
+    this.lastMessageAt.set(ws, Date.now());
     // 送信元が送れないメッセージ・形の違うメッセージは、何も返さずに捨てる
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.role === "phone") {
@@ -97,6 +126,9 @@ export class Room extends DurableObject<Env> {
         break;
       case "pong":
         this.sendToScreens({ ...received, joint } satisfies RelayedPongMessage);
+        break;
+      case "heartbeat":
+        // HEARTBEAT と1文字でも違う形はランタイムが返さず、ここに届く。受信した時刻は上で記録した
         break;
     }
   }
@@ -120,21 +152,114 @@ export class Room extends DurableObject<Env> {
         if (target !== undefined) send(target, received);
         break;
       }
+      case "heartbeat":
+        break;
     }
   }
 
   override async webSocketClose(ws: WebSocket): Promise<void> {
-    // エラーと close の両方が届いても、room を2回送らない
-    if (this.departed.has(ws)) return;
-    this.departed.add(ws);
-    const attachment = ws.deserializeAttachment() as Attachment | null;
-    if (attachment?.role !== "phone") return;
-    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
-    if (roomCode !== undefined) this.broadcastRoom(roomCode, ws);
+    if (!(await this.depart(ws))) return;
+    if (this.openSockets(ws).length === 0) await this.scheduleDeletion(Date.now());
   }
 
   override webSocketError(ws: WebSocket): Promise<void> {
     return this.webSocketClose(ws);
+  }
+
+  /**
+   * 1つのアラームで、2つの仕事をする。
+   * 接続があるあいだは、STALE_CHECK_INTERVAL_MS ごとに切れた接続を閉じる。
+   * 誰もいなくなったら、DELETE_AT_KEY の時刻にルームを消す
+   */
+  override async alarm(): Promise<void> {
+    const now = Date.now();
+    await this.closeStaleSockets(now);
+    if (this.openSockets().length > 0) {
+      await this.ctx.storage.setAlarm(now + STALE_CHECK_INTERVAL_MS);
+      return;
+    }
+    const deleteAt = await this.ctx.storage.get<number>(DELETE_AT_KEY);
+    if (deleteAt !== undefined && deleteAt <= now) {
+      // ルームコードと phase も消え、同じコードでまたルームを作れるようになる。
+      // deleteAll はアラームを消さないので、先に消す
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+      return;
+    }
+    // 消す時刻の前に起きたときは、その時刻にアラームを置き直す。
+    // 切れた接続を閉じて誰もいなくなったときは、ここから ROOM_TTL_MS 後に消す
+    await this.scheduleDeletion(now);
+  }
+
+  /**
+   * ハートビートもメッセージも HEARTBEAT_TIMEOUT_MS のあいだ届いていない接続を閉じ、切断として扱う。
+   *
+   * 最後に届いた時刻は、次の3つのうち最も新しいもの。
+   * - ハートビート：ランタイムが接続ごとに覚えている。休止から戻っても残る
+   * - メッセージ：メモリだけに置いている。休止から戻ると分からない
+   * - 接続した時刻：attachment に置いている。接続した直後の接続を閉じないための猶予
+   *
+   * 休止から戻ってメッセージの時刻が分からなくても、生きている接続を閉じることはほぼ無い。
+   * 休止するのは、どの接続からもメッセージが届かずに10秒ほど経ったときだけ。
+   * そのあいだも、決まりどおりにハートビートを送っているクライアントは、ハートビートの時刻で生きていると分かる。
+   * 休止から戻った時刻を猶予の起点にすることもできるが、それはしない。
+   * 休止と復帰が繰り返されると、切れた接続をいつまでも閉じられなくなるため
+   */
+  private async closeStaleSockets(now: number): Promise<void> {
+    for (const ws of this.openSockets()) {
+      const attachment = ws.deserializeAttachment() as Attachment | null;
+      const lastSeenAt = Math.max(
+        this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0,
+        this.lastMessageAt.get(ws) ?? 0,
+        attachment?.connectedAt ?? 0,
+      );
+      if (now - lastSeenAt < HEARTBEAT_TIMEOUT_MS) continue;
+      try {
+        ws.close(CLOSE_TIMEOUT, "timeout");
+      } catch {
+        // すでに閉じかけの接続は閉じられない。切断の処理だけをする
+      }
+      // 切れた接続からは close が返ってこないことがあるので、webSocketClose を待たずに切断として扱う
+      await this.depart(ws);
+    }
+  }
+
+  /** 切断を処理する。スマホなら関節を空け、参加者が変わったことを知らせる。すでに処理していれば false */
+  private async depart(ws: WebSocket): Promise<boolean> {
+    // エラーと close の両方が届いても、room を2回送らない
+    if (this.departed.has(ws)) return false;
+    this.departed.add(ws);
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    if (attachment?.role === "phone") {
+      const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
+      if (roomCode !== undefined) this.broadcastRoom(roomCode, ws);
+    }
+    return true;
+  }
+
+  /**
+   * 誰もいないルームを、now から ROOM_TTL_MS 後に消す。すでに予定があれば、その時刻のまま変えない。
+   * 消したあとのルームには、アラームを置かない
+   */
+  private async scheduleDeletion(now: number): Promise<void> {
+    if ((await this.ctx.storage.get<string>(ROOM_CODE_KEY)) === undefined) return;
+    let deleteAt = await this.ctx.storage.get<number>(DELETE_AT_KEY);
+    if (deleteAt === undefined) {
+      deleteAt = now + ROOM_TTL_MS;
+      await this.ctx.storage.put(DELETE_AT_KEY, deleteAt);
+    }
+    await this.ctx.storage.setAlarm(deleteAt);
+  }
+
+  /** 接続を受け付けたときに呼ぶ。ルームを消す予定を取り消し、切れた接続を調べ始める */
+  private async cancelDeletion(): Promise<void> {
+    if ((await this.ctx.storage.get<number>(DELETE_AT_KEY)) !== undefined) {
+      await this.ctx.storage.delete(DELETE_AT_KEY);
+    }
+    // 接続があるあいだのアラームは、alarm() が次を決める。それより遅いアラーム（消す予定）だけを早める
+    const next = Date.now() + STALE_CHECK_INTERVAL_MS;
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > next) await this.ctx.storage.setAlarm(next);
   }
 
   /** phase は保持している最後の phase。あれば room のあとに送り、開き直したスクリーンがルームの状態を知れるようにする */
@@ -148,24 +273,28 @@ export class Room extends DurableObject<Env> {
       }
     }
     this.ctx.acceptWebSocket(ws, ["screen"]);
-    ws.serializeAttachment({ role: "screen" } satisfies Attachment);
+    ws.serializeAttachment({ role: "screen", connectedAt: Date.now() } satisfies Attachment);
     send(ws, this.roomMessage(roomCode));
     if (phase !== undefined) send(ws, phase);
   }
 
-  /** phase は保持している最後の phase。あれば joined のあとに送り、スマホの表示をルームの状態に合わせる */
-  private acceptPhone(ws: WebSocket, roomCode: string, phase: PhaseMessage | undefined): void {
+  /**
+   * phase は保持している最後の phase。あれば joined のあとに送り、スマホの表示をルームの状態に合わせる。
+   * 満員で断ったときは false
+   */
+  private acceptPhone(ws: WebSocket, roomCode: string, phase: PhaseMessage | undefined): boolean {
     const taken = new Set(this.phoneJoints());
     const joint = JOINTS.find((j) => !taken.has(j));
     if (joint === undefined) {
       this.reject(ws, "full");
-      return;
+      return false;
     }
     this.ctx.acceptWebSocket(ws, ["phone"]);
-    ws.serializeAttachment({ role: "phone", joint } satisfies Attachment);
+    ws.serializeAttachment({ role: "phone", joint, connectedAt: Date.now() } satisfies Attachment);
     send(ws, { type: "joined", joint } satisfies JoinedMessage);
     if (phase !== undefined) send(ws, phase);
     this.broadcastRoom(roomCode);
+    return true;
   }
 
   /** 受け付けずに、理由を送って閉じる */
@@ -195,8 +324,13 @@ export class Room extends DurableObject<Env> {
 
   /** 接続中のスマホ。閉じかけ・閉じた接続は除く */
   private openPhones(closing?: WebSocket): WebSocket[] {
+    return this.openSockets(closing, "phone");
+  }
+
+  /** 接続中のスクリーンとスマホ。閉じかけ・閉じた接続は除く */
+  private openSockets(closing?: WebSocket, tag?: Attachment["role"]): WebSocket[] {
     return this.ctx
-      .getWebSockets("phone")
+      .getWebSockets(tag)
       .filter((ws) => ws !== closing && ws.readyState === WebSocket.OPEN);
   }
 
