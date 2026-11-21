@@ -13,6 +13,10 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    // サーバーのテストのために、開発サーバーを立てる
+    globalSetup: ["src/server/test-setup.ts"],
+  },
   fmt: {
     ignorePatterns: ["**/*.md", ".github/**"],
   },

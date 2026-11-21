@@ -44,6 +44,8 @@ npm run dev
 | `npm test` | テストだけを1回実行する |
 | `npx vp check --fix` | フォーマットと lint の指摘のうち、直せるものを直す |
 
+テストのファイルは `*.test.ts`。サーバーのテスト（`src/server/index.test.ts`）は、テストの前に開発サーバーを空いているポートで立て、HTTP と WebSocket でつないで確かめる。開発サーバーは `src/server/test-setup.ts` が立て、テストが終わると止める。Durable Objects のデータはファイルに残さない。`npm run dev` の開発サーバーとは別に動くので、止めなくてよい。
+
 ツールは [Vite+](https://viteplus.dev/guide/)（`vp`）を使う。`vp` はプロジェクトに入っているので、別にインストールしなくてよい。
 
 Worker の名前・Durable Objects・バインディングは `cloudflare.config.ts` に書く。CLI の `cf` もプロジェクトに入っている（`npx cf`）。
