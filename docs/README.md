@@ -31,6 +31,8 @@ npm run dev
 | エンドポイント | 内容 |
 |---|---|
 | `GET /api/ping` | Durable Objects が数えた、呼ばれた回数を返す |
+| `POST /api/rooms` | ルームを作り、ルームコードを返す |
+| `GET /api/rooms/<ルームコード>/ws?role=screen` または `role=phone` | WebSocket で接続する（[API](api.md)） |
 
 ローカルの Durable Objects のデータは、Local Explorer（`http://localhost:5173/cdn-cgi/local/explorer`）で見られる。
 

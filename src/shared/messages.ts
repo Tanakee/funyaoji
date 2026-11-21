@@ -88,7 +88,9 @@ export const ServerToPhoneMessage = v.variant("type", [
 ]);
 export type ServerToPhoneMessage = v.InferOutput<typeof ServerToPhoneMessage>;
 
+// スクリーンも、ルームが無いときは rejected（no-room）を受け取る
 export const ServerToScreenMessage = v.variant("type", [
+  RejectedMessage,
   RoomMessage,
   RelayedTiltMessage,
   RelayedPongMessage,

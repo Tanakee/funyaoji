@@ -32,17 +32,17 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
   {
     name: "rejected",
     message: { type: "rejected", reason: "full" },
-    directions: ["ServerToPhoneMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
   },
   {
     name: "rejected: playing",
     message: { type: "rejected", reason: "playing" },
-    directions: ["ServerToPhoneMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
   },
   {
     name: "rejected: no-room",
     message: { type: "rejected", reason: "no-room" },
-    directions: ["ServerToPhoneMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
   },
   {
     name: "room",
