@@ -203,8 +203,9 @@ export class Room extends DurableObject<Env> {
    * そのときも、決まりどおりにハートビートを送っているクライアントは、ハートビートの時刻で生きていると分かる。
    * 休止から戻った時刻を猶予の起点にすることもできるが、それはしない。
    * 休止と復帰が繰り返されると、切れた接続をいつまでも閉じられなくなるため
+   *
+   * @returns 残った接続のうち、いちばん早く期限を迎える時刻。接続が残らなければ undefined
    */
-  /** 残った接続のうち、いちばん早く期限を迎える時刻を返す。接続が残らなければ undefined */
   private async closeStaleSockets(now: number): Promise<number | undefined> {
     let nextCheckAt: number | undefined;
     for (const ws of this.openSockets()) {
