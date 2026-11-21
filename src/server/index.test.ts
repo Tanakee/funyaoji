@@ -1,4 +1,4 @@
-import { describe, expect, inject, test } from "vite-plus/test";
+import { afterEach, describe, expect, inject, test } from "vite-plus/test";
 import type { CreateRoomResponse, PingResponse } from "../shared/api.ts";
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, isRoomCode } from "../shared/room.ts";
 
@@ -9,6 +9,14 @@ const serverUrl = inject("serverUrl");
 const TIMEOUT = 3000;
 
 /** WebSocket の接続。届いたメッセージを順に取り出せる */
+/** テストで開いた接続。テストが失敗しても、終わったら閉じる */
+const openClients = new Set<Client>();
+afterEach(() => {
+  // 閉じるのを待たない。サーバーから閉じた接続は、開発サーバーでは close が届くのが遅いため
+  for (const client of openClients) client.dispose();
+  openClients.clear();
+});
+
 class Client {
   private readonly ws: WebSocket;
   private readonly received: unknown[] = [];
@@ -20,6 +28,7 @@ class Client {
     const url = new URL(`/api/rooms/${roomCode}/ws?role=${role}`, serverUrl);
     url.protocol = "ws:";
     this.ws = new WebSocket(url);
+    openClients.add(this);
     this.ws.addEventListener("message", (event) => {
       const message: unknown = JSON.parse(event.data as string);
       if (this.waiting) {
@@ -60,6 +69,13 @@ class Client {
       await new Promise((resolve) => this.ws.addEventListener("open", resolve, { once: true }));
     }
     this.ws.send(data);
+  }
+
+  /** まだ開いていれば閉じる。閉じるのは待たない */
+  dispose(): void {
+    if (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN) {
+      this.ws.close();
+    }
   }
 
   async close(): Promise<void> {
