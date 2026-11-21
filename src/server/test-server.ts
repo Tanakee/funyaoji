@@ -1,4 +1,3 @@
-/// <reference types="node" />
 // サーバーのテスト用の開発サーバー。src/server/test-setup.ts が別のプロセスで動かす
 // （vp test のプロセスの中では、Worker の設定を読み込めないため）。
 // 空いているポートを使い、Durable Object の状態はファイルに残さない。立てたら URL を1行出力する

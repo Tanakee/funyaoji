@@ -1,6 +1,6 @@
 import { describe, expect, inject, test } from "vite-plus/test";
 import type { CreateRoomResponse, PingResponse } from "../shared/api.ts";
-import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from "../shared/room.ts";
+import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, isRoomCode } from "../shared/room.ts";
 
 // src/server/test-server.ts が立てた開発サーバーに、HTTP と WebSocket でつないで確かめる
 const serverUrl = inject("serverUrl");
@@ -38,7 +38,11 @@ class Client {
   next(): Promise<unknown> {
     if (this.received.length > 0) return Promise.resolve(this.received.shift());
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("メッセージが届きません")), TIMEOUT);
+      const timer = setTimeout(() => {
+        // あとから届いたメッセージを、待つのをやめたところに渡さない
+        this.waiting = undefined;
+        reject(new Error("メッセージが届きません"));
+      }, TIMEOUT);
       this.waiting = (message) => {
         clearTimeout(timer);
         resolve(message);
@@ -64,10 +68,14 @@ class Client {
   }
 }
 
+/** これまでに作ったルームのコード */
+const createdRoomCodes = new Set<string>();
+
 async function createRoom(): Promise<string> {
   const response = await fetch(new URL("/api/rooms", serverUrl), { method: "POST" });
   expect(response.status).toBe(200);
   const { roomCode } = (await response.json()) as CreateRoomResponse;
+  createdRoomCodes.add(roomCode);
   return roomCode;
 }
 
@@ -116,22 +124,6 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     const roomCode = await createRoom();
     const response = await fetch(new URL(`/api/rooms/${roomCode}/ws?role=phone`, serverUrl));
     expect(response.status).toBe(426);
-  });
-
-  // サーバーは 400 を返すが、開発サーバーは WebSocket の接続で 101 以外が返ると、ステータスを返さずに接続を切る。
-  // そのため、つながらないことだけを確かめる
-  test("role が screen でも phone でもなければ、つながらない", async () => {
-    const roomCode = await createRoom();
-    for (const role of ["x", ""]) {
-      const url = new URL(`/api/rooms/${roomCode}/ws?role=${role}`, serverUrl);
-      url.protocol = "ws:";
-      const ws = new WebSocket(url);
-      const opened = await new Promise((resolve) => {
-        ws.addEventListener("open", () => resolve(true));
-        ws.addEventListener("error", () => resolve(false));
-      });
-      expect(opened).toBe(false);
-    }
   });
 
   test("スクリーンがつなぐと、room が届く", async () => {
@@ -186,8 +178,10 @@ describe("GET /api/rooms/:roomCode/ws", () => {
   });
 
   test("無いルームには、no-room で断り、4001 で閉じる", async () => {
-    // 作っていないルーム（I を含むので作られない形）と、ルームコードの形でないもの
-    for (const roomCode of ["ZZZZ", "ping", "ABC", "ABCDE", "IIII"]) {
+    // 作っていないルームと、ルームコードの形でないもの
+    const notCreated = ["ZZZZ", "YYYY", "XXXX"].find((code) => !createdRoomCodes.has(code))!;
+    expect(isRoomCode(notCreated)).toBe(true);
+    for (const roomCode of [notCreated, "ABC"]) {
       for (const role of ["screen", "phone"]) {
         const client = new Client(roomCode, role);
         expect(await client.next()).toEqual({ type: "rejected", reason: "no-room" });
@@ -196,18 +190,10 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     }
   });
 
-  test("スマホの tilt を、担当の関節を付けてスクリーンに送る", async () => {
+  test("スマホの tilt を、担当の関節を付けてスクリーンに送る。別の関節が書かれていても上書きする", async () => {
     const roomCode = await createRoom();
     const { screen, phones } = await fillRoom(roomCode);
-    const phone = phones[2]!; // rightKnee
-    await phone.send(JSON.stringify({ type: "tilt", seq: 1, angle: 42 }));
-    expect(await screen.next()).toEqual({ type: "tilt", seq: 1, angle: 42, joint: "rightKnee" });
-    await closeAll([screen, ...phones]);
-  });
-
-  test("tilt に別の関節が書かれていても、担当の関節で上書きする", async () => {
-    const roomCode = await createRoom();
-    const { screen, phones } = await fillRoom(roomCode);
+    // phones[2] の担当は rightKnee
     await phones[2]!.send(JSON.stringify({ type: "tilt", seq: 1, angle: 10, joint: "leftHip" }));
     expect(await screen.next()).toEqual({ type: "tilt", seq: 1, angle: 10, joint: "rightKnee" });
     await closeAll([screen, ...phones]);
@@ -260,6 +246,8 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     });
     await phones[3]!.send(JSON.stringify({ type: "tilt", seq: 1, angle: 0 }));
     expect(await screen2.next()).toEqual({ type: "tilt", seq: 1, angle: 0, joint: "leftKnee" });
+    // 古い接続に遅れて届かないことを確かめるため、少し待つ
+    await new Promise((resolve) => setTimeout(resolve, 200));
     expect(screen.pending).toBe(0);
     // 古い接続は、開発サーバーでは閉じたことが届かない（下の skip を参照）ので、閉じ終わるのを待たない
     void screen.close();

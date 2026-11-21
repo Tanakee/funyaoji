@@ -1,0 +1,16 @@
+{
+  // Node.js で動くファイル（Vite の設定とテストの準備）だけを、Node.js の型で検査する。
+  // ほかのファイル（ブラウザと Worker）では、Node.js の型を使えないようにする
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": [
+    "vite.config.ts",
+    "src/server/test-setup.ts",
+    "src/server/test-server.ts",
+    "src/server/test-context.d.ts"
+  ],
+  "exclude": []
+}

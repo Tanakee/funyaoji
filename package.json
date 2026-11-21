@@ -7,7 +7,7 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "check": "vp check && tsc --noEmit && vp test",
+    "check": "vp check && tsc --noEmit && tsc --noEmit -p tsconfig.node.json && vp test",
     "test": "vp test"
   },
   "dependencies": {
