@@ -2,7 +2,10 @@ name: Deploy
 
 on:
   pull_request:
-  push:
+  # 本番へのデプロイは、main の CI が通ってから行う
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -10,19 +13,24 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-${{ github.event_name == 'workflow_run' && 'production' || github.ref }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # フォークからの PR には Secrets が渡らないので、何もしない
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # フォークからの PR には Secrets が渡らないので、何もしない。本番は、main への push の CI が成功したときだけ
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CF_SEND_TELEMETRY: "false"
     steps:
       - uses: actions/checkout@v5
+        with:
+          # workflow_run では、CI が確かめたコミットを使う
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v5
         with:
@@ -47,5 +55,5 @@ jobs:
             --body "プレビュー：$url/screen"
 
       - name: 本番にデプロイする
-        if: github.event_name == 'push'
+        if: github.event_name == 'workflow_run'
         run: npx cf deploy

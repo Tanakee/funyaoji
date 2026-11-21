@@ -13,7 +13,7 @@
 
 ## デプロイ
 
-- デプロイは GitHub Actions が行う（`.github/workflows/deploy.yml`）。PR ごとにプレビューを作り、`main` にマージされると本番にデプロイする
+- デプロイは GitHub Actions が行う（`.github/workflows/deploy.yml`）。PR ごとにプレビューを作り、`main` にマージされ、`main` の CI が通ると本番にデプロイする（`workflow_run`）
 - ローカルからのデプロイ（`npx cf deploy`）は、GitHub Actions が使えないときだけ行う。レビューと CI を通らず、コミットしていない変更も本番に出る
 - ローカルからデプロイすると、本番の内容が `main` とずれる。同じ変更を、あとで `main` に入れる
 - 本番で問題が起きたときは、前のバージョンに戻す（[Rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)）
