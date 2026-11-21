@@ -105,12 +105,14 @@ export class Room extends DurableObject<Env> {
   override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
     // 形の違うメッセージでも、届いたなら接続は生きている
     this.lastMessageAt.set(ws, Date.now());
+    // 閉じかけの接続から届いたものは捨てる。置き換えた古いスクリーンが新しいスクリーンの状態を上書きしたり、
+    // タイムアウトで関節を空けたスマホの入力が、その関節に入った別のスマホの入力と重なったりしないように
+    if (ws.readyState !== WebSocket.OPEN) return;
     // 送信元が送れないメッセージ・形の違うメッセージは、何も返さずに捨てる
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.role === "phone") {
       this.receiveFromPhone(attachment.joint, message);
-    } else if (attachment?.role === "screen" && ws.readyState === WebSocket.OPEN) {
-      // 置き換えて閉じかけの古いスクリーンから遅れて届いたものは、新しいスクリーンの状態を上書きしないように捨てる
+    } else if (attachment?.role === "screen") {
       this.receiveFromScreen(message);
     }
   }
