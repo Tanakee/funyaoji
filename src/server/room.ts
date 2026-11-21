@@ -59,14 +59,14 @@ export class Room extends DurableObject<Env> {
     }
     const { 0: client, 1: server } = new WebSocketPair();
     const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
+    const phase = await this.ctx.storage.get<PhaseMessage>(PHASE_KEY);
 
     // 断る理由は no-room → playing → full の順に調べる
     if (roomCode === undefined) {
       this.reject(server, "no-room");
     } else if (role === "screen") {
-      this.acceptScreen(server, roomCode);
+      this.acceptScreen(server, roomCode, phase);
     } else {
-      const phase = await this.ctx.storage.get<PhaseMessage>(PHASE_KEY);
       if (phase?.phase === "playing") {
         this.reject(server, "playing");
       } else {
@@ -76,13 +76,14 @@ export class Room extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+  override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
     // 送信元が送れないメッセージ・形の違うメッセージは、何も返さずに捨てる
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.role === "phone") {
       this.receiveFromPhone(attachment.joint, message);
-    } else if (attachment?.role === "screen") {
-      await this.receiveFromScreen(message);
+    } else if (attachment?.role === "screen" && ws.readyState === WebSocket.OPEN) {
+      // 置き換えて閉じかけの古いスクリーンから遅れて届いたものは、新しいスクリーンの状態を上書きしないように捨てる
+      this.receiveFromScreen(message);
     }
   }
 
@@ -100,13 +101,14 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  private async receiveFromScreen(message: string | ArrayBuffer): Promise<void> {
+  private receiveFromScreen(message: string | ArrayBuffer): void {
     const received = parseMessage(ScreenToServerMessage, message);
     if (received === undefined) return;
     switch (received.type) {
       case "phase":
-        // プレイ中の参加を断るためと、あとから参加したスマホに送るために保持する
-        await this.ctx.storage.put(PHASE_KEY, received);
+        // プレイ中の参加を断るためと、あとから接続した人に送るために保持する。
+        // put を待たずに送る。送信は書き込みが確定するまで止められ（output gate）、次のメッセージより先に中継される
+        void this.ctx.storage.put(PHASE_KEY, received);
         this.sendToPhones(received);
         break;
       case "status":
@@ -135,7 +137,8 @@ export class Room extends DurableObject<Env> {
     return this.webSocketClose(ws);
   }
 
-  private acceptScreen(ws: WebSocket, roomCode: string): void {
+  /** phase は保持している最後の phase。あれば room のあとに送り、開き直したスクリーンがルームの状態を知れるようにする */
+  private acceptScreen(ws: WebSocket, roomCode: string, phase: PhaseMessage | undefined): void {
     // スクリーンは1つだけ。ページを開き直したときのために、古い接続を閉じて置き換える
     for (const old of this.ctx.getWebSockets("screen")) {
       try {
@@ -147,6 +150,7 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(ws, ["screen"]);
     ws.serializeAttachment({ role: "screen" } satisfies Attachment);
     send(ws, this.roomMessage(roomCode));
+    if (phase !== undefined) send(ws, phase);
   }
 
   /** phase は保持している最後の phase。あれば joined のあとに送り、スマホの表示をルームの状態に合わせる */
