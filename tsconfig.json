@@ -1,25 +1,5 @@
+// エディタがどちらの設定も見つけられるように、2つを参照するだけにする。検査は npm run check が行う
 {
-  "compilerOptions": {
-    "target": "es2023",
-    "module": "esnext",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
-    "jsx": "react-jsx",
-    "skipLibCheck": true,
-
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
-  },
-  "include": ["src", "cloudflare.config.ts", ".cloudflare/types"],
-  // Node.js で動くファイル。tsconfig.node.json で検査する
-  "exclude": ["src/server/test-setup.ts", "src/server/test-server.ts"]
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
 }

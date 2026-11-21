@@ -1,7 +1,7 @@
 {
   // Node.js で動くファイル（Vite の設定とテストの準備）だけを、Node.js の型で検査する。
   // ほかのファイル（ブラウザと Worker）では、Node.js の型を使えないようにする
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "lib": ["ES2023"],
     "types": ["node"]

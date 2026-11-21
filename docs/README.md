@@ -46,7 +46,7 @@ npm run dev
 
 テストのファイルは `*.test.ts`。サーバーのテスト（`src/server/index.test.ts`）は、テストの前に開発サーバーを空いているポートで立て、HTTP と WebSocket でつないで確かめる。開発サーバーは `src/server/test-setup.ts` が立て、テストが終わると止める。Durable Objects のデータはファイルに残さない。`npm run dev` の開発サーバーとは別に動くので、止めなくてよい。
 
-型の検査は2つに分ける。ブラウザと Worker で動くファイルは `tsconfig.json` で、Node.js で動くファイル（`vite.config.ts` と、テストの準備の `src/server/test-setup.ts`・`src/server/test-server.ts`）は `tsconfig.node.json` で検査する。ブラウザと Worker のコードでは、Node.js の型（`process` など）を使えない。`npm run check` は両方を検査する。
+型の検査は2つに分ける。ブラウザと Worker で動くファイルは `tsconfig.app.json` で、Node.js で動くファイル（`vite.config.ts` と、テストの準備の `src/server/test-setup.ts`・`src/server/test-server.ts`）は `tsconfig.node.json` で検査する。ブラウザと Worker のコードでは、Node.js の型（`process` など）を使えない。`npm run check` は両方を検査する。`tsconfig.json` は、エディタのために2つを参照するだけ。
 
 ツールは [Vite+](https://viteplus.dev/guide/)（`vp`）を使う。`vp` はプロジェクトに入っているので、別にインストールしなくてよい。
 

@@ -52,7 +52,9 @@ export default async function setup(project: TestProject): Promise<() => Promise
       }),
     ]);
     // 最初のテストが、開発サーバーの初回の変換を待って遅くならないように、一度呼んでおく
-    await (await fetch(`${url}/api/ping`)).text();
+    const warmup = await fetch(`${url}/api/ping`, { signal: AbortSignal.timeout(START_TIMEOUT) });
+    if (!warmup.ok) throw new Error(`開発サーバーが応答しません（${warmup.status}）`);
+    await warmup.text();
     project.provide("serverUrl", url);
   } catch (error) {
     await stop();

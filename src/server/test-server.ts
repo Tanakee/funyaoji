@@ -6,6 +6,8 @@ import { createServer } from "vite-plus";
 
 const server = await createServer({
   configFile: false,
+  // npm run dev の開発サーバーと同時に動かしても、依存のキャッシュを消し合わないように分ける
+  cacheDir: "node_modules/.vite-test",
   logLevel: "error",
   clearScreen: false,
   plugins: [cloudflare({ persistState: false, inspectorPort: false, types: { generate: false } })],
