@@ -13,6 +13,20 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    projects: [
+      // サーバー以外のテスト。src/ のどこに置いても実行する
+      { test: { name: "unit", include: ["src/**/*.test.ts"], exclude: ["src/server/**"] } },
+      {
+        // サーバーのテストのときだけ、開発サーバーを立てる
+        test: {
+          name: "server",
+          include: ["src/server/**/*.test.ts"],
+          globalSetup: ["src/server/test-setup.ts"],
+        },
+      },
+    ],
+  },
   fmt: {
     ignorePatterns: ["**/*.md", ".github/**"],
   },
