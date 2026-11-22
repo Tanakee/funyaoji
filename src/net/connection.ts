@@ -77,9 +77,9 @@ export function connect<Receive extends { type: string }, Send>(
     close() {
       stopHeartbeat();
       if (state.status === "closed") return;
-      transport.close();
-      // 閉じ終わるのを待たずに閉じたことにする。あとから届くメッセージは捨てる
+      // 閉じ終わるのを待たずに閉じたことにする。あとから届くメッセージと close は捨てる
       setState({ status: "closed", code: NORMAL_CLOSURE, reason: "" });
+      transport.close();
     },
     get state() {
       return state;
