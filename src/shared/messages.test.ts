@@ -52,12 +52,12 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
   {
     name: "phase: lobby",
     message: { type: "phase", phase: "lobby" },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "phase: playing",
     message: { type: "phase", phase: "playing", mode: "10m" },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "phase: result (goal)",
@@ -66,22 +66,22 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
       phase: "result",
       result: { outcome: "goal", distanceM: 10, timeMs: 32500 },
     },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "phase: result (fell, 後ろに進むと負の距離)",
     message: { type: "phase", phase: "result", result: { outcome: "fell", distanceM: -1.5 } },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "phase: result (timeout)",
     message: { type: "phase", phase: "result", result: { outcome: "timeout", distanceM: 6 } },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "phase: result (disconnected)",
     message: { type: "phase", phase: "result", result: { outcome: "disconnected", distanceM: 3 } },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "tilt (スマホの送信)",

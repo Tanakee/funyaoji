@@ -88,10 +88,12 @@ export const ServerToPhoneMessage = v.variant("type", [
 ]);
 export type ServerToPhoneMessage = v.InferOutput<typeof ServerToPhoneMessage>;
 
-// スクリーンも、ルームが無いときは rejected（no-room）を受け取る
+// スクリーンも、ルームが無いときは rejected（no-room）を受け取る。
+// 接続したときは、サーバーが保持している最後の phase を受け取る
 export const ServerToScreenMessage = v.variant("type", [
   RejectedMessage,
   RoomMessage,
+  PhaseMessage,
   RelayedTiltMessage,
   RelayedPongMessage,
 ]);

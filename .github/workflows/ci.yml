@@ -30,3 +30,6 @@ jobs:
 
       - name: ビルド
         run: npm run build
+
+      - name: デプロイの予行（アップロードしない）
+        run: npx cf deploy --prebuilt --mode production --dry-run
