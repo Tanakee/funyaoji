@@ -1,0 +1,80 @@
+# PR・レビュー・Issue・main の CI とデプロイの動きを Discord に知らせる
+# 何を知らせるかと文面は .github/discord/payload.jq
+# 送り先は リポジトリの Secrets の DISCORD_WEBHOOK_URL。無ければ何もしない
+name: Discord に知らせる
+
+on:
+  # pull_request はコンフリクトのある PR では動かないので、pull_request_target を使う。
+  # main のワークフローと jq で動き、PR のコードは動かさない
+  pull_request_target:
+    types: [opened, ready_for_review, review_requested, closed]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened]
+  workflow_run:
+    workflows: [CI, Deploy]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Reviewers に何人も付けると、review_requested が人数分届く。
+    # PR ごとに最後の1回だけを送るよう、前の実行を取り消す
+    concurrency:
+      group: >-
+        ${{ github.event.action == 'review_requested'
+          && format('discord-review-{0}', github.event.pull_request.number)
+          || format('discord-{0}', github.run_id) }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/discord
+
+      - name: ほかの通知を待ってまとめる
+        if: github.event_name == 'pull_request_target' && github.event.action != 'closed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          started=$(date +%s)
+          sleep 20
+          # 待つあいだに付いたレビュアーも載せるため、今の PR を取り直す
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$NUMBER" > pr.json
+          ready_at=$(gh api "repos/$GITHUB_REPOSITORY/issues/$NUMBER/events?per_page=100" \
+            --jq '[.[] | select(.event == "ready_for_review") | .created_at | fromdateiso8601] | max // 0')
+          jq --slurpfile pr pr.json --argjson started "$started" --argjson ready_at "$ready_at" \
+            '.pull_request = $pr[0] | .started = $started | .ready_at = $ready_at' \
+            "$GITHUB_EVENT_PATH" > event.json
+
+      - name: 送る
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::DISCORD_WEBHOOK_URL が無いので知らせない"
+            exit 0
+          fi
+          # 登録のときに混ざりやすい空白・改行・引用符を取り除く
+          WEBHOOK=$(printf '%s' "$WEBHOOK" | tr -d "[:space:]\"'")
+          case "$WEBHOOK" in
+            https://discord.com/api/webhooks/*|https://discordapp.com/api/webhooks/*) ;;
+            *)
+              echo "::error::DISCORD_WEBHOOK_URL が Discord の Webhook URL の形になっていない（https://discord.com/api/webhooks/ で始まるか見る）"
+              exit 1
+              ;;
+          esac
+          [ -f event.json ] || cp "$GITHUB_EVENT_PATH" event.json
+          jq --arg event "$GITHUB_EVENT_NAME" -f .github/discord/payload.jq event.json > payload.json
+          if [ ! -s payload.json ]; then
+            echo "知らせないイベントなので送らない"
+            exit 0
+          fi
+          curl -fsS -H "Content-Type: application/json" -d @payload.json "$WEBHOOK"
