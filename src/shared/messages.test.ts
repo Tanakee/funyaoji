@@ -1,6 +1,7 @@
 import * as v from "valibot";
 import { describe, expect, test } from "vite-plus/test";
 import {
+  HEARTBEAT,
   JOINTS,
   PhoneToServerMessage,
   ScreenToServerMessage,
@@ -114,6 +115,16 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
     message: { type: "pong", id: 7, joint: "rightHip" },
     directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
   },
+  {
+    name: "heartbeat",
+    message: { type: "heartbeat" },
+    directions: [
+      "ServerToPhoneMessage",
+      "ServerToScreenMessage",
+      "PhoneToServerMessage",
+      "ScreenToServerMessage",
+    ],
+  },
 ];
 
 // フィールドを1つ消した形と、1つを null にした形。result の中のフィールドも対象にする
@@ -186,6 +197,10 @@ describe("メッセージのスキーマ", () => {
 
   test.each(rejected)("$name は、どの送信方向でも拒否する", (c) => {
     expect(acceptedBy(c.message)).toEqual([]);
+  });
+
+  test("ハートビートの文字列は docs/api.md の例と同じ", () => {
+    expect(HEARTBEAT).toBe('{"type":"heartbeat"}');
   });
 
   test("スクリーンが受信する tilt は joint が無いと拒否する", () => {

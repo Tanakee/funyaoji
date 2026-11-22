@@ -78,6 +78,15 @@ export type PongMessage = v.InferOutput<typeof PongMessage>;
 export const RelayedPongMessage = v.object({ ...PongMessage.entries, joint: Joint });
 export type RelayedPongMessage = v.InferOutput<typeof RelayedPongMessage>;
 
+// 接続が生きていることを知らせる。サーバーは中継せず、同じ文字列をそのまま返す
+export const HeartbeatMessage = v.object({ type: v.literal("heartbeat") });
+export type HeartbeatMessage = v.InferOutput<typeof HeartbeatMessage>;
+
+/** ハートビートとして送る文字列。サーバーは、この文字列と完全に一致するものにだけ返す */
+export const HEARTBEAT = JSON.stringify({ type: "heartbeat" } satisfies HeartbeatMessage);
+/** スマホとスクリーンがハートビートを送る間隔 */
+export const HEARTBEAT_INTERVAL_MS = 5_000;
+
 export const ServerToPhoneMessage = v.variant("type", [
   JoinedMessage,
   RejectedMessage,
@@ -85,6 +94,7 @@ export const ServerToPhoneMessage = v.variant("type", [
   PhaseMessage,
   StatusMessage,
   PingMessage,
+  HeartbeatMessage,
 ]);
 export type ServerToPhoneMessage = v.InferOutput<typeof ServerToPhoneMessage>;
 
@@ -96,11 +106,17 @@ export const ServerToScreenMessage = v.variant("type", [
   PhaseMessage,
   RelayedTiltMessage,
   RelayedPongMessage,
+  HeartbeatMessage,
 ]);
 export type ServerToScreenMessage = v.InferOutput<typeof ServerToScreenMessage>;
 
-export const PhoneToServerMessage = v.variant("type", [TiltMessage, PongMessage]);
+export const PhoneToServerMessage = v.variant("type", [TiltMessage, PongMessage, HeartbeatMessage]);
 export type PhoneToServerMessage = v.InferOutput<typeof PhoneToServerMessage>;
 
-export const ScreenToServerMessage = v.variant("type", [PhaseMessage, StatusMessage, PingMessage]);
+export const ScreenToServerMessage = v.variant("type", [
+  PhaseMessage,
+  StatusMessage,
+  PingMessage,
+  HeartbeatMessage,
+]);
 export type ScreenToServerMessage = v.InferOutput<typeof ScreenToServerMessage>;
