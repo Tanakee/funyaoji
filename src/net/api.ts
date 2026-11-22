@@ -1,14 +1,15 @@
 import * as v from "valibot";
-import { PingResponse } from "../shared/api.ts";
+import { CreateRoomResponse } from "../shared/api.ts";
 
-export async function fetchPing(): Promise<PingResponse> {
-  const response = await fetch("/api/ping");
+/** ルームを作り、ルームコードを返す（POST /api/rooms） */
+export async function createRoom(): Promise<string> {
+  const response = await fetch("/api/rooms", { method: "POST" });
   if (!response.ok) {
-    throw new Error(`/api/ping が ${response.status} を返しました`);
+    throw new Error(`/api/rooms が ${response.status} を返しました`);
   }
-  const result = v.safeParse(PingResponse, await response.json());
+  const result = v.safeParse(CreateRoomResponse, await response.json());
   if (!result.success) {
-    throw new Error("/api/ping のレスポンスの形が違います");
+    throw new Error("/api/rooms のレスポンスの形が違います");
   }
-  return result.output;
+  return result.output.roomCode;
 }

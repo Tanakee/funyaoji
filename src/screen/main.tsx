@@ -1,11 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { fetchPing } from "../net/api.ts";
-import { ScreenApp, type PingResult } from "./ui/ScreenApp.tsx";
+import { createRoom } from "../net/api.ts";
+import { ScreenApp, type CreateRoomResult } from "./ui/ScreenApp.tsx";
 
-const ping = fetchPing().then(
-  ({ count }): PingResult => ({ ok: true, count }),
-  (error: unknown): PingResult => ({
+// React の外で1回だけ作る。StrictMode で描画が2回走っても、ルームは1つ
+const room = createRoom().then(
+  (roomCode): CreateRoomResult => ({ ok: true, roomCode }),
+  (error: unknown): CreateRoomResult => ({
     ok: false,
     message: error instanceof Error ? error.message : String(error),
   }),
@@ -13,6 +14,6 @@ const ping = fetchPing().then(
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ScreenApp ping={ping} />
+    <ScreenApp room={room} />
   </StrictMode>,
 );
