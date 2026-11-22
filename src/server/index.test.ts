@@ -23,9 +23,13 @@ class Client {
   private waiting: ((message: unknown) => void) | undefined;
   /** 閉じられたときの close コード */
   readonly closed: Promise<number>;
+  /** つながったか。開く前に error になるか閉じたら false */
+  readonly opened: Promise<boolean>;
 
-  constructor(roomCode: string, role: string) {
-    const url = new URL(`/api/rooms/${roomCode}/ws?role=${role}`, serverUrl);
+  /** role を省くと、クエリに role を付けない */
+  constructor(roomCode: string, role?: string) {
+    const url = new URL(`/api/rooms/${roomCode}/ws`, serverUrl);
+    if (role !== undefined) url.searchParams.set("role", role);
     url.protocol = "ws:";
     this.ws = new WebSocket(url);
     openClients.add(this);
@@ -40,6 +44,12 @@ class Client {
     });
     this.closed = new Promise((resolve) => {
       this.ws.addEventListener("close", (event) => resolve(event.code));
+    });
+    // 開発サーバーでつながらなかったときは、error だけが届き、close は届かない
+    this.opened = new Promise((resolve) => {
+      this.ws.addEventListener("open", () => resolve(true));
+      this.ws.addEventListener("error", () => resolve(false));
+      this.ws.addEventListener("close", () => resolve(false));
     });
   }
 
@@ -140,6 +150,19 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     const roomCode = await createRoom();
     const response = await fetch(new URL(`/api/rooms/${roomCode}/ws?role=phone`, serverUrl));
     expect(response.status).toBe(426);
+  });
+
+  // 開発サーバーは 101 以外を返すと、ステータスを返さずに接続を切るので、つながらないことだけを確かめる
+  test("role が無ければ、つながらない", async () => {
+    const roomCode = await createRoom();
+    const client = new Client(roomCode);
+    expect(await client.opened).toBe(false);
+  });
+
+  test("role が screen・phone のどちらでもなければ、つながらない", async () => {
+    const roomCode = await createRoom();
+    const client = new Client(roomCode, "admin");
+    expect(await client.opened).toBe(false);
   });
 
   test("スクリーンがつなぐと、room が届く", async () => {
