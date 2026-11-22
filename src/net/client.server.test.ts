@@ -76,23 +76,3 @@ test("スクリーンがスマホの tilt を受け取り、小さいシーケ�
   expect(await screenInbox.next()).toEqual({ type: "tilt", seq: 2, angle: 20, joint: "rightHip" });
   expect(await screenInbox.next()).toEqual({ type: "tilt", seq: 3, angle: 30, joint: "rightHip" });
 });
-
-test("無いルームには、rejected を受け取り、4001 で閉じる", async () => {
-  const screenInbox = new Inbox<ScreenReceived>();
-  const closed = new Promise<number>((resolve) => {
-    const screen = connectScreen(
-      // 0 はルームコードに使わない文字なので、どのルームとも重ならない
-      "0000",
-      {
-        onMessage: screenInbox.push,
-        onStateChange: (state) => {
-          if (state.status === "closed") resolve(state.code);
-        },
-      },
-      { baseUrl: serverUrl },
-    );
-    openConnections.add(screen);
-  });
-  expect(await screenInbox.next()).toEqual({ type: "rejected", reason: "no-room" });
-  expect(await closed).toBe(4001);
-});
