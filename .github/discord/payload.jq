@@ -84,7 +84,8 @@ def workflow_run_embed:
   | {
       title: (.[0]),
       url: $w.html_url,
-      description: ($w.display_title | cut(4096)),
+      # workflow_run で動く Deploy の display_title は「Deploy」になるので、コミットの1行目を使う
+      description: ($w.head_commit.message // $w.display_title | split("\n")[0] | cut(4096)),
       color: (.[1]),
       author: ($w.actor | who),
       fields: [{name: "コミット", value: ("`" + $w.head_sha[0:7] + "`"), inline: true}]
