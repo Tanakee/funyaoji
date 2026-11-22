@@ -74,7 +74,9 @@ def issue_embed:
 
 def workflow_run_embed:
   .workflow_run as $w
-  | if .action != "completed" or $w.event != "push" or $w.head_branch != "main" then empty
+  | if .action != "completed" or $w.head_branch != "main" then empty
+    # 本番へのデプロイは main の CI のあとに workflow_run で動く。main への push の CI と、その Deploy だけを知らせる
+    elif $w.event != (if $w.name == "Deploy" then "workflow_run" else "push" end) then empty
     elif $w.name == "CI" and ($w.conclusion | failed) then ["main の CI が落ちた", red]
     elif $w.name == "Deploy" and $w.conclusion == "success" then ["本番にデプロイした", green]
     elif $w.name == "Deploy" and ($w.conclusion | failed) then ["本番へのデプロイが落ちた", red]
