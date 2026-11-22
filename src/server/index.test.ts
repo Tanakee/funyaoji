@@ -8,7 +8,6 @@ const serverUrl = inject("serverUrl");
 /** メッセージが届くのを待つ時間 */
 const TIMEOUT = 3000;
 
-/** WebSocket の接続。届いたメッセージを順に取り出せる */
 /** テストで開いた接続。テストが失敗しても、終わったら閉じる */
 const openClients = new Set<Client>();
 afterEach(() => {
@@ -17,6 +16,7 @@ afterEach(() => {
   openClients.clear();
 });
 
+/** WebSocket の接続。届いたメッセージを順に取り出せる */
 class Client {
   private readonly ws: WebSocket;
   private readonly received: unknown[] = [];
