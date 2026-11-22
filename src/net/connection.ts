@@ -52,8 +52,9 @@ export function connect<Receive extends { type: string }, Send>(
   const transport: Transport = options.open({
     onOpen() {
       if (state.status !== "connecting") return;
-      setState({ status: "open" });
+      // 先にタイマーを置く。onStateChange の中で close() されても、そこで止められる
       heartbeat = setInterval(() => transport.send(HEARTBEAT), HEARTBEAT_INTERVAL_MS);
+      setState({ status: "open" });
     },
     onMessage(data) {
       if (state.status !== "open") return;

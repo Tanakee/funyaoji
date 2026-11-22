@@ -37,10 +37,14 @@ function Lobby({ roomCode }: { roomCode: string }) {
   const [tilts, setTilts] = useState<Partial<Record<Joint, LastTilt>>>({});
 
   useEffect(() => {
+    // StrictMode では effect が2回走る。1回目の close() が「切れた」を表示しないように、片付けたあとの状態は捨てる
+    let active = true;
     const conn = connectScreen(
       roomCode,
       {
-        onStateChange: setConnection,
+        onStateChange: (state) => {
+          if (active) setConnection(state);
+        },
         onMessage(message) {
           switch (message.type) {
             case "room":
@@ -65,10 +69,15 @@ function Lobby({ roomCode }: { roomCode: string }) {
       },
       { baseUrl: location.href },
     );
-    return () => conn.close();
+    return () => {
+      active = false;
+      conn.close();
+    };
   }, [roomCode]);
 
-  const phoneUrl = new URL(`/play?room=${roomCode}`, location.href).href;
+  const playUrl = new URL("/play", location.href);
+  playUrl.searchParams.set("room", roomCode);
+  const phoneUrl = playUrl.href;
 
   return (
     <>

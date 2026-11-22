@@ -81,7 +81,8 @@ test("無いルームには、rejected を受け取り、4001 で閉じる", asy
   const screenInbox = new Inbox<ScreenReceived>();
   const closed = new Promise<number>((resolve) => {
     const screen = connectScreen(
-      "ZZZZ",
+      // 0 はルームコードに使わない文字なので、どのルームとも重ならない
+      "0000",
       {
         onMessage: screenInbox.push,
         onStateChange: (state) => {

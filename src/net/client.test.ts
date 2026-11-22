@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test } from "vite-plus/test";
 import {
   connectPhone,
   connectScreen,
@@ -6,7 +6,15 @@ import {
   type PhoneReceived,
   type ScreenReceived,
 } from "./client.ts";
+import type { Connection } from "./connection.ts";
 import { FakeTransport } from "./fake-transport.ts";
+
+// 開いた接続はハートビートのタイマーを持つので、テストのたびに閉じる
+const openConnections = new Set<Connection<unknown>>();
+afterEach(() => {
+  for (const connection of openConnections) connection.close();
+  openConnections.clear();
+});
 
 describe("roomSocketUrl", () => {
   test("http のページからは ws で、role を付けてつなぐ", () => {
@@ -31,6 +39,7 @@ describe("connectScreen", () => {
       { onMessage: (message) => received.push(message) },
       { baseUrl: "http://localhost:5173/screen", transport: transport.factory },
     );
+    openConnections.add(connection);
     transport.emitOpen();
     return { transport, received, connection };
   }
@@ -79,11 +88,12 @@ describe("connectPhone", () => {
   test("role=phone の URL で開き、スマホが受け取るメッセージだけを渡す", () => {
     const transport = new FakeTransport();
     const received: PhoneReceived[] = [];
-    connectPhone(
+    const connection = connectPhone(
       "K7Q2",
       { onMessage: (message) => received.push(message) },
       { baseUrl: "http://localhost:5173/play?room=K7Q2", transport: transport.factory },
     );
+    openConnections.add(connection);
     expect(transport.url?.href).toBe("ws://localhost:5173/api/rooms/K7Q2/ws?role=phone");
     transport.emitOpen();
     transport.emitMessage({ type: "joined", joint: "rightHip" });

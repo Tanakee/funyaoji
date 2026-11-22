@@ -36,10 +36,10 @@ export interface ClientOptions {
   transport?: (url: URL) => OpenTransport;
 }
 
-/** GET /api/rooms/<ルームコード>/ws?role=<role> の URL。http は ws に、https は wss にする */
+/** GET /api/rooms/<ルームコード>/ws?role=<role> の URL。http と ws は ws に、https と wss は wss にする */
 export function roomSocketUrl(baseUrl: string | URL, roomCode: string, role: Role): URL {
   const url = new URL(`/api/rooms/${encodeURIComponent(roomCode)}/ws`, baseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
   url.searchParams.set("role", role);
   return url;
 }

@@ -146,4 +146,19 @@ describe("ハートビート", () => {
     connection.close();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  test("open を知らせた中で閉じても止める", () => {
+    const transport = new FakeTransport();
+    const connection = connect<ServerToPhoneMessage, PhoneToServerMessage>({
+      open: transport.open,
+      schema: ServerToPhoneMessage,
+      onMessage: () => {},
+      onStateChange: (state) => {
+        if (state.status === "open") connection.close();
+      },
+    });
+    transport.emitOpen();
+    expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
