@@ -34,7 +34,35 @@ export interface Params {
   kneeAuto: number;
   /** 腕を付ける（頭はいつも付く） */
   upperBody: boolean;
+  /** 体の形と重さ、関節の範囲 */
+  body: BodySpec;
+  /** モーターが出せる力の上限（体重の何倍のトルクか。0 で上限なし） */
+  motorMaxForce: number;
 }
+
+/** 体の形（半分の幅 hw・半分の高さ hh、m）と密度。関節の範囲は rad */
+export interface BodySpec {
+  torso: { hw: number; hh: number; density: number };
+  head: { r: number; density: number };
+  thigh: { hw: number; hh: number; density: number };
+  shin: { hw: number; hh: number; density: number };
+  foot: { hw: number; hh: number; density: number; offset: number };
+  /** 股関節の範囲。[後ろ, 前]。入力 0 が後ろ、1 が前 */
+  hipRange: [number, number];
+  /** ひざの範囲。[伸ばした, 曲げた]。入力 0 が伸ばした、1 が曲げた */
+  kneeRange: [number, number];
+}
+
+// 密度は、QWOP の再現実装の質量比（胴 18：もも 10：すね 7：足 11）に近づけた値
+export const DEFAULT_BODY: BodySpec = {
+  torso: { hw: 0.16, hh: 0.32, density: 50 },
+  head: { r: 0.12, density: 30 },
+  thigh: { hw: 0.07, hh: 0.22, density: 90 },
+  shin: { hw: 0.06, hh: 0.22, density: 75 },
+  foot: { hw: 0.13, hh: 0.04, density: 300, offset: 0.03 },
+  hipRange: [-0.6, 1.4],
+  kneeRange: [0, -1.6],
+};
 
 export const DEFAULT_PARAMS: Params = {
   mode: "angle",
@@ -51,15 +79,10 @@ export const DEFAULT_PARAMS: Params = {
   fallMode: "torso",
   kneeAuto: 0,
   upperBody: false,
+  body: DEFAULT_BODY,
+  motorMaxForce: 0,
 };
 
-// 関節の角度の範囲（rad）。入力 0 が lo、1 が hi
-const RANGE: Record<JointName, { lo: number; hi: number }> = {
-  rightHip: { lo: -0.6, hi: 1.4 },
-  leftHip: { lo: -0.6, hi: 1.4 },
-  rightKnee: { lo: 0, hi: -1.6 },
-  leftKnee: { lo: 0, hi: -1.6 },
-};
 
 /** 操作しないときの入力の値。方式ごとに違う */
 export function neutralInput(mode: Mode): Record<JointName, number> {
@@ -68,12 +91,6 @@ export function neutralInput(mode: Mode): Record<JointName, number> {
   return { rightHip: 0.3, leftHip: 0.3, rightKnee: 0, leftKnee: 0 };
 }
 
-const TORSO = { hw: 0.16, hh: 0.32 };
-const THIGH = { hw: 0.07, hh: 0.22 };
-const SHIN = { hw: 0.06, hh: 0.22 };
-const FOOT = { hw: 0.13, hh: 0.04 };
-const HIP_Y = THIGH.hh * 2 + SHIN.hh * 2 + FOOT.hh * 2;
-const HANG_Y = 2.5;
 export const GOAL_M = 10;
 
 const GROUP_GROUND = (0x0001 << 16) | 0xffff;
@@ -109,6 +126,10 @@ export class Sim {
   ended: "goal" | "fell" | undefined;
   private prevInput: Record<JointName, number> | undefined;
   params: Params;
+  /** 関節の角度の範囲（rad）。入力 0 が lo、1 が hi */
+  range: Record<JointName, { lo: number; hi: number }>;
+  private hipY: number;
+  private hangY: number;
 
   static async init(): Promise<void> {
     await RAPIER.init();
@@ -116,6 +137,17 @@ export class Sim {
 
   constructor(params: Params) {
     this.params = params;
+    const B = params.body;
+    const TORSO = B.torso;
+    const THIGH = B.thigh;
+    const SHIN = B.shin;
+    const FOOT = B.foot;
+    const HIP_Y = THIGH.hh * 2 + SHIN.hh * 2 + FOOT.hh * 2;
+    this.hipY = HIP_Y;
+    this.hangY = HIP_Y + TORSO.hh * 2 + 0.8;
+    const hip = { lo: B.hipRange[0], hi: B.hipRange[1] };
+    const knee = { lo: B.kneeRange[0], hi: B.kneeRange[1] };
+    this.range = { rightHip: hip, leftHip: hip, rightKnee: knee, leftKnee: knee };
     const world = new RAPIER.World({ x: 0, y: -9.81 });
     // 1コマ（1/60秒）を4回に分けて計算する。細かく刻むほど、強い補助やモーターでも振動しにくい
     world.timestep = 1 / 240;
@@ -148,16 +180,15 @@ export class Sim {
     const dynamic = (x: number, y: number) =>
       world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y));
 
-    // 密度は、QWOP の再現実装の質量比（胴 18：もも 10：すね 7：足 11）に近づけた値
     const torso = dynamic(0, HIP_Y + TORSO.hh);
     this.torso = torso;
-    const torsoShapes: Shape[] = [box(torso, TORSO, 50, 0.2)];
+    const torsoShapes: Shape[] = [box(torso, TORSO, TORSO.density, 0.2)];
     {
-      const r = 0.12;
+      const r = B.head.r;
       world.createCollider(
         RAPIER.ColliderDesc.ball(r)
           .setTranslation(0, TORSO.hh + r)
-          .setDensity(30)
+          .setDensity(B.head.density)
           .setFriction(0.2)
           .setCollisionGroups(GROUP_BODY),
         torso,
@@ -169,31 +200,31 @@ export class Sim {
     for (const side of ["left", "right"] as const) {
       const thigh = dynamic(0, HIP_Y - THIGH.hh);
       const shin = dynamic(0, HIP_Y - THIGH.hh * 2 - SHIN.hh);
-      this.parts.push({ name: "thigh", body: thigh, shapes: [box(thigh, THIGH, 90, 0.2)], side });
+      this.parts.push({ name: "thigh", body: thigh, shapes: [box(thigh, THIGH, THIGH.density, 0.2)], side });
       this.parts.push({
         name: "shin",
         body: shin,
         shapes: [
-          box(shin, SHIN, 75, 0.2),
+          box(shin, SHIN, SHIN.density, 0.2),
           // 足はすねに固定する（足首は動かない）。足だけ摩擦と密度を大きくする
           box(
             shin,
             { hw: FOOT.hw * params.footScale, hh: FOOT.hh },
-            300 / params.footScale,
+            FOOT.density / params.footScale,
             params.footFriction,
-            0.03 * params.footScale,
+            FOOT.offset * params.footScale,
             -SHIN.hh - FOOT.hh,
           ),
         ],
         side,
       });
-      const hip = world.createImpulseJoint(
+      const hipJ = world.createImpulseJoint(
         RAPIER.JointData.revolute({ x: 0, y: -TORSO.hh }, { x: 0, y: THIGH.hh }),
         torso,
         thigh,
         true,
       ) as RAPIER.RevoluteImpulseJoint;
-      const knee = world.createImpulseJoint(
+      const kneeJ = world.createImpulseJoint(
         RAPIER.JointData.revolute({ x: 0, y: -THIGH.hh }, { x: 0, y: SHIN.hh }),
         thigh,
         shin,
@@ -201,10 +232,10 @@ export class Sim {
       ) as RAPIER.RevoluteImpulseJoint;
       const hipName: JointName = `${side}Hip`;
       const kneeName: JointName = `${side}Knee`;
-      hip.setLimits(RANGE[hipName].lo, RANGE[hipName].hi);
-      knee.setLimits(RANGE[kneeName].hi, RANGE[kneeName].lo);
-      this.joints[hipName] = hip;
-      this.joints[kneeName] = knee;
+      hipJ.setLimits(Math.min(hip.lo, hip.hi), Math.max(hip.lo, hip.hi));
+      kneeJ.setLimits(Math.min(knee.lo, knee.hi), Math.max(knee.lo, knee.hi));
+      this.joints[hipName] = hipJ;
+      this.joints[kneeName] = kneeJ;
       this.children[hipName] = { parent: torso, child: thigh };
       this.children[kneeName] = { parent: thigh, child: shin };
 
@@ -239,7 +270,7 @@ export class Sim {
   }
 
   targetAngle(name: JointName, u: number): number {
-    const { lo, hi } = RANGE[name];
+    const { lo, hi } = this.range[name];
     return lo + (hi - lo) * u;
   }
 
@@ -250,6 +281,13 @@ export class Sim {
   step(input: Record<JointName, number>): void {
     if (this.ended) return;
     const p = this.params;
+    const RANGE = this.range;
+    const THIGH = p.body.thigh;
+    const SHIN = p.body.shin;
+    const FOOT = p.body.foot;
+    const HIP_Y = this.hipY;
+    const HANG_Y = this.hangY;
+    const TORSO = p.body.torso;
     for (const part of this.parts) {
       part.body.resetForces(true);
       part.body.resetTorques(true);
@@ -268,6 +306,7 @@ export class Sim {
       }
       if (p.mode === "angle" || p.mode === "both") {
         joint.configureMotorPosition(this.targetAngle(name, u), p.stiffness, p.damping);
+        if (p.motorMaxForce > 0) joint.setMotorMaxForce(p.motorMaxForce * this.mass * 9.81);
       } else if (p.mode === "velocity") {
         const dir = Math.sign(RANGE[name].hi - RANGE[name].lo);
         joint.configureMotorVelocity((u - 0.5) * 2 * p.maxSpeed * dir, p.stiffness * 5);
@@ -361,6 +400,8 @@ export class Sim {
 
   /** 胴か頭が地面に触れたか */
   private touchesGround(): boolean {
+    const TORSO = this.params.body.torso;
+    const R = this.params.body.head.r;
     const t = this.torso.translation();
     const rot = this.torso.rotation();
     const cos = Math.cos(rot);
@@ -372,8 +413,8 @@ export class Sim {
       }
     }
     {
-      const hy = t.y + (TORSO.hh + 0.12) * cos;
-      if (hy - 0.12 < 0.02) return true;
+      const hy = t.y + (TORSO.hh + R) * cos;
+      if (hy - R < 0.02) return true;
     }
     return false;
   }
