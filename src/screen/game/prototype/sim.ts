@@ -283,6 +283,9 @@ export class Sim {
           const f = Math.max(0, ((k * weight) / 0.2) * (dist - len) - weight * 0.5 * along);
           const capped = Math.min(f, weight * 3);
           body.addForceAtPoint({ x: nx * capped, y: ny * capped }, at, true);
+          // 糸の反対側は、胴に付いた枠が持っている扱いにする。同じ大きさで逆向きの力を胴にかける。
+          // こうしないと、体の外から押す力になり、足が浮いていても勝手に進む
+          this.torso.addForce({ x: -nx * capped, y: -ny * capped }, true);
         }
         this.strings.push({ joint: name, from: hang, to: at, taut });
       }
