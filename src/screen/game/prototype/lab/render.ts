@@ -136,7 +136,7 @@ function frameSvg(recs: Recording[], t: number, cols: number): string {
     .map((r, i) => {
       const x = (i % cols) * W;
       const y = Math.floor(i / cols) * H;
-      return `<g transform="translate(${x},${y})">${panel(r, t)}<rect width="${W}" height="${H}" fill="none" stroke="#a89f8c"/></g>`;
+      return `<g transform="translate(${x},${y})"><clipPath id="c${i}"><rect width="${W}" height="${H}"/></clipPath><g clip-path="url(#c${i})">${panel(r, t)}</g><rect width="${W}" height="${H}" fill="none" stroke="#a89f8c"/></g>`;
     })
     .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" font-family="sans-serif">${body}</svg>`;
