@@ -49,6 +49,12 @@ function Lobby({ roomCode }: { roomCode: string }) {
           switch (message.type) {
             case "room":
               setJoints(message.joints);
+              // 抜けたスマホの角度を残さない。次に同じ関節に入ったスマホの行に、前の値を出さない
+              setTilts((prev) =>
+                Object.fromEntries(
+                  Object.entries(prev).filter(([joint]) => message.joints.includes(joint as Joint)),
+                ),
+              );
               break;
             case "phase":
               setPhase(message);
@@ -57,6 +63,9 @@ function Lobby({ roomCode }: { roomCode: string }) {
               setRejected(message.reason);
               break;
             case "tilt":
+              // 確かめるための一時的な表示。tilt のたびに React の state を変え、描画し直している。
+              // docs/design.md の「フレームごとの描画と通信は React の外に置く」に合わないので、
+              // ロビー（#44）やプレイの画面では、この形をまねしない
               setTilts((prev) => ({
                 ...prev,
                 [message.joint]: { seq: message.seq, angle: message.angle },

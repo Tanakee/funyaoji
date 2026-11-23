@@ -78,8 +78,14 @@ export function connect<Receive extends { type: string }, Send>(
       stopHeartbeat();
       if (state.status === "closed") return;
       // 閉じ終わるのを待たずに閉じたことにする。あとから届くメッセージと close は捨てる
-      setState({ status: "closed", code: NORMAL_CLOSURE, reason: "" });
-      transport.close();
+      const closed: ConnectionState = { status: "closed", code: NORMAL_CLOSURE, reason: "" };
+      state = closed;
+      // 知らせる前にトランスポートを閉じる。onStateChange が例外を投げたり、プロセスを終えたりしても、閉じ損ねない
+      try {
+        transport.close();
+      } finally {
+        options.onStateChange?.(closed);
+      }
     },
     get state() {
       return state;

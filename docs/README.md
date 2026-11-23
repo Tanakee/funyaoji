@@ -36,7 +36,7 @@ npm run dev
 
 ローカルの Durable Objects のデータは、Local Explorer（`http://localhost:5173/cdn-cgi/local/explorer`）で見られる。
 
-スマホのページが無くても、スクリプトをスマホの代わりにつなげる。`/screen` に表示されたルームコードを渡すと、`role=phone` で接続し、`tilt` を毎秒30回送り続ける。`ping` には `pong` を返す。受信したメッセージを表示し、Ctrl+C で止まる。
+スマホのページが無くても、スクリプトをスマホの代わりにつなげる。`/screen` に表示されたルームコードを渡すと、`role=phone` で接続し、`tilt` を毎秒30回送り続ける。`ping` には `pong` を返す。受信したメッセージを表示し、Ctrl+C ですべての台を閉じてから止まる。どれかの台が断られた（`rejected`）か、一度もつながらなかったときは、終了コード 1 で終わる。
 
 ```sh
 node scripts/fake-phone.ts <ルームコード>
