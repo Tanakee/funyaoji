@@ -19,6 +19,10 @@ export interface Params {
   stringK: number;
   /** 糸を最大まで引いたときに短くなる長さ（m） */
   stringPull: number;
+  /** 糸だけのとき、胴を吊る糸が支える体重の割合（0〜1） */
+  support: number;
+  /** 吊る点の前後のずれ（m）。0 で真上から引く。大きいと、糸の力が前後に押す力になる */
+  stringOffset: number;
   /** 胴を起こす補助の強さ。0 で補助なし */
   assist: number;
   footFriction: number;
@@ -33,6 +37,8 @@ export const DEFAULT_PARAMS: Params = {
   maxSpeed: 3,
   stringK: 6,
   stringPull: 0.6,
+  support: 0.5,
+  stringOffset: 0,
   assist: 0,
   footFriction: 1.5,
   upperBody: false,
@@ -257,7 +263,7 @@ export class Sim {
         const c = body.translation();
         const at = { x: c.x + Math.sin(rot) * hh, y: c.y - Math.cos(rot) * hh };
         // 吊る点は体と一緒に動く。股関節の糸は少し前、ひざの糸は少し後ろ
-        const hang = { x: tx + (isHip ? 0.35 : -0.25), y: HANG_Y };
+        const hang = { x: tx + (isHip ? p.stringOffset : -p.stringOffset * 0.7), y: HANG_Y };
         const slack = isHip ? HANG_Y - (HIP_Y - THIGH.hh * 2) + 0.06 : HANG_Y - FOOT.hh * 2 + 0.06;
         const u = Math.min(1, Math.max(0, input[name]));
         // 併用のときは、モーターの中立の姿勢で糸がちょうど張る長さにする
@@ -289,7 +295,7 @@ export class Sim {
       const c = this.torso.translation();
       const top = { x: c.x - Math.sin(rot) * TORSO.hh, y: c.y + Math.cos(rot) * TORSO.hh };
       const vy = this.torso.velocityAtPoint(top).y;
-      const fy = Math.max(0, weight * (0.9 + 8 * (HIP_Y + TORSO.hh * 2 - top.y)) - weight * 0.6 * vy);
+      const fy = Math.max(0, weight * (p.support + 8 * (HIP_Y + TORSO.hh * 2 - top.y)) - weight * 0.6 * vy);
       this.torso.addForceAtPoint({ x: 0, y: Math.min(fy, weight * 3) }, top, true);
       this.strings.push({
         joint: "rightHip",

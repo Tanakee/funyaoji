@@ -59,6 +59,8 @@ const SLIDERS: { key: keyof Params; label: string; min: number; max: number; ste
   { key: "maxSpeed", label: "A2 の最大の速さ (rad/s)", min: 0.5, max: 8, step: 0.1 },
   { key: "stringK", label: "糸の強さ", min: 0, max: 20, step: 0.5 },
   { key: "stringPull", label: "糸を引く長さ (m)", min: 0.1, max: 1.2, step: 0.05 },
+  { key: "support", label: "B：胴を吊る力（体重の割合）", min: 0, max: 1, step: 0.05 },
+  { key: "stringOffset", label: "B：吊る点の前後のずれ (m)", min: 0, max: 0.5, step: 0.05 },
   { key: "assist", label: "胴を起こす補助", min: 0, max: 5, step: 0.1 },
   { key: "footFriction", label: "足の摩擦（変えるとリセット）", min: 0, max: 3, step: 0.1 },
 ];
