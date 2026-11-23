@@ -62,13 +62,15 @@ const SLIDERS: { key: keyof Params; label: string; min: number; max: number; ste
   { key: "stringPull", label: "糸を引く長さ (m)", min: 0.1, max: 1.2, step: 0.05 },
   { key: "support", label: "B：胴を吊る力（体重の割合）", min: 0, max: 1, step: 0.05 },
   { key: "stringOffset", label: "B：吊る点の前後のずれ (m)", min: 0, max: 0.5, step: 0.05 },
-  { key: "assist", label: "胴を起こす補助", min: 0, max: 5, step: 0.1 },
+  { key: "assist", label: "胴を起こす補助", min: 0, max: 12, step: 0.5 },
+  { key: "kneeAuto", label: "ひざの半自動（ももを前に振ると曲がる）", min: 0, max: 1, step: 0.1 },
   { key: "footFriction", label: "足の摩擦（変えるとリセット）", min: 0, max: 3, step: 0.1 },
 ];
 
-const params: Params = { ...DEFAULT_PARAMS, assist: 2 };
-// お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約16秒）。値は bot.ts の計測と同じものを使う
-const DEMO: Gait = { T: 1.53, h0: 0.23, A: 0.46, K: 0.89, kp: 0.53 };
+// 初期値は、計測でいちばん崩れにくかった設定（補助 8、ひざの半自動 0.8）
+const params: Params = { ...DEFAULT_PARAMS, assist: 8, kneeAuto: 0.8 };
+// お手本：機械的に探した歩き方（A1 目標角度、補助 8、ひざの半自動 0.8 で 10m を約7秒）
+const DEMO: Gait = { T: 1.05, h0: 0.45, A: 0.4, K: 0.84, kp: 4.56 };
 let demo = false;
 /** お手本の再生中に、自分で動かす関節。空ならお手本が全部動かす */
 let solo: JointName | "" = "";
@@ -152,7 +154,6 @@ function buildUi(): void {
   };
   $("demo").onclick = () => {
     params.mode = "angle";
-    params.assist = 2;
     reset();
     renderModes();
     demo = true;
