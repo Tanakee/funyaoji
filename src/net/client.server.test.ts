@@ -76,3 +76,35 @@ test("スクリーンがスマホの tilt を受け取り、小さいシーケ�
   expect(await screenInbox.next()).toEqual({ type: "tilt", seq: 2, angle: 20, joint: "rightHip" });
   expect(await screenInbox.next()).toEqual({ type: "tilt", seq: 3, angle: 30, joint: "rightHip" });
 });
+
+test("スマホが抜けた関節に次のスマホが入ると、シーケンス番号 0 から受け取る", async () => {
+  const roomCode = await createRoom();
+  const screenInbox = new Inbox<ScreenReceived>();
+  const screen = connectScreen(roomCode, { onMessage: screenInbox.push }, { baseUrl: serverUrl });
+  openConnections.add(screen);
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: [] });
+
+  const firstInbox = new Inbox<PhoneReceived>();
+  const first = connectPhone(roomCode, { onMessage: firstInbox.push }, { baseUrl: serverUrl });
+  openConnections.add(first);
+  expect(await firstInbox.next()).toEqual({ type: "joined", joint: "rightHip" });
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: ["rightHip"] });
+  first.send({ type: "tilt", seq: 100, angle: 10 });
+  expect(await screenInbox.next()).toEqual({
+    type: "tilt",
+    seq: 100,
+    angle: 10,
+    joint: "rightHip",
+  });
+
+  first.close();
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: [] });
+
+  const secondInbox = new Inbox<PhoneReceived>();
+  const second = connectPhone(roomCode, { onMessage: secondInbox.push }, { baseUrl: serverUrl });
+  openConnections.add(second);
+  expect(await secondInbox.next()).toEqual({ type: "joined", joint: "rightHip" });
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: ["rightHip"] });
+  second.send({ type: "tilt", seq: 0, angle: 20 });
+  expect(await screenInbox.next()).toEqual({ type: "tilt", seq: 0, angle: 20, joint: "rightHip" });
+});
