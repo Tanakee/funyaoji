@@ -117,7 +117,8 @@ export class Sim {
   constructor(params: Params) {
     this.params = params;
     const world = new RAPIER.World({ x: 0, y: -9.81 });
-    world.timestep = 1 / 60;
+    // 1コマ（1/60秒）を4回に分けて計算する。細かく刻むほど、強い補助やモーターでも振動しにくい
+    world.timestep = 1 / 240;
     this.world = world;
 
     const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5));
@@ -335,9 +336,15 @@ export class Sim {
 
     if (p.assist > 0) {
       const weight = this.mass * 9.81;
-      const torque =
-        -p.assist * weight * 0.5 * this.torso.rotation() -
-        p.assist * weight * 0.08 * this.torso.angvel();
+      // 強い補助をそのままかけると、1コマの間に行き過ぎて振動し、体が跳ね上がる。
+      // 1コマ先の角度を見込んで力を弱める形（安定な PD 制御）にする
+      const dt = this.world.timestep;
+      const kp = p.assist * weight * 0.5;
+      const kd = p.assist * weight * 0.08;
+      const inertia = Math.max(1e-6, this.torso.principalInertia());
+      const rot = this.torso.rotation();
+      const w = this.torso.angvel();
+      const torque = -(kp * (rot + dt * w) + kd * w) / (1 + (dt * (kd + kp * dt)) / inertia);
       this.torso.addTorque(torque, true);
     }
 

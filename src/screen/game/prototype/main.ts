@@ -67,10 +67,9 @@ const SLIDERS: { key: keyof Params; label: string; min: number; max: number; ste
   { key: "footFriction", label: "足の摩擦（変えるとリセット）", min: 0, max: 3, step: 0.1 },
 ];
 
-// 初期値は、計測でいちばん崩れにくかった設定（補助 8、ひざの半自動 0.8）
-const params: Params = { ...DEFAULT_PARAMS, assist: 8, kneeAuto: 0.8 };
-// お手本：機械的に探した歩き方（A1 目標角度、補助 8、ひざの半自動 0.8 で 10m を約7秒）
-const DEMO: Gait = { T: 1.05, h0: 0.45, A: 0.4, K: 0.84, kp: 4.56 };
+const params: Params = { ...DEFAULT_PARAMS, assist: 2 };
+// お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約18秒）
+const DEMO: Gait = { T: 1.43, h0: 0.23, A: 0.4, K: 0.85, kp: 0.09 };
 let demo = false;
 /** お手本の再生中に、自分で動かす関節。空ならお手本が全部動かす */
 let solo: JointName | "" = "";
@@ -154,6 +153,8 @@ function buildUi(): void {
   };
   $("demo").onclick = () => {
     params.mode = "angle";
+    params.assist = 2;
+    params.kneeAuto = 0;
     reset();
     renderModes();
     demo = true;
@@ -400,7 +401,7 @@ function frame(now: number): void {
 (globalThis as unknown as { __tick: (n: number) => void }).__tick = (n) => {
   for (let i = 0; i < n; i++) {
     applyKeys(1 / 60);
-    sim.step(input);
+    for (let k = 0; k < 4; k++) sim.step(input);
   }
   syncInputSliders();
   draw();
