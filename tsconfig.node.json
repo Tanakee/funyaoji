@@ -10,7 +10,8 @@
     "vite.config.ts",
     "src/server/test-setup.ts",
     "src/server/test-server.ts",
-    "src/server/test-context.d.ts"
+    "src/server/test-context.d.ts",
+    "scripts"
   ],
   "exclude": []
 }
