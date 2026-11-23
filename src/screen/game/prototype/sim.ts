@@ -26,6 +26,12 @@ export interface Params {
   /** 胴を起こす補助の強さ。0 で補助なし */
   assist: number;
   footFriction: number;
+  /** 足の大きさの倍率 */
+  footScale: number;
+  /** 転倒の判定。torso: 胴か頭が地面に触れたら / head: 頭が触れたときだけ */
+  fallMode: "torso" | "head";
+  /** ひざの半自動。ももを前に振っている間、ひざを自動で曲げる強さ（0 で無し） */
+  kneeAuto: number;
   /** 腕を付ける（頭はいつも付く） */
   upperBody: boolean;
 }
@@ -41,6 +47,9 @@ export const DEFAULT_PARAMS: Params = {
   stringOffset: 0,
   assist: 0,
   footFriction: 1.5,
+  footScale: 1,
+  fallMode: "torso",
+  kneeAuto: 0,
   upperBody: false,
 };
 
@@ -98,6 +107,7 @@ export class Sim {
   mass = 0;
   time = 0;
   ended: "goal" | "fell" | undefined;
+  private prevInput: Record<JointName, number> | undefined;
   params: Params;
 
   static async init(): Promise<void> {
@@ -165,7 +175,14 @@ export class Sim {
         shapes: [
           box(shin, SHIN, 75, 0.2),
           // 足はすねに固定する（足首は動かない）。足だけ摩擦と密度を大きくする
-          box(shin, FOOT, 300, params.footFriction, 0.03, -SHIN.hh - FOOT.hh),
+          box(
+            shin,
+            { hw: FOOT.hw * params.footScale, hh: FOOT.hh },
+            300 / params.footScale,
+            params.footFriction,
+            0.03 * params.footScale,
+            -SHIN.hh - FOOT.hh,
+          ),
         ],
         side,
       });
@@ -237,9 +254,17 @@ export class Sim {
       part.body.resetTorques(true);
     }
 
+    const prev = this.prevInput ?? input;
+    this.prevInput = { ...input };
     for (const name of JOINTS) {
       const joint = this.joints[name];
-      const u = Math.min(1, Math.max(0, input[name]));
+      let u = Math.min(1, Math.max(0, input[name]));
+      if (p.kneeAuto > 0 && name.endsWith("Knee")) {
+        // ももの入力が上がっている間（前に振っている間）、ひざを自動で曲げる
+        const hip: JointName = name === "rightKnee" ? "rightHip" : "leftHip";
+        const rate = (input[hip] - prev[hip]) / this.world.timestep;
+        u = Math.max(u, Math.min(1, Math.max(0, rate * 0.6)) * p.kneeAuto);
+      }
       if (p.mode === "angle" || p.mode === "both") {
         joint.configureMotorPosition(this.targetAngle(name, u), p.stiffness, p.damping);
       } else if (p.mode === "velocity") {
@@ -333,7 +358,7 @@ export class Sim {
     const rot = this.torso.rotation();
     const cos = Math.cos(rot);
     const sin = Math.sin(rot);
-    for (const sx of [-1, 1]) {
+    for (const sx of this.params.fallMode === "head" ? [] : [-1, 1]) {
       for (const sy of [-1, 1]) {
         const y = t.y + sx * TORSO.hw * sin + sy * TORSO.hh * cos;
         if (y < 0.02) return true;
