@@ -9,6 +9,7 @@ import {
   type Mode,
   type Params,
 } from "./sim.ts";
+import { gaitInput, type Gait } from "./bot.ts";
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
   {
@@ -66,8 +67,8 @@ const SLIDERS: { key: keyof Params; label: string; min: number; max: number; ste
 ];
 
 const params: Params = { ...DEFAULT_PARAMS, assist: 2 };
-// お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約15秒）
-const DEMO = { T: 1.49, h0: 0.23, A: 0.4, K: 0.73, kp: 6.27 };
+// お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約16秒）。値は bot.ts の計測と同じものを使う
+const DEMO: Gait = { T: 1.53, h0: 0.23, A: 0.46, K: 0.89, kp: 0.53 };
 let demo = false;
 let input = neutralInput(params.mode);
 let mirror = false;
@@ -189,11 +190,7 @@ function syncInputSliders(): void {
 
 function applyKeys(dt: number): void {
   if (demo) {
-    const ph = (sim.time / DEMO.T) * Math.PI * 2;
-    const c = (x: number) => Math.min(1, Math.max(0, x));
-    const hip = (p: number) => c(DEMO.h0 + DEMO.A * Math.sin(p));
-    const knee = (p: number) => c(DEMO.K * Math.max(0, Math.sin(p + DEMO.kp)));
-    input = { rightHip: hip(ph), leftHip: hip(ph + Math.PI), rightKnee: knee(ph), leftKnee: knee(ph + Math.PI) };
+    input = gaitInput(DEMO, sim.time);
     return;
   }
   const rate = 1.6;
@@ -333,9 +330,9 @@ function draw(): void {
   if (sim.ended) {
     ctx.fillStyle = sim.ended === "goal" ? "#1e8449" : "#c0392b";
     ctx.font = "bold 44px sans-serif";
-    ctx.fillText(sim.ended === "goal" ? "ゴール！" : "転倒", w / 2 - 80, 120);
+    ctx.fillText(sim.ended === "goal" ? "ゴール！" : "転倒", w / 2 - 80, 190);
     ctx.font = "18px sans-serif";
-    ctx.fillText("R でやり直し", w / 2 - 55, 150);
+    ctx.fillText("R でやり直し", w / 2 - 55, 220);
   }
 }
 
@@ -359,7 +356,24 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 
+// 動作確認のために、画面が隠れていても n コマ進められるようにする
+(globalThis as unknown as { __tick: (n: number) => void }).__tick = (n) => {
+  for (let i = 0; i < n; i++) {
+    applyKeys(1 / 60);
+    sim.step(input);
+  }
+  syncInputSliders();
+  draw();
+};
 await Sim.init();
+// 動作確認のために、状態を外から読めるようにする
+(globalThis as unknown as { __proto: () => unknown }).__proto = () => ({
+  distance: sim.distance,
+  time: sim.time,
+  ended: sim.ended,
+  demo,
+  mode: params.mode,
+});
 reset();
 buildUi();
 syncInputSliders();
