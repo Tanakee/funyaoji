@@ -38,6 +38,15 @@
         <button id="pause">一時停止 (Space)</button>
         <button id="step">1コマ進める</button>
       </div>
+      <label><span>お手本の再生中に、自分で動かす関節</span>
+        <select id="solo">
+          <option value="">なし（お手本が全部動かす）</option>
+          <option value="rightHip">右もも（Q/A）</option>
+          <option value="leftHip">左もも（W/S）</option>
+          <option value="rightKnee">右ひざ（O/L）</option>
+          <option value="leftKnee">左ひざ（P/;）</option>
+        </select>
+      </label>
       <label><span>速さ <output id="slow-out">1倍</output></span><input type="range" id="slow" min="0.1" max="1" step="0.1" value="1" /></label>
       <h2>調整</h2>
       <div id="tune"></div>

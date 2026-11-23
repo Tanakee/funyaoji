@@ -70,6 +70,9 @@ const params: Params = { ...DEFAULT_PARAMS, assist: 2 };
 // お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約16秒）。値は bot.ts の計測と同じものを使う
 const DEMO: Gait = { T: 1.53, h0: 0.23, A: 0.46, K: 0.89, kp: 0.53 };
 let demo = false;
+/** お手本の再生中に、自分で動かす関節。空ならお手本が全部動かす */
+let solo: JointName | "" = "";
+let guide: Record<JointName, number> | undefined;
 let input = neutralInput(params.mode);
 let mirror = false;
 let paused = false;
@@ -143,6 +146,10 @@ function buildUi(): void {
     demo = false;
     reset();
   };
+  $<HTMLSelectElement>("solo").onchange = (e) => {
+    solo = (e.target as HTMLSelectElement).value as JointName | "";
+    (e.target as HTMLSelectElement).blur();
+  };
   $("demo").onclick = () => {
     params.mode = "angle";
     params.assist = 2;
@@ -184,16 +191,24 @@ function syncInputSliders(): void {
     if (!el) continue;
     el.value = String(input[j]);
     $(`out-${j}`).textContent =
-      `入力 ${input[j].toFixed(2)}　角度 ${((sim.jointAngle(j) * 180) / Math.PI).toFixed(0)}°`;
+      `入力 ${input[j].toFixed(2)}　角度 ${((sim.jointAngle(j) * 180) / Math.PI).toFixed(0)}°` +
+      (guide && j === solo ? `　← 自分で動かす（お手本は ${guide[j].toFixed(2)}）` : "");
   }
 }
 
 function applyKeys(dt: number): void {
   if (demo) {
-    input = gaitInput(DEMO, sim.time);
+    guide = gaitInput(DEMO, sim.time);
+    for (const j of JOINTS) if (j !== solo) input[j] = guide[j];
+    if (solo) {
+      const [up, down] = KEYS[solo];
+      if (held.has(up)) input[solo] = Math.min(1, input[solo] + 3 * dt);
+      if (held.has(down)) input[solo] = Math.max(0, input[solo] - 3 * dt);
+    }
     return;
   }
-  const rate = 1.6;
+  guide = undefined;
+  const rate = 3;
   for (const j of JOINTS) {
     const [up, down] = KEYS[j];
     if (held.has(up)) input[j] = Math.min(1, input[j] + rate * dt);
@@ -316,10 +331,34 @@ function draw(): void {
   ctx.fillStyle = "#6b6252";
   ctx.font = "14px sans-serif";
   ctx.fillText("進む向き →", w - 110, 40);
+  if (demo && solo && guide) {
+    // 自分の入力（太い棒）と、お手本の入力（線）を並べて見せる
+    const gx = 40;
+    const gy = 150;
+    const gh = 260;
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#2b2b2b";
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(gx, gy, 46, gh);
+    ctx.strokeRect(gx, gy, 46, gh);
+    ctx.fillStyle = COLOR[solo];
+    ctx.fillRect(gx, gy + gh * (1 - input[solo]), 46, gh * input[solo]);
+    const ty = gy + gh * (1 - guide[solo]);
+    ctx.strokeStyle = "#2b2b2b";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(gx - 10, ty);
+    ctx.lineTo(gx + 56, ty);
+    ctx.stroke();
+    ctx.fillStyle = "#2b2b2b";
+    ctx.font = "13px sans-serif";
+    ctx.fillText("← お手本", gx + 60, ty + 4);
+    ctx.fillText(`${LABEL[solo]}：色の棒を、黒い線に合わせる`, gx, gy + gh + 20);
+  }
   if (demo) {
     ctx.fillStyle = "#1e8449";
     ctx.font = "bold 16px sans-serif";
-    ctx.fillText("お手本を再生中（右の入力の動きを見る。R で自分の操作に戻る）", 20, 104);
+    ctx.fillText("お手本を再生中（R で自分の操作に戻る）", 20, 104);
   }
 
   // 距離とタイム
