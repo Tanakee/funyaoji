@@ -63,7 +63,10 @@ const SLIDERS: { key: keyof Params; label: string; min: number; max: number; ste
   { key: "footFriction", label: "足の摩擦（変えるとリセット）", min: 0, max: 3, step: 0.1 },
 ];
 
-const params: Params = { ...DEFAULT_PARAMS };
+const params: Params = { ...DEFAULT_PARAMS, assist: 2 };
+// お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約15秒）
+const DEMO = { T: 1.49, h0: 0.23, A: 0.4, K: 0.73, kp: 6.27 };
+let demo = false;
 let input = neutralInput(params.mode);
 let mirror = false;
 let paused = false;
@@ -89,6 +92,7 @@ function buildUi(): void {
     b.textContent = m.label;
     b.dataset.mode = m.id;
     b.onclick = () => {
+      demo = false;
       params.mode = m.id;
       reset();
       renderModes();
@@ -132,7 +136,17 @@ function buildUi(): void {
     timeScale = Number((e.target as HTMLInputElement).value);
     $("slow-out").textContent = `${timeScale}倍`;
   };
-  $("reset").onclick = reset;
+  $("reset").onclick = () => {
+    demo = false;
+    reset();
+  };
+  $("demo").onclick = () => {
+    params.mode = "angle";
+    params.assist = 2;
+    reset();
+    renderModes();
+    demo = true;
+  };
   $("pause").onclick = () => {
     paused = !paused;
     $("pause").textContent = paused ? "再開 (Space)" : "一時停止 (Space)";
@@ -145,7 +159,7 @@ function buildUi(): void {
 
   addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
-    if (k === "r") reset();
+    if (k === "r") $("reset").click();
     else if (k === " ") {
       e.preventDefault();
       $("pause").click();
@@ -172,6 +186,14 @@ function syncInputSliders(): void {
 }
 
 function applyKeys(dt: number): void {
+  if (demo) {
+    const ph = (sim.time / DEMO.T) * Math.PI * 2;
+    const c = (x: number) => Math.min(1, Math.max(0, x));
+    const hip = (p: number) => c(DEMO.h0 + DEMO.A * Math.sin(p));
+    const knee = (p: number) => c(DEMO.K * Math.max(0, Math.sin(p + DEMO.kp)));
+    input = { rightHip: hip(ph), leftHip: hip(ph + Math.PI), rightKnee: knee(ph), leftKnee: knee(ph + Math.PI) };
+    return;
+  }
   const rate = 1.6;
   for (const j of JOINTS) {
     const [up, down] = KEYS[j];
@@ -241,7 +263,16 @@ function draw(): void {
     ctx.save();
     ctx.translate(X(t.x), Y(t.y));
     ctx.rotate(-rot);
-    ctx.fillStyle = part.side === "left" ? "#8fa3ad" : part.side === "right" ? "#3d5a6c" : "#e9b872";
+    ctx.fillStyle =
+      part.side === "center"
+        ? "#e9d8b4"
+        : part.name === "thigh"
+          ? COLOR[`${part.side}Hip`]
+          : part.name === "shin"
+            ? COLOR[`${part.side}Knee`]
+            : "#cbbf9f";
+    // 左（奥）の脚は少し薄く描く
+    ctx.globalAlpha = part.side === "left" ? 0.75 : 1;
     ctx.strokeStyle = "#2b2b2b";
     ctx.lineWidth = 1.5;
     for (const s of part.shapes) {
@@ -254,7 +285,42 @@ function draw(): void {
       ctx.fill();
       ctx.stroke();
     }
+    if (part.name === "torso") {
+      // 顔。進む向き（右）を向いている
+      const hy = -(0.32 + 0.12) * SCALE;
+      ctx.fillStyle = "#2b2b2b";
+      ctx.beginPath();
+      ctx.arc(0.06 * SCALE, hy - 3, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0.11 * SCALE, hy);
+      ctx.lineTo(0.17 * SCALE, hy + 4);
+      ctx.lineTo(0.11 * SCALE, hy + 8);
+      ctx.stroke();
+    }
     ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // 部位の名前。ももとすねの横に、動かすキーと一緒に出す
+  ctx.font = "bold 13px sans-serif";
+  for (const part of sim.parts) {
+    if (part.side === "center" || part.name === "arm") continue;
+    const j: JointName = `${part.side}${part.name === "thigh" ? "Hip" : "Knee"}`;
+    const t = part.body.translation();
+    const dx = part.side === "right" ? 0.14 : -0.14;
+    ctx.fillStyle = COLOR[j];
+    ctx.textAlign = part.side === "right" ? "left" : "right";
+    ctx.fillText(`${LABEL[j]} ${KEYS[j][0].toUpperCase()}/${KEYS[j][1].toUpperCase()}`, X(t.x + dx), Y(t.y));
+  }
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#6b6252";
+  ctx.font = "14px sans-serif";
+  ctx.fillText("進む向き →", w - 110, 40);
+  if (demo) {
+    ctx.fillStyle = "#1e8449";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText("お手本を再生中（右の入力の動きを見る。R で自分の操作に戻る）", 20, 104);
   }
 
   // 距離とタイム

@@ -33,6 +33,7 @@
       <label class="check"><input type="checkbox" id="mirror" />左を、右の逆向きに連動させる（2軸で操作）</label>
       <h2>操作</h2>
       <div class="row">
+        <button id="demo">お手本を再生</button>
         <button id="reset">やり直し (R)</button>
         <button id="pause">一時停止 (Space)</button>
         <button id="step">1コマ進める</button>
@@ -40,7 +41,7 @@
       <label><span>速さ <output id="slow-out">1倍</output></span><input type="range" id="slow" min="0.1" max="1" step="0.1" value="1" /></label>
       <h2>調整</h2>
       <div id="tune"></div>
-      <label class="check"><input type="checkbox" id="upper" />頭と腕を付ける</label>
+      <label class="check"><input type="checkbox" id="upper" />腕を付ける</label>
     </aside>
     <script type="module" src="/src/screen/game/prototype/main.ts"></script>
   </body>

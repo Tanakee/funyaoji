@@ -22,7 +22,7 @@ export interface Params {
   /** 胴を起こす補助の強さ。0 で補助なし */
   assist: number;
   footFriction: number;
-  /** 頭と腕を付ける */
+  /** 腕を付ける（頭はいつも付く） */
   upperBody: boolean;
 }
 
@@ -135,7 +135,7 @@ export class Sim {
     const torso = dynamic(0, HIP_Y + TORSO.hh);
     this.torso = torso;
     const torsoShapes: Shape[] = [box(torso, TORSO, 50, 0.2)];
-    if (params.upperBody) {
+    {
       const r = 0.12;
       world.createCollider(
         RAPIER.ColliderDesc.ball(r)
@@ -330,7 +330,7 @@ export class Sim {
         if (y < 0.02) return true;
       }
     }
-    if (this.params.upperBody) {
+    {
       const hy = t.y + (TORSO.hh + 0.12) * cos;
       if (hy - 0.12 < 0.02) return true;
     }
