@@ -6,23 +6,27 @@ const CLIENT_ID_KEY = "funyaoji.clientId";
 /**
  * スマホの ID。connectPhone の clientId に渡す。
  * タブごとに sessionStorage に覚えるので、同じタブで読み込み直しても同じ ID になり、同じ関節に戻れる。
- * sessionStorage が使えない（プライベートブラウズなど）ときは、覚えずに新しい ID を返す
+ * sessionStorage が使えない（プライベートブラウズなど）ときも、このページを開いているあいだは同じ ID を返す
  */
 export function phoneClientId(storage: KeyValueStorage | undefined = session()): string {
+  if (clientId !== undefined) return clientId;
   try {
     const saved = storage?.getItem(CLIENT_ID_KEY);
-    if (saved) return saved;
+    if (saved) return (clientId = saved);
   } catch {
     // 読めなくても、新しい ID でつなぐ
   }
-  const id = crypto.randomUUID();
+  clientId = crypto.randomUUID();
   try {
-    storage?.setItem(CLIENT_ID_KEY, id);
+    storage?.setItem(CLIENT_ID_KEY, clientId);
   } catch {
-    // 覚えられなくても、このページを開いているあいだは同じ ID を使える
+    // 覚えられなくても、このページを開いているあいだは、モジュールに覚えた ID を使う
   }
-  return id;
+  return clientId;
 }
+
+/** このページで一度決めた ID */
+let clientId: string | undefined;
 
 /** sessionStorage のうち、使うところだけ。Node.js には無い */
 interface KeyValueStorage {
