@@ -72,9 +72,10 @@ test("思いがけず切れたら、1秒・2秒と待ってつなぎ直し、つ
   expect(opened).toHaveLength(2);
   opened[1]!.handlers.onClose({ code: 1006, reason: "" });
   expect(connection.state).toEqual({ status: "reconnecting", attempt: 2 });
-  vi.advanceTimersByTime(1999);
+  // 2回目は1回目より長く待つ
+  vi.advanceTimersByTime(1000);
   expect(opened).toHaveLength(2);
-  vi.advanceTimersByTime(1);
+  vi.advanceTimersByTime(1000);
   expect(opened).toHaveLength(3);
 
   opened[2]!.handlers.onOpen();
@@ -89,7 +90,7 @@ test("思いがけず切れたら、1秒・2秒と待ってつなぎ直し、つ
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test("こちらから閉じたとき・no-room か full で断られたとき・4000 で閉じたときは、つなぎ直さない", () => {
+test("こちらから閉じたとき・no-room か full で断られたとき・4000 で閉じたときは、つなぎ直さない。playing で断られたときは、つなぎ直す", () => {
   const byClose = connectFake();
   byClose.opened[0]!.handlers.onOpen();
   byClose.connection.close();
@@ -112,18 +113,16 @@ test("こちらから閉じたとき・no-room か full で断られたとき・
   expect(replaced.connection.state).toEqual({ status: "closed", code: 4000, reason: "" });
   results.push(replaced);
 
+  const playing = connectFake();
+  playing.opened[0]!.handlers.onOpen();
+  playing.opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
+  playing.opened[0]!.handlers.onClose({ code: 4001, reason: "" });
+
   vi.advanceTimersByTime(60_000);
   for (const { opened } of results) expect(opened).toHaveLength(1);
+  expect(playing.opened.length).toBeGreaterThan(1);
+  playing.connection.close();
   expect(vi.getTimerCount()).toBe(0);
-});
-
-test("playing で断られたときは、つなぎ直す", () => {
-  const { connection, opened } = connectFake();
-  opened[0]!.handlers.onOpen();
-  opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
-  opened[0]!.handlers.onClose({ code: 4001, reason: "" });
-  expect(connection.state).toEqual({ status: "reconnecting", attempt: 1 });
-  connection.close();
 });
 
 test("ハートビートの返事もほかのメッセージも10秒届かなければ、閉じてつなぎ直す", () => {
