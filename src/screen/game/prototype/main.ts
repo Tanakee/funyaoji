@@ -1,5 +1,6 @@
 // 試作（あとで捨てる）：操作の方式を切り替えて、キーボードとスライダーで触る
 import {
+  DEFAULT_BODY,
   DEFAULT_PARAMS,
   GOAL_M,
   JOINTS,
@@ -67,9 +68,40 @@ const SLIDERS: { key: keyof Params; label: string; min: number; max: number; ste
   { key: "footFriction", label: "足の摩擦（変えるとリセット）", min: 0, max: 3, step: 0.1 },
 ];
 
-const params: Params = { ...DEFAULT_PARAMS, assist: 2 };
-// お手本：機械的に探した歩き方（A1 目標角度、補助 2 で 10m を約18秒）
-const DEMO: Gait = { T: 1.43, h0: 0.23, A: 0.4, K: 0.85, kp: 0.09 };
+// 体の候補。検証（lab/）で選んだ設定と、その設定で 10m に着く歩き方（お手本）
+const BODIES: { id: string; label: string; params: Partial<Params>; demo: Gait }[] = [
+  {
+    id: "B",
+    label: "B 太く長い胴・大きな足（検証で一番良かった）",
+    params: {
+      assist: 1.006,
+      stiffness: 780,
+      damping: 108,
+      footFriction: 1.845,
+      motorMaxForce: 0.185,
+      body: {
+        ...DEFAULT_BODY,
+        torso: { hw: 0.24, hh: 0.373, density: 33 },
+        head: { r: 0.12, density: 34 },
+        thigh: { hw: 0.07, hh: 0.241, density: 143 },
+        shin: { hw: 0.06, hh: 0.194, density: 66 },
+        foot: { hw: 0.22, hh: 0.04, density: 300, offset: -0.1 },
+        kneeRange: [0, -1.649],
+      },
+    },
+    demo: { T: 2.16, h0: 0.34, A: 0.38, K: 0.76, kp: 0.21 },
+  },
+  {
+    id: "old",
+    label: "今までのお手本の体（比べるため）",
+    params: { assist: 2, stiffness: 600, damping: 60, footFriction: 1.5, motorMaxForce: 0, body: DEFAULT_BODY },
+    demo: { T: 1.43, h0: 0.23, A: 0.4, K: 0.85, kp: 0.09 },
+  },
+];
+let bodyChoice = BODIES[0]!;
+const params: Params = { ...DEFAULT_PARAMS, ...bodyChoice.params };
+let DEMO: Gait = bodyChoice.demo;
+const sliderEls: { key: keyof Params; el: HTMLInputElement; out: HTMLOutputElement }[] = [];
 let demo = false;
 /** お手本の再生中に、自分で動かす関節。空ならお手本が全部動かす */
 let solo: JointName | "" = "";
@@ -130,7 +162,28 @@ function buildUi(): void {
       if (s.key === "footFriction") reset();
     };
     tune.append(row);
+    sliderEls.push({ key: s.key, el, out });
   }
+
+  const bodySel = $<HTMLSelectElement>("body");
+  for (const b of BODIES) {
+    const o = document.createElement("option");
+    o.value = b.id;
+    o.textContent = b.label;
+    bodySel.append(o);
+  }
+  bodySel.onchange = () => {
+    bodyChoice = BODIES.find((b) => b.id === bodySel.value)!;
+    Object.assign(params, bodyChoice.params);
+    DEMO = bodyChoice.demo;
+    for (const s of sliderEls) {
+      s.el.value = String(params[s.key]);
+      s.out.textContent = String(params[s.key]);
+    }
+    demo = false;
+    reset();
+    bodySel.blur();
+  };
 
   $<HTMLInputElement>("upper").onchange = (e) => {
     params.upperBody = (e.target as HTMLInputElement).checked;
@@ -153,7 +206,7 @@ function buildUi(): void {
   };
   $("demo").onclick = () => {
     params.mode = "angle";
-    params.assist = 2;
+    params.assist = bodyChoice.params.assist ?? 2;
     params.kneeAuto = 0;
     reset();
     renderModes();
@@ -303,7 +356,8 @@ function draw(): void {
     }
     if (part.name === "torso") {
       // 顔。進む向き（右）を向いている
-      const hy = -(0.32 + 0.12) * SCALE;
+      const head = part.shapes.find((sh) => sh.kind === "ball");
+      const hy = -(head?.oy ?? 0.44) * SCALE;
       ctx.fillStyle = "#2b2b2b";
       ctx.beginPath();
       ctx.arc(0.06 * SCALE, hy - 3, 2.5, 0, Math.PI * 2);
