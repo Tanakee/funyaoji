@@ -296,7 +296,8 @@ export class Room extends DurableObject<Env> {
   private acceptScreen(ws: WebSocket, roomCode: string, phase: PhaseMessage | undefined): void {
     // スクリーンは1つだけ。ページを開き直したときのために、古い接続を閉じて置き換える
     for (const old of this.ctx.getWebSockets("screen")) {
-      this.log({ event: "replaced" });
+      // 閉じかけの接続も返るので、開いているものを置き換えたときだけ書く
+      if (old.readyState === WebSocket.OPEN) this.log({ event: "replaced" });
       try {
         old.close(CLOSE_REPLACED, "replaced");
       } catch {
