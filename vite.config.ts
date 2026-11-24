@@ -8,7 +8,7 @@ export default defineConfig({
     client: {
       build: {
         rolldownOptions: {
-          input: ["index.html", "screen.html", "play.html"],
+          input: ["index.html", "screen.html", "play.html", "prototype.html"],
         },
       },
     },
