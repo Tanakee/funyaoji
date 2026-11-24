@@ -57,6 +57,14 @@ function Lobby({ roomCode }: { roomCode: string }) {
               );
               break;
             case "phase":
+              // スクリーンが phase を受け取るのは、つないだときだけ。新しいルームは playing にならないので、
+              // playing が届いたら、プレイ中に切れてつなぎ直したということ。プレイは続けず、ロビーに戻す（#42）
+              if (message.phase === "playing") {
+                const lobby = { type: "phase", phase: "lobby" } as const;
+                conn.send(lobby);
+                setPhase(lobby);
+                break;
+              }
               setPhase(message);
               break;
             case "rejected":
@@ -129,6 +137,8 @@ function connectionText(
       return "つないでいます";
     case "open":
       return "つながっている";
+    case "reconnecting":
+      return `切れたので、つなぎ直しています（${state.attempt}回目）`;
     case "closed": {
       const reason = rejected ? `、${rejected} で断られた` : "";
       return `切れた（close コード ${state.code}${reason}）`;

@@ -36,15 +36,32 @@ export interface ClientOptions {
   transport?: (url: URL) => OpenTransport;
 }
 
-/** GET /api/rooms/<ルームコード>/ws?role=<role> の URL。http と ws は ws に、https と wss は wss にする */
-export function roomSocketUrl(baseUrl: string | URL, roomCode: string, role: Role): URL {
+export interface PhoneOptions extends ClientOptions {
+  /** スマホの ID（phoneClientId()）。つなぎ直したときに、サーバーが同じ関節を渡すのに使う */
+  clientId?: string;
+}
+
+/**
+ * GET /api/rooms/<ルームコード>/ws?role=<role>&client=<ID> の URL。clientId を省くと client を付けない。
+ * http と ws は ws に、https と wss は wss にする
+ */
+export function roomSocketUrl(
+  baseUrl: string | URL,
+  roomCode: string,
+  role: Role,
+  clientId?: string,
+): URL {
   const url = new URL(`/api/rooms/${encodeURIComponent(roomCode)}/ws`, baseUrl);
   url.protocol = url.protocol === "https:" || url.protocol === "wss:" ? "wss:" : "ws:";
   url.searchParams.set("role", role);
+  if (clientId !== undefined) url.searchParams.set("client", clientId);
   return url;
 }
 
-/** スクリーンとしてつなぐ。tilt は、関節ごとに受信済みより小さいシーケンス番号のものを捨ててから渡す */
+/**
+ * スクリーンとしてつなぐ。tilt は、関節ごとに受信済みより小さいシーケンス番号のものを捨ててから渡す。
+ * 受信済みの番号は、つなぎ直しても覚えておく（抜けた関節の番号は room で忘れる）
+ */
 export function connectScreen(
   roomCode: string,
   handlers: ClientHandlers<ScreenReceived>,
@@ -67,17 +84,22 @@ export function connectScreen(
 export function connectPhone(
   roomCode: string,
   handlers: ClientHandlers<PhoneReceived>,
-  options: ClientOptions,
+  options: PhoneOptions,
 ): Connection<PhoneSent> {
   return connect<ServerToPhoneMessage, PhoneSent>({
-    open: openTransport(roomCode, "phone", options),
+    open: openTransport(roomCode, "phone", options, options.clientId),
     schema: ServerToPhoneMessage,
     onMessage: handlers.onMessage,
     onStateChange: handlers.onStateChange,
   });
 }
 
-function openTransport(roomCode: string, role: Role, options: ClientOptions): OpenTransport {
-  const url = roomSocketUrl(options.baseUrl, roomCode, role);
+function openTransport(
+  roomCode: string,
+  role: Role,
+  options: ClientOptions,
+  clientId?: string,
+): OpenTransport {
+  const url = roomSocketUrl(options.baseUrl, roomCode, role, clientId);
   return (options.transport ?? webSocketTransport)(url);
 }
