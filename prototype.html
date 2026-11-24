@@ -5,46 +5,236 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>試作：操作の方式の比較（あとで捨てる）</title>
     <style>
-      body { margin: 0; font-family: sans-serif; background: #efe9dc; color: #2b2b2b; box-sizing: border-box; height: 100vh; padding: 12px; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto minmax(0, 1fr); }
-      canvas { background: #f6f1e7; border: 1px solid #c9bfa9; border-radius: 8px; grid-column: 1; grid-row: 1 / 3; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
-      #controls { grid-column: 2; grid-row: 1; display: grid; gap: 8px; }
-      aside { grid-column: 2; grid-row: 2; overflow: hidden auto; font-size: 13px; padding-right: 8px; box-sizing: border-box; }
-      h2 { font-size: 14px; margin: 14px 0 6px; }
-      #modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-      button { padding: 7px 8px; border: 1px solid #a89f8c; background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; color: #2b2b2b; }
-      button.on { background: #2b2b2b; color: #fff; }
-      #hint { margin: 8px 0 0; line-height: 1.5; min-height: 3em; }
-      label { display: grid; grid-template-columns: 1fr; gap: 2px; margin: 6px 0; }
-      label input[type="range"] { width: 100%; margin: 0; box-sizing: border-box; }
-      label.check { display: flex; gap: 6px; align-items: center; }
-      output { color: #6b6252; font-variant-numeric: tabular-nums; }
-      kbd { background: #fff; border: 1px solid #a89f8c; border-radius: 4px; padding: 0 5px; }
-      .row { display: flex; gap: 6px; flex-wrap: wrap; }
-      .side-head { display: flex; justify-content: space-between; align-items: center; }
-      #m-close, #m-settings { display: none; }
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #efe9dc;
+        color: #2b2b2b;
+        box-sizing: border-box;
+        height: 100vh;
+        padding: 12px;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      canvas {
+        background: #f6f1e7;
+        border: 1px solid #c9bfa9;
+        border-radius: 8px;
+        grid-column: 1;
+        grid-row: 1 / 3;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        object-fit: contain;
+      }
+      #controls {
+        grid-column: 2;
+        grid-row: 1;
+        display: grid;
+        gap: 8px;
+      }
+      aside {
+        grid-column: 2;
+        grid-row: 2;
+        overflow: hidden auto;
+        font-size: 13px;
+        padding-right: 8px;
+        box-sizing: border-box;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 14px 0 6px;
+      }
+      #modes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      button {
+        padding: 7px 8px;
+        border: 1px solid #a89f8c;
+        background: #fff;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        color: #2b2b2b;
+      }
+      button.on {
+        background: #2b2b2b;
+        color: #fff;
+      }
+      #hint {
+        margin: 8px 0 0;
+        line-height: 1.5;
+        min-height: 3em;
+      }
+      label {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 2px;
+        margin: 6px 0;
+      }
+      label input[type="range"] {
+        width: 100%;
+        margin: 0;
+        box-sizing: border-box;
+      }
+      label.check {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      output {
+        color: #6b6252;
+        font-variant-numeric: tabular-nums;
+      }
+      kbd {
+        background: #fff;
+        border: 1px solid #a89f8c;
+        border-radius: 4px;
+        padding: 0 5px;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .side-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      #m-close,
+      #m-settings {
+        display: none;
+      }
       /* よく使うボタン */
-      #toolbar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-      #toolbar button { padding: 10px 2px; font-size: 13px; font-weight: bold; }
+      #toolbar {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 6px;
+      }
+      #toolbar button {
+        padding: 10px 2px;
+        font-size: 13px;
+        font-weight: bold;
+      }
       /* 関節ごとのつまみ。指の高さが、そのまま入力の値になる（本番のスマホの傾きと同じく、位置で決める） */
-      #pad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; height: 190px; }
-      .strip { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 4px; text-align: center; font-size: 12px; font-weight: bold; min-height: 0; }
-      .track { position: relative; background: #fff; border: 2px solid #2b2b2b; border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: ns-resize; }
-      .fill { position: absolute; left: 0; right: 0; bottom: 0; opacity: 0.85; }
-      .target { position: absolute; left: -2px; right: -2px; height: 0; border-top: 5px solid #2b2b2b; transform: translateY(2px); display: none; }
-      .target::after { content: "お手本"; position: absolute; right: 2px; top: -19px; font-size: 10px; color: #2b2b2b; }
-      .arrow { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); font-size: 26px; color: #2b2b2b; pointer-events: none; }
+      #pad {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        height: 190px;
+      }
+      .strip {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 4px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: bold;
+        min-height: 0;
+      }
+      .track {
+        position: relative;
+        background: #fff;
+        border: 2px solid #2b2b2b;
+        border-radius: 8px;
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        cursor: ns-resize;
+      }
+      .fill {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        opacity: 0.85;
+      }
+      .target {
+        position: absolute;
+        left: -2px;
+        right: -2px;
+        height: 0;
+        border-top: 5px solid #2b2b2b;
+        transform: translateY(2px);
+        display: none;
+      }
+      .target::after {
+        content: "お手本";
+        position: absolute;
+        right: 2px;
+        top: -19px;
+        font-size: 10px;
+        color: #2b2b2b;
+      }
+      .arrow {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 26px;
+        color: #2b2b2b;
+        pointer-events: none;
+      }
       /* スマホ：スクロールなしで、上に物理の画面、その下によく使うボタンとつまみ。細かい設定は「設定」で開く */
       @media (max-width: 800px) {
-        body { height: 100dvh; padding: 6px; gap: 6px; grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
-        canvas { grid-column: 1; grid-row: 1; height: auto; max-height: 42dvh; object-fit: contain; }
-        #controls { grid-column: 1; grid-row: 2 / 4; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
-        #pad { height: auto; min-height: 0; }
-        #toolbar { grid-template-columns: repeat(6, 1fr); }
-        #toolbar button { font-size: 12px; padding: 10px 0; }
-        #m-settings { display: block; }
-        aside { display: none; }
-        body.settings-open aside { display: block; position: fixed; inset: 0; z-index: 10; background: #efe9dc; padding: 12px; overflow: auto; }
-        body.settings-open #m-close { display: block; }
+        body {
+          height: 100dvh;
+          padding: 6px;
+          gap: 6px;
+          grid-template-columns: 1fr;
+          grid-template-rows: auto auto minmax(0, 1fr);
+          overflow: hidden;
+        }
+        canvas {
+          grid-column: 1;
+          grid-row: 1;
+          height: auto;
+          max-height: 42dvh;
+          object-fit: contain;
+        }
+        #controls {
+          grid-column: 1;
+          grid-row: 2 / 4;
+          grid-template-rows: auto minmax(0, 1fr);
+          min-height: 0;
+        }
+        #pad {
+          height: auto;
+          min-height: 0;
+        }
+        #toolbar {
+          grid-template-columns: repeat(6, 1fr);
+        }
+        #toolbar button {
+          font-size: 12px;
+          padding: 10px 0;
+        }
+        #m-settings {
+          display: block;
+        }
+        aside {
+          display: none;
+        }
+        body.settings-open aside {
+          display: block;
+          position: fixed;
+          inset: 0;
+          z-index: 10;
+          background: #efe9dc;
+          padding: 12px;
+          overflow: auto;
+        }
+        body.settings-open #m-close {
+          display: block;
+        }
       }
     </style>
   </head>
@@ -66,15 +256,23 @@
         <strong>試作：操作の方式の比較</strong>
         <button id="m-close">閉じる</button>
       </div>
-      <label class="check"><input type="checkbox" id="guide" checked />操作のガイドを出す（つまみの上の黒い線がお手本。線に指を合わせる）</label>
+      <label class="check"
+        ><input
+          type="checkbox"
+          id="guide"
+          checked
+        />操作のガイドを出す（つまみの上の黒い線がお手本。線に指を合わせる）</label
+      >
       <h2>体の候補</h2>
-      <select id="body" style="width:100%"></select>
+      <select id="body" style="width: 100%"></select>
       <h2>方式</h2>
       <div id="modes"></div>
       <p id="hint"></p>
       <h2>入力（スマホ4台の代わり）</h2>
       <div id="inputs"></div>
-      <label class="check"><input type="checkbox" id="mirror" />左を、右の逆向きに連動させる（2軸で操作）</label>
+      <label class="check"
+        ><input type="checkbox" id="mirror" />左を、右の逆向きに連動させる（2軸で操作）</label
+      >
       <h2>操作</h2>
       <div class="row">
         <button id="demo">お手本を再生</button>
@@ -82,7 +280,8 @@
         <button id="pause">一時停止 (Space)</button>
         <button id="step">1コマ進める</button>
       </div>
-      <label><span>お手本の再生中に、自分で動かす関節</span>
+      <label
+        ><span>お手本の再生中に、自分で動かす関節</span>
         <select id="solo">
           <option value="">なし（お手本が全部動かす）</option>
           <option value="rightHip">右もも（Q/A）</option>
@@ -91,7 +290,10 @@
           <option value="leftKnee">左ひざ（P/;）</option>
         </select>
       </label>
-      <label><span>速さ <output id="slow-out">1倍</output></span><input type="range" id="slow" min="0.1" max="1" step="0.1" value="1" /></label>
+      <label
+        ><span>速さ <output id="slow-out">1倍</output></span
+        ><input type="range" id="slow" min="0.1" max="1" step="0.1" value="1"
+      /></label>
       <h2>調整</h2>
       <div id="tune"></div>
       <label class="check"><input type="checkbox" id="upper" />腕を付ける</label>

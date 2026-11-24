@@ -22,7 +22,11 @@ export const NO_NOISE: Noise = {
 
 const clamp = (x: number) => Math.min(1, Math.max(0, x));
 
-export function gaitInput(g: Gait, time: number, noise: Noise = NO_NOISE): Record<JointName, number> {
+export function gaitInput(
+  g: Gait,
+  time: number,
+  noise: Noise = NO_NOISE,
+): Record<JointName, number> {
   const out = {} as Record<JointName, number>;
   for (const j of JOINTS) {
     const n = noise[j];
@@ -43,6 +47,7 @@ export function makeNoise(seed: number, delaySd: number, scaleSd: number): Noise
   };
   const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
   const out = {} as Noise;
-  for (const j of JOINTS) out[j] = { delay: gauss() * delaySd, scale: Math.max(0.3, 1 + gauss() * scaleSd) };
+  for (const j of JOINTS)
+    out[j] = { delay: gauss() * delaySd, scale: Math.max(0.3, 1 + gauss() * scaleSd) };
   return out;
 }

@@ -1,5 +1,14 @@
 // 試作（あとで捨てる）：設定を、歩き方の機械（bot.ts）で走らせて測る。Node で直接動かす
-import { Sim, DEFAULT_PARAMS, DEFAULT_BODY, GOAL_M, JOINTS, neutralInput, type Params, type JointName } from "../sim.ts";
+import {
+  Sim,
+  DEFAULT_PARAMS,
+  DEFAULT_BODY,
+  GOAL_M,
+  JOINTS,
+  neutralInput,
+  type Params,
+  type JointName,
+} from "../sim.ts";
 import { gaitInput, makeNoise, NO_NOISE, type Gait, type Noise } from "../bot.ts";
 
 // 物理エンジン（Rapier）の WebAssembly を読み込む。どの関数よりも先に1回だけ要る
@@ -125,7 +134,8 @@ export function sanity(params: Params, r: RunResult): string[] {
   if (avg > 2.5) out.push(`平均の速さ ${avg.toFixed(1)}m/s が速すぎる`);
   if (r.peakSpeed > 5) out.push(`最大の速さ ${r.peakSpeed.toFixed(1)}m/s が速すぎる`);
   const stand = standingTorsoY(params);
-  if (r.maxTorsoY > stand + 0.25) out.push(`胴が ${(r.maxTorsoY - stand).toFixed(2)}m 跳ね上がった`);
+  if (r.maxTorsoY > stand + 0.25)
+    out.push(`胴が ${(r.maxTorsoY - stand).toFixed(2)}m 跳ね上がった`);
   if (r.airFrac > 0.3) out.push(`両足が浮いている時間が ${(r.airFrac * 100).toFixed(0)}%`);
   return out;
 }
@@ -166,7 +176,12 @@ export interface Robustness {
 }
 
 /** ずれを足して runs 回走らせる。種は level ごとに固定 */
-export function robustness(params: Params, controller: Controller, level: NoiseLevel, runs = 16): Robustness {
+export function robustness(
+  params: Params,
+  controller: Controller,
+  level: NoiseLevel,
+  runs = 16,
+): Robustness {
   const { delay, scale } = NOISE_LEVELS[level];
   let goals = 0;
   let falls = 0;
@@ -210,7 +225,10 @@ export interface Evaluation {
  * 2. 着いたもの（異常なものは除く）の上から shortlist 個を、ずれ中で8回ずつ走らせて、いちばん強い歩き方を選ぶ
  * 3. 選んだ歩き方を、ずれ小・中・大で16回ずつ走らせる（選ぶときと別の種）
  */
-export function evaluate(params: Params, opts: { gaits?: number; shortlist?: number; seed?: number } = {}): Evaluation {
+export function evaluate(
+  params: Params,
+  opts: { gaits?: number; shortlist?: number; seed?: number } = {},
+): Evaluation {
   const gaits = randomGaits(opts.gaits ?? 300, opts.seed ?? 11);
   const ok: { gait: Gait; r: RunResult }[] = [];
   for (const g of gaits) {
@@ -258,6 +276,7 @@ export function summary(name: string, e: Evaluation): string {
   const [w, n] = e.walkable;
   if (!e.best) return `${name} | 歩ける歩き方 ${w}/${n} | なし`;
   const b = e.best;
-  const f = (r: Robustness) => `${r.goals}/${r.runs}（平均 ${r.avgDistance.toFixed(1)}m、転倒 ${r.falls}、停止 ${r.stuck}${r.suspicious ? `、異常 ${r.suspicious}` : ""}）`;
+  const f = (r: Robustness) =>
+    `${r.goals}/${r.runs}（平均 ${r.avgDistance.toFixed(1)}m、転倒 ${r.falls}、停止 ${r.stuck}${r.suspicious ? `、異常 ${r.suspicious}` : ""}）`;
   return `${name} | 歩ける歩き方 ${w}/${n} | ずれなし ${b.nominal.time.toFixed(1)}秒 | ずれ小 ${f(b.small)} | 中 ${f(b.mid)} | 大 ${f(b.large)}${b.walksWithout.length ? ` | 止めても歩ける関節 ${b.walksWithout.join("・")}` : ""} | ${JSON.stringify(b.gait)}`;
 }

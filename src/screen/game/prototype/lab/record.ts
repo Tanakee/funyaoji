@@ -2,7 +2,18 @@
 // 試作（あとで捨てる）：1回の走りを、コマごとの体の位置として記録する。描画（render.ts）はこの記録だけを読む
 import { writeFileSync, readFileSync } from "node:fs";
 import type { Shape } from "../sim.ts";
-import { run, footContact, sanity, JOINTS, NO_NOISE, type Controller, type Noise, type Params, type RunResult, type JointName } from "./run.ts";
+import {
+  run,
+  footContact,
+  sanity,
+  JOINTS,
+  NO_NOISE,
+  type Controller,
+  type Noise,
+  type Params,
+  type RunResult,
+  type JointName,
+} from "./run.ts";
 
 export interface Recording {
   /** 動画に出す名前 */
@@ -39,7 +50,8 @@ export function record(
   const frames: Recording["frames"] = [];
   let parts: Recording["parts"] = [];
   const r = run(params, controller, opts.noise ?? NO_NOISE, (sim, input) => {
-    if (!parts.length) parts = sim.parts.map((p) => ({ name: p.name, side: p.side, shapes: p.shapes }));
+    if (!parts.length)
+      parts = sim.parts.map((p) => ({ name: p.name, side: p.side, shapes: p.shapes }));
     const c = footContact(sim);
     frames.push({
       t: round(sim.time, 3),

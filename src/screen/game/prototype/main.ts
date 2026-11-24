@@ -94,7 +94,14 @@ const BODIES: { id: string; label: string; params: Partial<Params>; demo: Gait }
   {
     id: "old",
     label: "今までのお手本の体（比べるため）",
-    params: { assist: 2, stiffness: 600, damping: 60, footFriction: 1.5, motorMaxForce: 0, body: DEFAULT_BODY },
+    params: {
+      assist: 2,
+      stiffness: 600,
+      damping: 60,
+      footFriction: 1.5,
+      motorMaxForce: 0,
+      body: DEFAULT_BODY,
+    },
     demo: { T: 1.43, h0: 0.23, A: 0.4, K: 0.85, kp: 0.09 },
   },
 ];
@@ -109,7 +116,10 @@ let guide: Record<JointName, number> | undefined;
 /** 操作のガイド：お手本の入力に近づくには、どのボタンを押せばよいかを見せる */
 let guideOn = true;
 const GUIDE_DEADBAND = 0.06;
-const padStrips = {} as Record<JointName, { fill: HTMLDivElement; target: HTMLDivElement; arrow: HTMLDivElement }>;
+const padStrips = {} as Record<
+  JointName,
+  { fill: HTMLDivElement; target: HTMLDivElement; arrow: HTMLDivElement }
+>;
 let input = neutralInput(params.mode);
 let mirror = false;
 let paused = false;
@@ -117,7 +127,7 @@ let timeScale = 1;
 let sim: Sim;
 const held = new Set<string>();
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const $ = <T = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 const canvas = $<HTMLCanvasElement>("view");
 const ctx = canvas.getContext("2d")!;
 
@@ -140,7 +150,7 @@ function buildUi(): void {
       reset();
       renderModes();
     };
-    modes.append(b);
+    modes.appendChild(b);
   }
   renderModes();
 
@@ -148,7 +158,7 @@ function buildUi(): void {
   for (const j of JOINTS) {
     const row = document.createElement("label");
     row.innerHTML = `<span style="color:${COLOR[j]}">${LABEL[j]}　<kbd>${KEYS[j][0].toUpperCase()}</kbd>↑ <kbd>${KEYS[j][1].toUpperCase()}</kbd>↓</span><input type="range" min="0" max="1" step="0.01" id="in-${j}"><output id="out-${j}"></output>`;
-    inputs.append(row);
+    inputs.appendChild(row);
     $<HTMLInputElement>(`in-${j}`).oninput = (e) => {
       input[j] = Number((e.target as HTMLInputElement).value);
     };
@@ -184,7 +194,7 @@ function buildUi(): void {
       target: col.querySelector<HTMLDivElement>(".target")!,
       arrow: col.querySelector<HTMLDivElement>(".arrow")!,
     };
-    pad.append(col);
+    pad.appendChild(col);
   }
 
   // よく使うボタン（スマホでスクロールせずに押せるように、パネルの同じボタンを呼ぶ）
@@ -209,7 +219,7 @@ function buildUi(): void {
   const tune = $("tune");
   for (const s of SLIDERS) {
     const row = document.createElement("label");
-    row.innerHTML = `<span>${s.label}</span><input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${params[s.key]}"><output>${params[s.key]}</output>`;
+    row.innerHTML = `<span>${s.label}</span><input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${params[s.key] as number}"><output>${params[s.key] as number}</output>`;
     const el = row.querySelector("input")!;
     const out = row.querySelector("output")!;
     el.oninput = () => {
@@ -217,7 +227,7 @@ function buildUi(): void {
       out.textContent = el.value;
       if (s.key === "footFriction") reset();
     };
-    tune.append(row);
+    tune.appendChild(row);
     sliderEls.push({ key: s.key, el, out });
   }
 
@@ -226,15 +236,15 @@ function buildUi(): void {
     const o = document.createElement("option");
     o.value = b.id;
     o.textContent = b.label;
-    bodySel.append(o);
+    bodySel.appendChild(o);
   }
   bodySel.onchange = () => {
     bodyChoice = BODIES.find((b) => b.id === bodySel.value)!;
     Object.assign(params, bodyChoice.params);
     DEMO = bodyChoice.demo;
     for (const s of sliderEls) {
-      s.el.value = String(params[s.key]);
-      s.out.textContent = String(params[s.key]);
+      s.el.value = String(params[s.key] as number);
+      s.out.textContent = String(params[s.key] as number);
     }
     demo = false;
     reset();
@@ -406,7 +416,13 @@ function draw(): void {
     for (const s of part.shapes) {
       ctx.beginPath();
       if (s.kind === "box") {
-        ctx.roundRect((s.ox - s.hw) * SCALE, (-s.oy - s.hh) * SCALE, s.hw * 2 * SCALE, s.hh * 2 * SCALE, 6);
+        ctx.roundRect(
+          (s.ox - s.hw) * SCALE,
+          (-s.oy - s.hh) * SCALE,
+          s.hw * 2 * SCALE,
+          s.hh * 2 * SCALE,
+          6,
+        );
       } else {
         ctx.arc(s.ox * SCALE, -s.oy * SCALE, s.r * SCALE, 0, Math.PI * 2);
       }
@@ -440,7 +456,11 @@ function draw(): void {
     const dx = part.side === "right" ? 0.14 : -0.14;
     ctx.fillStyle = COLOR[j];
     ctx.textAlign = part.side === "right" ? "left" : "right";
-    ctx.fillText(`${LABEL[j]} ${KEYS[j][0].toUpperCase()}/${KEYS[j][1].toUpperCase()}`, X(t.x + dx), Y(t.y));
+    ctx.fillText(
+      `${LABEL[j]} ${KEYS[j][0].toUpperCase()}/${KEYS[j][1].toUpperCase()}`,
+      X(t.x + dx),
+      Y(t.y),
+    );
   }
   ctx.textAlign = "left";
   ctx.fillStyle = "#6b6252";
@@ -522,7 +542,11 @@ function drawGuide(): void {
   const ahead = 2;
   ctx.font = "13px sans-serif";
   ctx.fillStyle = "#2b2b2b";
-  ctx.fillText("ガイド：線がお手本（右が先）、丸が今の入力。つまみの黒い線に指を合わせる", x0, y0 - 8);
+  ctx.fillText(
+    "ガイド：線がお手本（右が先）、丸が今の入力。つまみの黒い線に指を合わせる",
+    x0,
+    y0 - 8,
+  );
   joints.forEach((j, i) => {
     const y = y0 + i * (lh + 8);
     ctx.fillStyle = "rgba(255,255,255,0.85)";
@@ -552,7 +576,11 @@ function drawGuide(): void {
     const d = guide![j] - input[j];
     ctx.font = "bold 16px sans-serif";
     ctx.fillStyle = COLOR[j];
-    ctx.fillText(d > GUIDE_DEADBAND ? "↑" : d < -GUIDE_DEADBAND ? "↓" : "・", x0 + 8, y + lh / 2 + 6);
+    ctx.fillText(
+      d > GUIDE_DEADBAND ? "↑" : d < -GUIDE_DEADBAND ? "↓" : "・",
+      x0 + 8,
+      y + lh / 2 + 6,
+    );
     ctx.font = "11px sans-serif";
     ctx.fillText(LABEL[j], x0 + lw + 6, y + lh / 2 + 4);
   });

@@ -83,7 +83,6 @@ export const DEFAULT_PARAMS: Params = {
   motorMaxForce: 0,
 };
 
-
 /** 操作しないときの入力の値。方式ごとに違う */
 export function neutralInput(mode: Mode): Record<JointName, number> {
   if (mode === "velocity") return { rightHip: 0.5, leftHip: 0.5, rightKnee: 0.5, leftKnee: 0.5 };
@@ -200,7 +199,12 @@ export class Sim {
     for (const side of ["left", "right"] as const) {
       const thigh = dynamic(0, HIP_Y - THIGH.hh);
       const shin = dynamic(0, HIP_Y - THIGH.hh * 2 - SHIN.hh);
-      this.parts.push({ name: "thigh", body: thigh, shapes: [box(thigh, THIGH, THIGH.density, 0.2)], side });
+      this.parts.push({
+        name: "thigh",
+        body: thigh,
+        shapes: [box(thigh, THIGH, THIGH.density, 0.2)],
+        side,
+      });
       this.parts.push({
         name: "shin",
         body: shin,
@@ -363,7 +367,10 @@ export class Sim {
       const c = this.torso.translation();
       const top = { x: c.x - Math.sin(rot) * TORSO.hh, y: c.y + Math.cos(rot) * TORSO.hh };
       const vy = this.torso.velocityAtPoint(top).y;
-      const fy = Math.max(0, weight * (p.support + 8 * (HIP_Y + TORSO.hh * 2 - top.y)) - weight * 0.6 * vy);
+      const fy = Math.max(
+        0,
+        weight * (p.support + 8 * (HIP_Y + TORSO.hh * 2 - top.y)) - weight * 0.6 * vy,
+      );
       this.torso.addForceAtPoint({ x: 0, y: Math.min(fy, weight * 3) }, top, true);
       this.strings.push({
         joint: "rightHip",

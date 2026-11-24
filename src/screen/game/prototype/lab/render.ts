@@ -52,7 +52,9 @@ function panel(rec: Recording, t: number): string {
     );
   }
   const order = { left: 0, center: 1, right: 2 };
-  const idx = rec.parts.map((_, i) => i).sort((a, b) => order[rec.parts[a]!.side] - order[rec.parts[b]!.side]);
+  const idx = rec.parts
+    .map((_, i) => i)
+    .sort((a, b) => order[rec.parts[a]!.side] - order[rec.parts[b]!.side]);
   for (const i of idx) {
     const part = rec.parts[i]!;
     const [x, y, rot] = f.p[i]!;
@@ -90,7 +92,9 @@ function panel(rec: Recording, t: number): string {
       `<circle cx="${W - 196 + k * 16}" cy="${H - 20}" r="6" fill="${f.c[k] ? COLOR[k + 2] : "none"}" stroke="${COLOR[k + 2]}" stroke-width="2"/>`,
     );
   }
-  out.push(`<text x="${W - 172}" y="${H - 16}" font-size="11" fill="#6b6252">足が地面に着いている（右・左）</text>`);
+  out.push(
+    `<text x="${W - 172}" y="${H - 16}" font-size="11" fill="#6b6252">足が地面に着いている（右・左）</text>`,
+  );
   // 入力（棒）と実際の角度（黒い線）
   const bx = W - 150;
   const by = 46;
@@ -100,23 +104,39 @@ function panel(rec: Recording, t: number): string {
     const u = f.in[j]!;
     const a = Math.min(1.1, Math.max(-0.1, f.ang[j]!));
     out.push(`<rect x="${x}" y="${by}" width="22" height="${bh}" fill="#fff" stroke="#2b2b2b"/>`);
-    out.push(`<rect x="${x}" y="${by + bh * (1 - u)}" width="22" height="${bh * u}" fill="${COLOR[j]}"/>`);
+    out.push(
+      `<rect x="${x}" y="${by + bh * (1 - u)}" width="22" height="${bh * u}" fill="${COLOR[j]}"/>`,
+    );
     out.push(
       `<line x1="${x - 4}" y1="${by + bh * (1 - a)}" x2="${x + 26}" y2="${by + bh * (1 - a)}" stroke="#2b2b2b" stroke-width="3"/>`,
     );
-    out.push(`<text x="${x + 11}" y="${by + bh + 14}" font-size="10" text-anchor="middle" fill="${COLOR[j]}">${LABEL[j]}</text>`);
+    out.push(
+      `<text x="${x + 11}" y="${by + bh + 14}" font-size="10" text-anchor="middle" fill="${COLOR[j]}">${LABEL[j]}</text>`,
+    );
   }
-  out.push(`<text x="${W - 176}" y="${by - 8}" font-size="10" fill="#6b6252">色の棒：入力　黒い線：実際の角度</text>`);
+  out.push(
+    `<text x="${W - 176}" y="${by - 8}" font-size="10" fill="#6b6252">色の棒：入力　黒い線：実際の角度</text>`,
+  );
   // 名前・距離・時間
   const dist = camX;
-  out.push(`<text x="14" y="26" font-size="17" font-weight="bold" fill="#2b2b2b">${esc(rec.label)}</text>`);
-  if (rec.note) out.push(`<text x="14" y="46" font-size="12" fill="#6b6252">${esc(rec.note)}</text>`);
+  out.push(
+    `<text x="14" y="26" font-size="17" font-weight="bold" fill="#2b2b2b">${esc(rec.label)}</text>`,
+  );
+  if (rec.note)
+    out.push(`<text x="14" y="46" font-size="12" fill="#6b6252">${esc(rec.note)}</text>`);
   out.push(
     `<text x="14" y="72" font-size="20" font-weight="bold" fill="#2b2b2b">${dist.toFixed(1)} m　${f.t.toFixed(1)} 秒</text>`,
   );
   if (done) {
     const r = rec.result;
-    const msg = r.ended === "goal" ? `ゴール ${r.time.toFixed(1)}秒` : r.ended === "fell" ? "転倒" : r.ended === "stuck" ? "止まった" : "時間切れ";
+    const msg =
+      r.ended === "goal"
+        ? `ゴール ${r.time.toFixed(1)}秒`
+        : r.ended === "fell"
+          ? "転倒"
+          : r.ended === "stuck"
+            ? "止まった"
+            : "時間切れ";
     out.push(
       `<text x="${W * 0.42}" y="120" font-size="34" font-weight="bold" text-anchor="middle" fill="${r.ended === "goal" ? "#1e8449" : "#c0392b"}">${msg}</text>`,
     );
@@ -173,8 +193,21 @@ function main(): void {
   for (let k = 0; k < n; k++) {
     writeFileSync(`${dir}/${String(k).padStart(5, "0")}.svg`, frameSvg(recs, k / fps, cols));
   }
-  const ff = (a: string[]) => execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...a], { stdio: "inherit" });
-  ff(["-framerate", String(fps), "-i", `${dir}/%05d.svg`, "-pix_fmt", "yuv420p", "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", `${out}.mp4`]);
+  const ff = (a: string[]) =>
+    execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...a], {
+      stdio: "inherit",
+    });
+  ff([
+    "-framerate",
+    String(fps),
+    "-i",
+    `${dir}/%05d.svg`,
+    "-pix_fmt",
+    "yuv420p",
+    "-vf",
+    "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+    `${out}.mp4`,
+  ]);
   if (gif) {
     const width = Math.min(W * cols, 600);
     ff([
@@ -187,12 +220,26 @@ function main(): void {
   }
   if (sheet) {
     // 12コマを等間隔に抜いて、3列4行の1枚にする
-    const picks = Array.from({ length: 12 }, (_, i) => Math.min(n - 1, Math.round((i * (n - 1)) / 11)));
+    const picks = Array.from({ length: 12 }, (_, i) =>
+      Math.min(n - 1, Math.round((i * (n - 1)) / 11)),
+    );
     const sel = picks.map((p) => `eq(n\\,${p})`).join("+");
-    ff(["-i", `${out}.mp4`, "-vf", `select='${sel}',scale=iw/2:-1,tile=3x4`, "-frames:v", "1", "-fps_mode", "vfr", `${out}-sheet.png`]);
+    ff([
+      "-i",
+      `${out}.mp4`,
+      "-vf",
+      `select='${sel}',scale=iw/2:-1,tile=3x4`,
+      "-frames:v",
+      "1",
+      "-fps_mode",
+      "vfr",
+      `${out}-sheet.png`,
+    ]);
   }
   rmSync(dir, { recursive: true, force: true });
-  console.log(`作成：${out}.mp4${gif ? `, ${out}.gif` : ""}${sheet ? `, ${out}-sheet.png` : ""}（${dur.toFixed(1)}秒）`);
+  console.log(
+    `作成：${out}.mp4${gif ? `, ${out}.gif` : ""}${sheet ? `, ${out}-sheet.png` : ""}（${dur.toFixed(1)}秒）`,
+  );
 }
 
 main();
