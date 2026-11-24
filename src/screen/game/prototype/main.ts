@@ -106,6 +106,10 @@ let demo = false;
 /** お手本の再生中に、自分で動かす関節。空ならお手本が全部動かす */
 let solo: JointName | "" = "";
 let guide: Record<JointName, number> | undefined;
+/** 操作のガイド：お手本の入力に近づくには、どのボタンを押せばよいかを見せる */
+let guideOn = true;
+const GUIDE_DEADBAND = 0.06;
+const padStrips = {} as Record<JointName, { fill: HTMLDivElement; target: HTMLDivElement; arrow: HTMLDivElement }>;
 let input = neutralInput(params.mode);
 let mirror = false;
 let paused = false;
@@ -150,33 +154,57 @@ function buildUi(): void {
     };
   }
 
-  // 画面のボタン。押している間は、キーを押しているのと同じ（スマホで操作するため）
+  // 関節ごとのつまみ。指（またはマウス）の高さが、そのまま入力の値になる。
+  // 本番のスマホの傾きと同じく位置で決めるので、反応が遅れても行き過ぎにくい
   const pad = $("pad");
   for (const j of JOINTS) {
     const col = document.createElement("div");
-    col.innerHTML = `<span style="color:${COLOR[j]}">${LABEL[j]}</span>`;
-    KEYS[j].forEach((key, i) => {
-      const b = document.createElement("button");
-      b.textContent = i === 0 ? "↑" : "↓";
-      b.style.background = COLOR[j];
-      b.style.color = "#fff";
-      const release = () => {
-        held.delete(key);
-        b.classList.remove("held");
-      };
-      b.onpointerdown = (e) => {
-        e.preventDefault();
-        b.setPointerCapture(e.pointerId);
-        held.add(key);
-        b.classList.add("held");
-      };
-      b.onpointerup = release;
-      b.onpointercancel = release;
-      b.oncontextmenu = (e) => e.preventDefault();
-      col.append(b);
-    });
+    col.className = "strip";
+    col.innerHTML = `<span style="color:${COLOR[j]}">${LABEL[j]}</span><div class="track"><div class="fill" style="background:${COLOR[j]}"></div><div class="target"></div><div class="arrow"></div></div>`;
+    const track = col.querySelector<HTMLDivElement>(".track")!;
+    const setFrom = (e: PointerEvent) => {
+      const r = track.getBoundingClientRect();
+      input[j] = Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height));
+    };
+    let dragging = false;
+    track.onpointerdown = (e) => {
+      e.preventDefault();
+      track.setPointerCapture(e.pointerId);
+      dragging = true;
+      setFrom(e);
+    };
+    track.onpointermove = (e) => {
+      if (dragging) setFrom(e);
+    };
+    track.onpointerup = () => (dragging = false);
+    track.onpointercancel = () => (dragging = false);
+    track.oncontextmenu = (e) => e.preventDefault();
+    padStrips[j] = {
+      fill: col.querySelector<HTMLDivElement>(".fill")!,
+      target: col.querySelector<HTMLDivElement>(".target")!,
+      arrow: col.querySelector<HTMLDivElement>(".arrow")!,
+    };
     pad.append(col);
   }
+
+  // よく使うボタン（スマホでスクロールせずに押せるように、パネルの同じボタンを呼ぶ）
+  $("m-reset").onclick = () => $("reset").click();
+  $("m-pause").onclick = () => $("pause").click();
+  $("m-demo").onclick = () => (demo ? $("reset").click() : $("demo").click());
+  const SPEEDS = [1, 0.6, 0.3];
+  $("m-slow").onclick = () => {
+    const el = $<HTMLInputElement>("slow");
+    const next = SPEEDS[(SPEEDS.indexOf(timeScale) + 1) % SPEEDS.length] ?? 1;
+    el.value = String(next);
+    el.dispatchEvent(new Event("input"));
+  };
+  $("m-guide").onclick = () => {
+    const el = $<HTMLInputElement>("guide");
+    el.checked = !el.checked;
+    el.dispatchEvent(new Event("change"));
+  };
+  $("m-settings").onclick = () => document.body.classList.add("settings-open");
+  $("m-close").onclick = () => document.body.classList.remove("settings-open");
 
   const tune = $("tune");
   for (const s of SLIDERS) {
@@ -216,6 +244,9 @@ function buildUi(): void {
   $<HTMLInputElement>("upper").onchange = (e) => {
     params.upperBody = (e.target as HTMLInputElement).checked;
     reset();
+  };
+  $<HTMLInputElement>("guide").onchange = (e) => {
+    guideOn = (e.target as HTMLInputElement).checked;
   };
   $<HTMLInputElement>("mirror").onchange = (e) => {
     mirror = (e.target as HTMLInputElement).checked;
@@ -290,7 +321,7 @@ function applyKeys(dt: number): void {
     }
     return;
   }
-  guide = undefined;
+  guide = guideOn && params.mode === "angle" ? gaitInput(DEMO, sim.time) : undefined;
   const rate = 3;
   for (const j of JOINTS) {
     const [up, down] = KEYS[j];
@@ -415,7 +446,7 @@ function draw(): void {
   ctx.fillStyle = "#6b6252";
   ctx.font = "14px sans-serif";
   ctx.fillText("進む向き →", w - 110, 40);
-  if (demo && solo && guide) {
+  if (demo && solo && guide && !guideOn) {
     // 自分の入力（太い棒）と、お手本の入力（線）を並べて見せる
     const gx = 40;
     const gy = 150;
@@ -445,6 +476,8 @@ function draw(): void {
     ctx.fillText("お手本を再生中（R で自分の操作に戻る）", 20, 104);
   }
 
+  drawGuide();
+
   // 距離とタイム
   ctx.fillStyle = "#2b2b2b";
   ctx.font = "bold 26px sans-serif";
@@ -457,6 +490,72 @@ function draw(): void {
     ctx.font = "18px sans-serif";
     ctx.fillText("R でやり直し", w / 2 - 55, 220);
   }
+}
+
+/** つまみと、よく使うボタンの表示を、今の状態に合わせる */
+function syncPadHints(): void {
+  for (const j of JOINTS) {
+    const st = padStrips[j];
+    if (!st) continue;
+    st.fill.style.height = `${input[j] * 100}%`;
+    const show = guideOn && guide && (!demo || j === solo);
+    st.target.style.display = show ? "block" : "none";
+    if (show) st.target.style.bottom = `${guide![j] * 100}%`;
+    const d = show ? guide![j] - input[j] : 0;
+    st.arrow.textContent = d > GUIDE_DEADBAND ? "↑" : d < -GUIDE_DEADBAND ? "↓" : "";
+  }
+  $("m-pause").textContent = paused ? "再開" : "停止";
+  $("m-demo").classList.toggle("on", demo);
+  $("m-slow").textContent = `速さ ${timeScale}倍`;
+  $("m-guide").classList.toggle("on", guideOn);
+}
+
+/** 関節ごとに、今から2秒先までのお手本の入力（線）と、今の自分の入力（丸）を描く */
+function drawGuide(): void {
+  if (!guide || !guideOn) return;
+  const joints = demo ? (solo ? [solo] : []) : [...JOINTS];
+  if (!joints.length) return;
+  const x0 = 20;
+  const lw = 300;
+  const lh = 44;
+  const y0 = 128;
+  const ahead = 2;
+  ctx.font = "13px sans-serif";
+  ctx.fillStyle = "#2b2b2b";
+  ctx.fillText("ガイド：線がお手本（右が先）、丸が今の入力。つまみの黒い線に指を合わせる", x0, y0 - 8);
+  joints.forEach((j, i) => {
+    const y = y0 + i * (lh + 8);
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillRect(x0, y, lw, lh);
+    ctx.strokeStyle = "#a89f8c";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y, lw, lh);
+    // お手本の線
+    ctx.strokeStyle = COLOR[j];
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    for (let k = 0; k <= 40; k++) {
+      const t = (k / 40) * ahead;
+      const g = gaitInput(DEMO, sim.time + t)[j];
+      const px = x0 + 30 + (t / ahead) * (lw - 40);
+      const py = y + lh - 4 - g * (lh - 8);
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    // 今の入力
+    ctx.fillStyle = "#2b2b2b";
+    ctx.beginPath();
+    ctx.arc(x0 + 30, y + lh - 4 - input[j] * (lh - 8), 6, 0, Math.PI * 2);
+    ctx.fill();
+    // 押すボタン
+    const d = guide![j] - input[j];
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillStyle = COLOR[j];
+    ctx.fillText(d > GUIDE_DEADBAND ? "↑" : d < -GUIDE_DEADBAND ? "↓" : "・", x0 + 8, y + lh / 2 + 6);
+    ctx.font = "11px sans-serif";
+    ctx.fillText(LABEL[j], x0 + lw + 6, y + lh / 2 + 4);
+  });
 }
 
 // ---- ループ ----
@@ -475,6 +574,7 @@ function frame(now: number): void {
     }
   }
   syncInputSliders();
+  syncPadHints();
   draw();
   requestAnimationFrame(frame);
 }
@@ -486,6 +586,7 @@ function frame(now: number): void {
     for (let k = 0; k < 4; k++) sim.step(input);
   }
   syncInputSliders();
+  syncPadHints();
   draw();
 };
 await Sim.init();
