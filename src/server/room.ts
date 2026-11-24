@@ -133,8 +133,9 @@ export class Room extends DurableObject<Env> {
 
   /**
    * clientId のスマホが戻ってきたのなら、渡す関節を返す。新しく参加するスマホなら undefined。
-   * 古い接続がまだ開いていれば（サーバーがまだ切れたことに気づいていなければ）、その関節を渡し、古い接続を置き換える。
-   * 古い接続が無く、期限内の予約があれば、予約していた関節を渡す
+   * 古い接続がまだ開いていれば（サーバーがまだ古い接続を閉じていなければ）、その関節を渡し、古い接続を置き換える。
+   * 古い接続が無く、期限内の予約があれば、予約していた関節を渡す。
+   * ただし、その関節をほかのスマホの開いた接続が持っていれば、予約は無いものとして扱う
    */
   private findReturning(
     clientId: string | undefined,
@@ -143,7 +144,10 @@ export class Room extends DurableObject<Env> {
     if (clientId === undefined) return undefined;
     const old = this.openPhones().find((ws) => phoneAttachment(ws).clientId === clientId);
     if (old !== undefined) return { joint: phoneJoint(old), old };
-    const reservation = reservations.find((r) => r.clientId === clientId);
+    const held = this.phoneJoints();
+    const reservation = reservations.find(
+      (r) => r.clientId === clientId && !held.includes(r.joint),
+    );
     if (reservation !== undefined) return { joint: reservation.joint, reservation };
     return undefined;
   }
@@ -186,10 +190,13 @@ export class Room extends DurableObject<Env> {
   /**
    * 切れたスマホの関節を、同じ ID のスマホのために RESERVATION_TTL_MS のあいだとっておく。
    * 同じ ID の別の接続が開いていれば（置き換えたあとに、古い接続の close が届いたとき）、とっておかない。
-   * 休止から戻ると departed が空になり、置き換えた古い接続もここに来ることがあるため
+   * 休止から戻ると departed が空になり、置き換えた古い接続もここに来ることがあるため。
+   * ほかの開いた接続がその関節を持っていても、とっておかない（切断の処理が遅れ、先に別のスマホが入ったとき）
    */
   private async reserve(ws: WebSocket, clientId: string, joint: Joint): Promise<void> {
-    if (this.openPhones(ws).some((other) => phoneAttachment(other).clientId === clientId)) return;
+    const others = this.openPhones(ws);
+    if (others.some((other) => phoneAttachment(other).clientId === clientId)) return;
+    if (others.some((other) => phoneJoint(other) === joint)) return;
     const now = Date.now();
     const reservations = (await this.liveReservations(now)).filter((r) => r.clientId !== clientId);
     reservations.push({ clientId, joint, expiresAt: now + RESERVATION_TTL_MS });
