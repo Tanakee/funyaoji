@@ -60,14 +60,15 @@ export function roomSocketUrl(
 
 /**
  * スクリーンとしてつなぐ。tilt は、関節ごとに受信済みより小さいシーケンス番号のものを捨ててから渡す。
- * 受信済みの番号は、つなぎ直しても覚えておく（抜けた関節の番号は room で忘れる）
+ * 受信済みの番号は、抜けた関節のぶんを room で忘れ、つなぎ直したら全部忘れる。
+ * 切れているあいだに関節の担当が入れ替わると、その関節は room から一度も抜けないことがあるため
  */
 export function connectScreen(
   roomCode: string,
   handlers: ClientHandlers<ScreenReceived>,
   options: ClientOptions,
 ): Connection<ScreenSent> {
-  const tilts = new TiltSequencer();
+  let tilts = new TiltSequencer();
   return connect<ServerToScreenMessage, ScreenSent>({
     open: openTransport(roomCode, "screen", options),
     schema: ServerToScreenMessage,
@@ -76,7 +77,10 @@ export function connectScreen(
       if (message.type === "room") tilts.keepOnly(message.joints);
       handlers.onMessage(message);
     },
-    onStateChange: handlers.onStateChange,
+    onStateChange(state) {
+      if (state.status === "open") tilts = new TiltSequencer();
+      handlers.onStateChange?.(state);
+    },
   });
 }
 
