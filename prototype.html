@@ -19,12 +19,23 @@
       output { color: #6b6252; font-variant-numeric: tabular-nums; }
       kbd { background: #fff; border: 1px solid #a89f8c; border-radius: 4px; padding: 0 5px; }
       .row { display: flex; gap: 6px; flex-wrap: wrap; }
+      #pad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+      #pad div { display: grid; gap: 4px; text-align: center; font-size: 12px; font-weight: bold; }
+      #pad button { font-size: 20px; padding: 12px 0; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+      #pad button.held { filter: brightness(0.8); }
+      /* スマホ：物理の画面を上、操作のパネルを下に並べる */
+      @media (max-width: 800px) {
+        body { flex-direction: column; height: auto; padding: 8px; gap: 8px; }
+        canvas { width: 100%; height: auto; flex: none; }
+        aside { width: 100%; padding-right: 0; overflow: visible; }
+      }
     </style>
   </head>
   <body>
     <canvas id="view" width="1100" height="720"></canvas>
     <aside>
       <strong>試作：操作の方式の比較</strong>
+      <div id="pad"></div>
       <h2>体の候補</h2>
       <select id="body" style="width:100%"></select>
       <h2>方式</h2>

@@ -150,6 +150,34 @@ function buildUi(): void {
     };
   }
 
+  // 画面のボタン。押している間は、キーを押しているのと同じ（スマホで操作するため）
+  const pad = $("pad");
+  for (const j of JOINTS) {
+    const col = document.createElement("div");
+    col.innerHTML = `<span style="color:${COLOR[j]}">${LABEL[j]}</span>`;
+    KEYS[j].forEach((key, i) => {
+      const b = document.createElement("button");
+      b.textContent = i === 0 ? "↑" : "↓";
+      b.style.background = COLOR[j];
+      b.style.color = "#fff";
+      const release = () => {
+        held.delete(key);
+        b.classList.remove("held");
+      };
+      b.onpointerdown = (e) => {
+        e.preventDefault();
+        b.setPointerCapture(e.pointerId);
+        held.add(key);
+        b.classList.add("held");
+      };
+      b.onpointerup = release;
+      b.onpointercancel = release;
+      b.oncontextmenu = (e) => e.preventDefault();
+      col.append(b);
+    });
+    pad.append(col);
+  }
+
   const tune = $("tune");
   for (const s of SLIDERS) {
     const row = document.createElement("label");
