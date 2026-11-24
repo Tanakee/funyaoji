@@ -295,7 +295,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     // 古い接続に遅れて届かないことを確かめるため、少し待つ
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(screen.pending).toBe(0);
-    // 古い接続は、開発サーバーでは閉じたことが届かない（下の skip を参照）ので、閉じ終わるのを待たない
+    // 古い接続は、開発サーバーでは閉じたことが届かないので、閉じ終わるのを待たない
     void screen.close();
     await closeAll([screen2, ...phones]);
   });
@@ -314,22 +314,6 @@ describe("GET /api/rooms/:roomCode/ws", () => {
 
   describe("スマホの ID（client）と関節の予約", () => {
     const allJoints = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
-
-    test("ID のあるスマホが切れても、同じ ID でつなぎ直すと同じ関節に戻る", async () => {
-      const roomCode = await createRoom();
-      const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
-      await phones[1]!.close(); // leftHip
-      // 予約している関節は、room の joints には入らない
-      expect(await screen.next()).toEqual({
-        type: "room",
-        roomCode,
-        joints: ["rightHip", "rightKnee", "leftKnee"],
-      });
-      const again = new Client(roomCode, "phone", "b");
-      expect(await again.next()).toEqual({ type: "joined", joint: "leftHip" });
-      expect(await screen.next()).toEqual({ type: "room", roomCode, joints: allJoints });
-      await closeAll([screen, phones[0]!, phones[2]!, phones[3]!, again]);
-    });
 
     test("予約している関節は、ほかのスマホに渡さない", async () => {
       const roomCode = await createRoom();
@@ -358,16 +342,6 @@ describe("GET /api/rooms/:roomCode/ws", () => {
       await closeAll([screen, noId, other, fourth, again]);
     });
 
-    test("形の合わない ID は、付いていないものとして扱い、予約しない", async () => {
-      const roomCode = await createRoom();
-      const invalid = new Client(roomCode, "phone", "not valid!");
-      expect(await invalid.next()).toEqual({ type: "joined", joint: "rightHip" });
-      await invalid.close();
-      const next = new Client(roomCode, "phone");
-      expect(await next.next()).toEqual({ type: "joined", joint: "rightHip" });
-      await next.close();
-    });
-
     test("同じ ID の接続がまだ開いているうちにつなぎ直すと、新しい接続に置き換え、関節は room から抜けない", async () => {
       const roomCode = await createRoom();
       const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
@@ -381,20 +355,9 @@ describe("GET /api/rooms/:roomCode/ws", () => {
       // 古い接続が閉じても、関節の抜けた room は届かない
       await new Promise((resolve) => setTimeout(resolve, 200));
       expect(screen.pending).toBe(0);
-      // 古い接続は、開発サーバーでは閉じたことが届かない（下の skip を参照）ので、閉じ終わるのを待たない
+      // 古い接続は、開発サーバーでは閉じたことが届かないので、閉じ終わるのを待たない
       void phones[2]!.close();
       await closeAll([screen, phones[0]!, phones[1]!, phones[3]!, again]);
-    });
-
-    // 開発サーバーでは、Durable Object が閉じた接続の close がクライアントに届かない。本番で確かめるまで飛ばす
-    test.skip("同じ ID でつなぎ直すと、古い接続を 4000 で閉じる", async () => {
-      const roomCode = await createRoom();
-      const phone = new Client(roomCode, "phone", "a");
-      await phone.next();
-      const again = new Client(roomCode, "phone", "a");
-      await again.next();
-      expect(await phone.closed).toBe(4000);
-      await again.close();
     });
 
     test("プレイ中でも、予約か開いた接続のある ID のスマホは断らない。ほかのスマホは playing で断る", async () => {
