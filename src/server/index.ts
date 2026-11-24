@@ -44,6 +44,7 @@ app.get("/api/rooms/:roomCode/ws", (c) => {
   const roomCode = normalizeRoomCode(c.req.param("roomCode"));
   if (!isRoomCode(roomCode)) {
     // ルームコードの形でなければ、Durable Object を作らずに断る
+    console.log({ roomCode, event: "rejected", reason: "no-room" });
     return rejectNoRoom();
   }
   const url = new URL(c.req.url);

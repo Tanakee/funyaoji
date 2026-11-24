@@ -94,8 +94,8 @@
 
 ### ログ
 
-- Workers Logs の呼び出しのログ（リクエストやメッセージ1件ごとに自動で残るもの）は切る（`invocation_logs: false`）
-- サーバーは、出来事だけを `console.log` で書く。ルームの作成と削除、接続（役割・関節）、断った理由、切断（close コード）、エラー、`phase` の変化。項目で絞り込めるように、オブジェクトで書く
+- Workers Logs の呼び出しのログ（リクエストやメッセージ1件ごとに自動で残るもの）は切る（`cloudflare.config.ts` の `observability.logs.invocationLogs: false`。wrangler の設定では `invocation_logs`）
+- サーバーは、出来事だけを `console.log` で書く。ルームの作成と削除、接続（役割・関節）、スクリーンの置き換え、断った理由、切断（close コード）、15秒で閉じた接続、エラー、`phase` の変化。項目で絞り込めるように、`{ roomCode, event, ... }` のオブジェクトで書く
 - `tilt` と `pong` の中継ではログを書かない
 - 発表の日は、`npx cf observability tail` を手元で流しておき、リクエストの様子はそれで見る
 - 上限の数字は [Cloudflare の注意点](cloudflare.md) の「上限」にある

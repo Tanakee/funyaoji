@@ -8,6 +8,7 @@ export default defineConfig({
     entrypoint,
     assets: { runWorkerFirst: ["/api/*"] },
     exports: { Room: exports.durableObject({ storage: "sqlite" }) },
-    observability: { enabled: true },
+    // 呼び出しのログは切り、サーバーが console.log で書いた出来事と例外だけを残す（設計の「ログ」）
+    observability: { enabled: true, logs: { invocationLogs: false } },
   }),
 });
