@@ -67,7 +67,7 @@ Worker の名前と Durable Objects は `cloudflare.config.ts` に書く。CLI �
 | 環境 | URL | 更新のきっかけ |
 |---|---|---|
 | ローカル | `http://localhost:5173/` | `npm run dev` |
-| プレビュー | `https://<ブランチ名>-funyaoji.team-sweater.workers.dev/` | PR を出す・更新する |
+| プレビュー | `https://<ブランチ名>-funyaoji.team-sweater.workers.dev/` | PR を出す・更新する。PR を閉じると消える |
 | 本番 | `https://funyaoji.team-sweater.workers.dev/` | `main` にマージする |
 
 プレビューの URL は、PR のコメントに表示される。ブランチ名の `/` は `-` に置き換わる。デプロイの決まりと上限は [Cloudflare の注意点](cloudflare.md) にある。
