@@ -60,6 +60,7 @@ export class Room extends DurableObject<Env> {
   async create(roomCode: string): Promise<boolean> {
     if ((await this.ctx.storage.get<string>(ROOM_CODE_KEY)) !== undefined) return false;
     await this.ctx.storage.put(ROOM_CODE_KEY, roomCode);
+    this.log({ event: "created" });
     // 誰も接続しないまま放っておかれたルームも消す
     await this.scheduleDeletion(Date.now());
     return true;
@@ -142,6 +143,7 @@ export class Room extends DurableObject<Env> {
         // プレイ中の参加を断るためと、あとから接続した人に送るために保持する。
         // put を待たずに送る。送信は書き込みが確定するまで止められ（output gate）、次のメッセージより先に中継される
         void this.ctx.storage.put(PHASE_KEY, received);
+        this.log({ event: "phase", phase: received.phase });
         this.sendToPhones(received);
         break;
       case "status":
@@ -158,13 +160,29 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  override async webSocketClose(ws: WebSocket): Promise<void> {
-    if (!(await this.depart(ws))) return;
-    if (this.openSockets(ws).length === 0) await this.scheduleDeletion(Date.now());
+  override async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean,
+  ): Promise<void> {
+    this.log({ event: "closed", ...socketFields(ws), code, reason, wasClean });
+    await this.handleClose(ws);
   }
 
-  override webSocketError(ws: WebSocket): Promise<void> {
-    return this.webSocketClose(ws);
+  override webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    console.error({
+      event: "error",
+      roomCode: this.ctx.id.name,
+      ...socketFields(ws),
+      error: String(error),
+    });
+    return this.handleClose(ws);
+  }
+
+  private async handleClose(ws: WebSocket): Promise<void> {
+    if (!(await this.depart(ws))) return;
+    if (this.openSockets(ws).length === 0) await this.scheduleDeletion(Date.now());
   }
 
   /**
@@ -184,6 +202,7 @@ export class Room extends DurableObject<Env> {
     if (deleteAt !== undefined && deleteAt <= now) {
       // ルームコードと phase も消え、同じコードでまたルームを作れるようになる。
       // deleteAll がアラームも消すかは互換性の日付で変わるので、先に消しておく
+      this.log({ event: "deleted" });
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       return;
@@ -222,6 +241,7 @@ export class Room extends DurableObject<Env> {
         nextCheckAt = Math.min(nextCheckAt ?? expiresAt, expiresAt);
         continue;
       }
+      this.log({ event: "timeout", ...socketFields(ws), idleMs: now - lastSeenAt });
       try {
         ws.close(CLOSE_TIMEOUT, "timeout");
       } catch {
@@ -276,6 +296,8 @@ export class Room extends DurableObject<Env> {
   private acceptScreen(ws: WebSocket, roomCode: string, phase: PhaseMessage | undefined): void {
     // スクリーンは1つだけ。ページを開き直したときのために、古い接続を閉じて置き換える
     for (const old of this.ctx.getWebSockets("screen")) {
+      // 閉じかけの接続も返るので、開いているものを置き換えたときだけ書く
+      if (old.readyState === WebSocket.OPEN) this.log({ event: "replaced" });
       try {
         old.close(CLOSE_REPLACED, "replaced");
       } catch {
@@ -284,6 +306,7 @@ export class Room extends DurableObject<Env> {
     }
     this.ctx.acceptWebSocket(ws, ["screen"]);
     ws.serializeAttachment({ role: "screen", connectedAt: Date.now() } satisfies Attachment);
+    this.log({ event: "connected", role: "screen" });
     send(ws, this.roomMessage(roomCode));
     if (phase !== undefined) send(ws, phase);
   }
@@ -301,6 +324,7 @@ export class Room extends DurableObject<Env> {
     }
     this.ctx.acceptWebSocket(ws, ["phone"]);
     ws.serializeAttachment({ role: "phone", joint, connectedAt: Date.now() } satisfies Attachment);
+    this.log({ event: "connected", role: "phone", joint });
     send(ws, { type: "joined", joint } satisfies JoinedMessage);
     if (phase !== undefined) send(ws, phase);
     this.broadcastRoom(roomCode);
@@ -309,6 +333,7 @@ export class Room extends DurableObject<Env> {
 
   /** 受け付けずに、理由を送って閉じる */
   private reject(ws: WebSocket, reason: RejectedMessage["reason"]): void {
+    this.log({ event: "rejected", reason });
     ws.accept();
     send(ws, { type: "rejected", reason } satisfies RejectedMessage);
     ws.close(CLOSE_REJECTED, reason);
@@ -344,6 +369,15 @@ export class Room extends DurableObject<Env> {
       .filter((ws) => ws !== closing && ws.readyState === WebSocket.OPEN);
   }
 
+  /**
+   * 出来事を1件、ログに書く。項目で絞り込めるように、オブジェクトで書く（設計の「ログ」）。
+   * tilt と pong の中継では呼ばない。毎秒100件を超え、ログの1日の上限に響く
+   */
+  private log(fields: { event: string } & Record<string, unknown>): void {
+    // getByName で作ったので、名前はルームコード
+    console.log({ roomCode: this.ctx.id.name, ...fields });
+  }
+
   private sendToScreens(message: ServerToScreenMessage): void {
     for (const ws of this.ctx.getWebSockets("screen")) send(ws, message);
   }
@@ -351,6 +385,15 @@ export class Room extends DurableObject<Env> {
   private sendToPhones(message: ServerToPhoneMessage): void {
     for (const ws of this.openPhones()) send(ws, message);
   }
+}
+
+/** ログに書く、接続の役割と関節 */
+function socketFields(ws: WebSocket): { role?: Attachment["role"]; joint?: Joint } {
+  const attachment = ws.deserializeAttachment() as Attachment | null;
+  if (attachment === null) return {};
+  return attachment.role === "phone"
+    ? { role: "phone", joint: attachment.joint }
+    : { role: "screen" };
 }
 
 function phoneJoint(ws: WebSocket): Joint {
