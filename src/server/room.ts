@@ -136,7 +136,9 @@ export class Room extends DurableObject<Env> {
    * clientId のスマホが戻ってきたのなら、渡す関節を返す。新しく参加するスマホなら undefined。
    * 古い接続がまだ開いていれば（サーバーがまだ古い接続を閉じていなければ）、その関節を渡し、古い接続を置き換える。
    * 古い接続が無く、期限内の予約があれば、予約していた関節を渡す。
-   * ただし、その関節をほかのスマホの開いた接続が持っていれば、予約は無いものとして扱う
+   * ただし、その関節をほかのスマホの開いた接続が持っていれば、予約は無いものとして扱う。
+   * 予約も無く、古い接続が閉じかけで、まだ切断を処理していなければ（close がまだ webSocketClose に届いていない）、
+   * その関節を渡し、古い接続を置き換える。切断を処理する前なので、予約がまだ無いため
    */
   private findReturning(
     clientId: string | undefined,
@@ -150,6 +152,27 @@ export class Room extends DurableObject<Env> {
       (r) => r.clientId === clientId && !held.includes(r.joint),
     );
     if (reservation !== undefined) return { joint: reservation.joint, reservation };
+    // ほかのスマホの開いた接続が持つ関節と、予約されている関節は渡さない
+    const reserved = reservations.map((r) => r.joint);
+    const closing = this.ctx
+      .getWebSockets("phone")
+      .filter(
+        (ws) =>
+          !this.departed.has(ws) &&
+          phoneAttachment(ws).clientId === clientId &&
+          !held.includes(phoneJoint(ws)) &&
+          !reserved.includes(phoneJoint(ws)),
+      )
+      // 同じ ID の閉じかけの接続が2つあれば、新しいほう
+      .reduce<WebSocket | undefined>(
+        (latest, ws) =>
+          latest === undefined ||
+          phoneAttachment(ws).connectedAt > phoneAttachment(latest).connectedAt
+            ? ws
+            : latest,
+        undefined,
+      );
+    if (closing !== undefined) return { joint: phoneJoint(closing), old: closing };
     return undefined;
   }
 
