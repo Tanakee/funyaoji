@@ -11,6 +11,8 @@ import {
   type Params,
 } from "./sim.ts";
 import { gaitInput, type Gait } from "./bot.ts";
+import { PolicyDriver, type Policy } from "./policy.ts";
+import POLICY_B from "./policy-b.json";
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
   {
@@ -110,6 +112,9 @@ const params: Params = { ...DEFAULT_PARAMS, ...bodyChoice.params };
 let DEMO: Gait = bodyChoice.demo;
 const sliderEls: { key: keyof Params; el: HTMLInputElement; out: HTMLOutputElement }[] = [];
 let demo = false;
+/** 強化学習の AI が4つの関節を動かす。体 B・目標角度のモーターで学習したもの */
+let aiOn = false;
+let ai: PolicyDriver | undefined;
 /** お手本の再生中に、自分で動かす関節。空ならお手本が全部動かす */
 let solo: JointName | "" = "";
 let guide: Record<JointName, number> | undefined;
@@ -134,6 +139,7 @@ const ctx = canvas.getContext("2d")!;
 function reset(): void {
   sim = new Sim(params);
   input = neutralInput(params.mode);
+  ai = aiOn ? new PolicyDriver(POLICY_B as Policy, sim) : undefined;
   syncInputSliders();
 }
 
@@ -146,6 +152,7 @@ function buildUi(): void {
     b.dataset.mode = m.id;
     b.onclick = () => {
       demo = false;
+      aiOn = false;
       params.mode = m.id;
       reset();
       renderModes();
@@ -201,6 +208,29 @@ function buildUi(): void {
   $("m-reset").onclick = () => $("reset").click();
   $("m-pause").onclick = () => $("pause").click();
   $("m-demo").onclick = () => (demo ? $("reset").click() : $("demo").click());
+  $("m-ai").onclick = () => {
+    if (aiOn) {
+      $("reset").click();
+      return;
+    }
+    // AI は体 B・目標角度のモーターで学習したので、その設定に戻してから動かす
+    bodyChoice = BODIES[0]!;
+    Object.assign(params, bodyChoice.params);
+    DEMO = bodyChoice.demo;
+    params.mode = "angle";
+    params.kneeAuto = 0;
+    params.upperBody = false;
+    $<HTMLSelectElement>("body").value = bodyChoice.id;
+    $<HTMLInputElement>("upper").checked = false;
+    for (const s of sliderEls) {
+      s.el.value = String(params[s.key] as number);
+      s.out.textContent = String(params[s.key] as number);
+    }
+    demo = false;
+    aiOn = true;
+    reset();
+    renderModes();
+  };
   const SPEEDS = [1, 0.6, 0.3];
   $("m-slow").onclick = () => {
     const el = $<HTMLInputElement>("slow");
@@ -247,6 +277,7 @@ function buildUi(): void {
       s.out.textContent = String(params[s.key] as number);
     }
     demo = false;
+    aiOn = false;
     reset();
     bodySel.blur();
   };
@@ -267,6 +298,7 @@ function buildUi(): void {
   };
   $("reset").onclick = () => {
     demo = false;
+    aiOn = false;
     reset();
   };
   $<HTMLSelectElement>("solo").onchange = (e) => {
@@ -274,6 +306,7 @@ function buildUi(): void {
     (e.target as HTMLSelectElement).blur();
   };
   $("demo").onclick = () => {
+    aiOn = false;
     params.mode = "angle";
     params.assist = bodyChoice.params.assist ?? 2;
     params.kneeAuto = 0;
@@ -331,7 +364,8 @@ function applyKeys(dt: number): void {
     }
     return;
   }
-  guide = guideOn && params.mode === "angle" ? gaitInput(DEMO, sim.time) : undefined;
+  // AI が動かしている間は、お手本の線を出さない
+  guide = guideOn && !aiOn && params.mode === "angle" ? gaitInput(DEMO, sim.time) : undefined;
   const rate = 3;
   for (const j of JOINTS) {
     const [up, down] = KEYS[j];
@@ -526,6 +560,7 @@ function syncPadHints(): void {
   }
   $("m-pause").textContent = paused ? "再開" : "停止";
   $("m-demo").classList.toggle("on", demo);
+  $("m-ai").classList.toggle("on", aiOn);
   $("m-slow").textContent = `速さ ${timeScale}倍`;
   $("m-guide").classList.toggle("on", guideOn);
 }
@@ -597,6 +632,7 @@ function frame(now: number): void {
     acc += dt * timeScale;
     const step = sim.world.timestep;
     while (acc >= step) {
+      if (ai) input = ai.input(sim);
       sim.step(input);
       acc -= step;
     }
@@ -611,7 +647,10 @@ function frame(now: number): void {
 (globalThis as unknown as { __tick: (n: number) => void }).__tick = (n) => {
   for (let i = 0; i < n; i++) {
     applyKeys(1 / 60);
-    for (let k = 0; k < 4; k++) sim.step(input);
+    for (let k = 0; k < 4; k++) {
+      if (ai) input = ai.input(sim);
+      sim.step(input);
+    }
   }
   syncInputSliders();
   syncPadHints();
@@ -624,6 +663,7 @@ await Sim.init();
   time: sim.time,
   ended: sim.ended,
   demo,
+  ai: aiOn,
   mode: params.mode,
 });
 reset();
