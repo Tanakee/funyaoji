@@ -131,8 +131,13 @@ function Lobby({ roomCode }: { roomCode: string }) {
   );
 }
 
+/** 返事の来ない ping がこの数だけ続いたら「応答なし」と出す */
+const UNRESPONSIVE_MISSES = 2;
+
 function latencyText(latency: Latency | undefined): string {
   if (latency === undefined) return "-";
+  if (latency.missed >= UNRESPONSIVE_MISSES) return "応答なし";
+  if (latency.latest === null || latency.median === null) return "-";
   return `${Math.round(latency.latest)}ms / ${Math.round(latency.median)}ms`;
 }
 

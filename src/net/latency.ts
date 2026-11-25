@@ -7,10 +7,12 @@ export const PING_TIMEOUT_MS = 5_000;
 /** 中央値をとる、直近の計測の数 */
 export const LATENCY_SAMPLES = 10;
 
-/** 関節ごとの片道の遅延（往復時間の半分。ミリ秒） */
+/** 関節ごとの片道の遅延（往復時間の半分。ミリ秒）。まだ1回も返事が無ければ null */
 export interface Latency {
-  latest: number;
-  median: number;
+  latest: number | null;
+  median: number | null;
+  /** 続けて返事が来なかった（PING_TIMEOUT_MS を過ぎた）ping の数。返事が来たら 0 に戻る */
+  missed: number;
 }
 
 /**
@@ -24,6 +26,8 @@ export class LatencyTracker {
   private readonly pending = new Map<number, { sentAt: number; joint: Joint }>();
   /** 関節ごとの直近の計測。古い順 */
   private readonly samples = new Map<Joint, number[]>();
+  /** 関節ごとの、続けて返事が来なかった ping の数 */
+  private readonly missed = new Map<Joint, number>();
 
   /** ping を送る前に呼ぶ。送る id を返す */
   ping(joint: Joint, now: number): number {
@@ -41,16 +45,19 @@ export class LatencyTracker {
     if (sent === undefined || sent.joint !== joint) return;
     this.pending.delete(id);
     if (now - sent.sentAt > PING_TIMEOUT_MS) return;
+    this.missed.set(joint, 0);
     const list = this.samples.get(sent.joint) ?? [];
     list.push((now - sent.sentAt) / 2);
     if (list.length > LATENCY_SAMPLES) list.shift();
     this.samples.set(sent.joint, list);
   }
 
-  /** PING_TIMEOUT_MS より前に送って返事の無い ping を忘れる */
+  /** PING_TIMEOUT_MS より前に送って返事の無い ping を忘れ、返事が来なかった数に足す */
   forgetStale(now: number): void {
-    for (const [id, { sentAt }] of this.pending) {
-      if (now - sentAt > PING_TIMEOUT_MS) this.pending.delete(id);
+    for (const [id, { sentAt, joint }] of this.pending) {
+      if (now - sentAt <= PING_TIMEOUT_MS) continue;
+      this.pending.delete(id);
+      this.missed.set(joint, (this.missed.get(joint) ?? 0) + 1);
     }
   }
 
@@ -58,6 +65,9 @@ export class LatencyTracker {
   keepOnly(joints: readonly Joint[]): void {
     for (const joint of this.samples.keys()) {
       if (!joints.includes(joint)) this.samples.delete(joint);
+    }
+    for (const joint of this.missed.keys()) {
+      if (!joints.includes(joint)) this.missed.delete(joint);
     }
     for (const [id, { joint }] of this.pending) {
       if (!joints.includes(joint)) this.pending.delete(id);
@@ -72,14 +82,21 @@ export class LatencyTracker {
   reset(): void {
     this.pending.clear();
     this.samples.clear();
+    this.missed.clear();
   }
 
-  /** 関節ごとの最新の値と、直近の中央値 */
+  /** 関節ごとの最新の値・直近の中央値・続けて返事が来なかった数。何も分かっていない関節は含めない */
   snapshot(): Partial<Record<Joint, Latency>> {
     const result: Partial<Record<Joint, Latency>> = {};
-    for (const [joint, list] of this.samples) {
-      if (list.length === 0) continue;
-      result[joint] = { latest: list[list.length - 1], median: median(list) };
+    for (const joint of new Set([...this.samples.keys(), ...this.missed.keys()])) {
+      const list = this.samples.get(joint) ?? [];
+      const missed = this.missed.get(joint) ?? 0;
+      if (list.length === 0 && missed === 0) continue;
+      result[joint] = {
+        latest: list.length > 0 ? list[list.length - 1] : null,
+        median: list.length > 0 ? median(list) : null,
+        missed,
+      };
     }
     return result;
   }
