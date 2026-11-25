@@ -18,7 +18,8 @@ export interface Latency {
  * 時刻は呼び出し側が渡す（performance.now()）
  */
 export class LatencyTracker {
-  private nextId = 0;
+  /** 時刻から数え始め、前に開いたページの ping と id が重ならないようにする（createTiltSeq と同じ） */
+  private nextId = Date.now();
   /** 返事を待っている ping。id → 送った時刻と宛先の関節 */
   private readonly pending = new Map<number, { sentAt: number; joint: Joint }>();
   /** 関節ごとの直近の計測。古い順 */
@@ -31,11 +32,15 @@ export class LatencyTracker {
     return id;
   }
 
-  /** pong を受け取ったら呼ぶ。知らない id（忘れた ping・つなぎ直す前の ping）は無視する */
-  pong(id: number, now: number): void {
+  /**
+   * pong を受け取ったら呼ぶ。知らない id（忘れた ping・つなぎ直す前の ping）、
+   * 宛先の関節が違うもの、PING_TIMEOUT_MS より古いものは無視する
+   */
+  pong(id: number, joint: Joint, now: number): void {
     const sent = this.pending.get(id);
-    if (sent === undefined) return;
+    if (sent === undefined || sent.joint !== joint) return;
     this.pending.delete(id);
+    if (now - sent.sentAt > PING_TIMEOUT_MS) return;
     const list = this.samples.get(sent.joint) ?? [];
     list.push((now - sent.sentAt) / 2);
     if (list.length > LATENCY_SAMPLES) list.shift();
@@ -59,9 +64,14 @@ export class LatencyTracker {
     }
   }
 
-  /** 返事を待っている ping を忘れる。つなぎ直したら、前の接続で送った ping の pong は返らない */
-  clearPending(): void {
+  /**
+   * 計測と、返事を待っている ping を全部忘れる。つなぎ直したら呼ぶ。
+   * 前の接続で送った ping の pong は返らない。切れているあいだに関節の担当が入れ替わると、
+   * その関節は room から一度も抜けないことがあるため、計測も忘れる
+   */
+  reset(): void {
     this.pending.clear();
+    this.samples.clear();
   }
 
   /** 関節ごとの最新の値と、直近の中央値 */

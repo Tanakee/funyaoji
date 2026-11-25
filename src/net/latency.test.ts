@@ -9,8 +9,8 @@ test("往復時間の半分を記録し、最新の値と中央値を出す。�
     [2000, 60],
   ]) {
     const id = tracker.ping("rightHip", sentAt);
-    tracker.pong(id, sentAt + rtt);
+    tracker.pong(id, "rightHip", sentAt + rtt);
   }
-  tracker.pong(999, 5000);
+  tracker.pong(999, "rightHip", 5000);
   expect(tracker.snapshot()).toEqual({ rightHip: { latest: 30, median: 30 } });
 });

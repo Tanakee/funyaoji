@@ -35,7 +35,10 @@ export interface ClientHandlers<Receive> {
 }
 
 export interface ScreenHandlers extends ClientHandlers<ScreenReceived> {
-  /** 関節ごとの片道の遅延。つながっているあいだ、ping を送るたび（1秒に1回）に渡す */
+  /**
+   * 関節ごとの片道の遅延。つながっているあいだ、ping を送るたび（1秒に1回）と room を受け取ったときに渡す。
+   * つながっていないときは空にして渡す
+   */
   onLatency?: (latency: Partial<Record<Joint, Latency>>) => void;
 }
 
@@ -103,9 +106,10 @@ export function connectScreen(
         tilts.keepOnly(message.joints);
         latency.keepOnly(message.joints);
         joints = message.joints;
+        handlers.onLatency?.(latency.snapshot());
       }
       if (message.type === "pong") {
-        latency.pong(message.id, performance.now());
+        latency.pong(message.id, message.joint, performance.now());
         return;
       }
       handlers.onMessage(message);
@@ -115,10 +119,12 @@ export function connectScreen(
       pinger = undefined;
       if (state.status === "open") {
         tilts = new TiltSequencer();
-        // 前の接続で送った ping の pong は返らない。関節は、つないだときに届く room で知る
-        latency.clearPending();
+        // 前の接続の計測と ping は全部忘れる。関節は、つないだときに届く room で知る
+        latency.reset();
         joints = [];
         pinger = setInterval(sendPings, PING_INTERVAL_MS);
+      } else {
+        handlers.onLatency?.({});
       }
       handlers.onStateChange?.(state);
     },
