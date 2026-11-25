@@ -14,9 +14,10 @@ permissions:
   contents: read
   pull-requests: write
 
-# 同じ PR のデプロイと片付けは、同じグループで順に動かす
+# 同じブランチのデプロイと片付けは、同じグループで順に動かす。プレビューの名前はブランチ名で決まるため
+# （github.ref は、マージで閉じたときに base ブランチになるので使わない）
 concurrency:
-  group: deploy-${{ github.event_name == 'workflow_run' && 'production' || github.ref }}
+  group: deploy-${{ github.event_name == 'workflow_run' && 'production' || github.head_ref }}
 
 jobs:
   deploy:
@@ -73,6 +74,9 @@ jobs:
       CF_SEND_TELEMETRY: "false"
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 片付けは PR のコードを使わない。閉じた PR のマージ用のコミットは、古いか無いことがある
+          ref: ${{ github.event.pull_request.base.sha }}
 
       - uses: actions/setup-node@v5
         with:
@@ -83,16 +87,29 @@ jobs:
 
       - name: プレビューを消す
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           # cf previews deploy は、ブランチ名（GITHUB_HEAD_REF）をプレビューの名前にする
           PREVIEW_NAME: ${{ github.head_ref }}
         run: |
-          # 名前の URL エンコードは cf がする。プレビューが無い（一度もデプロイされていない）ときの 404 は失敗にしない
-          if npx cf previews delete "$PREVIEW_NAME" --worker funyaoji --force 2> error.log; then
+          # 同じブランチの PR がまだ開いているなら、そのプレビューを使っているので消さない（閉じた run を開き直した後に再実行したときも）
+          open_prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$PREVIEW_NAME" --state open --json number -q length)
+          if [ "$open_prs" -gt 0 ]; then
+            echo "ブランチ $PREVIEW_NAME の PR がまだ開いているので、プレビューは消さない"
             exit 0
           fi
-          cat error.log >&2
-          if grep -q '404 Not Found' error.log; then
+
+          # 名前の URL エンコードは cf がする
+          if ! npx cf previews delete "$PREVIEW_NAME" --worker funyaoji --force 2> error.log; then
+            cat error.log >&2
+            # プレビューが無い（一度もデプロイされていない）ときは失敗にしない。cf は API のエラーコードを [10025] の形で出す。
+            # 404 だけで見ると、Worker が無いときも成功になってしまう
+            if ! grep -q '\[10025\]' error.log; then
+              exit 1
+            fi
             echo "プレビュー $PREVIEW_NAME が無いので、消すものは無い"
-            exit 0
           fi
-          exit 1
+
+          # プレビューの URL のコメントがあれば書き換える。無いときは何もしない
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --edit-last --body "プレビューは、PR を閉じたので消した" || true
