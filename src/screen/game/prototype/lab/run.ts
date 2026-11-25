@@ -46,7 +46,8 @@ export const MAX_TIME = 30;
 export const STUCK_TIME = 6;
 
 /** 入力を作る関数。標準は、脚を交互に振る歩き方（gaitInput）にずれを足したもの */
-export type Controller = (time: number, noise: Noise) => Record<JointName, number>;
+// 体の状態を見て決めるもの（強化学習の AI）は、3つめの sim を使う
+export type Controller = (time: number, noise: Noise, sim?: Sim) => Record<JointName, number>;
 
 export function gaitController(g: Gait): Controller {
   return (time, noise) => gaitInput(g, time, noise);
@@ -71,7 +72,7 @@ export function run(
   const stepsPerFrame = Math.round(1 / 60 / sim.world.timestep);
   while (sim.time < maxTime && !sim.ended) {
     if (steps % stepsPerFrame === 0) {
-      input = controller(sim.time, noise);
+      input = controller(sim.time, noise, sim);
       onFrame?.(sim, input);
     }
     sim.step(input);
