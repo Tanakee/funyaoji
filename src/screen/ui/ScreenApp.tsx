@@ -1,5 +1,5 @@
 import { Suspense, use, useEffect, useState } from "react";
-import { connectScreen, type ConnectionState } from "../../net/client.ts";
+import { connectScreen, type ConnectionState, type Latency } from "../../net/client.ts";
 import {
   JOINTS,
   type Joint,
@@ -35,6 +35,7 @@ function Lobby({ roomCode }: { roomCode: string }) {
   const [phase, setPhase] = useState<PhaseMessage | undefined>();
   const [rejected, setRejected] = useState<RejectedMessage["reason"] | undefined>();
   const [tilts, setTilts] = useState<Partial<Record<Joint, LastTilt>>>({});
+  const [latency, setLatency] = useState<Partial<Record<Joint, Latency>>>({});
 
   useEffect(() => {
     // StrictMode では effect が2回走る。1回目の close() が「切れた」を表示しないように、片付けたあとの状態は捨てる
@@ -45,6 +46,8 @@ function Lobby({ roomCode }: { roomCode: string }) {
         onStateChange: (state) => {
           if (active) setConnection(state);
         },
+        // 確かめるための表示。1秒に1回届く
+        onLatency: setLatency,
         onMessage(message) {
           switch (message.type) {
             case "room":
@@ -79,8 +82,6 @@ function Lobby({ roomCode }: { roomCode: string }) {
                 [message.joint]: { seq: message.seq, angle: message.angle },
               }));
               break;
-            case "pong":
-              break;
           }
         },
       },
@@ -111,6 +112,7 @@ function Lobby({ roomCode }: { roomCode: string }) {
             <th>スマホ</th>
             <th>角度</th>
             <th>シーケンス番号</th>
+            <th>遅延（最新 / 中央値）</th>
           </tr>
         </thead>
         <tbody>
@@ -120,12 +122,18 @@ function Lobby({ roomCode }: { roomCode: string }) {
               <td>{joints.includes(joint) ? "接続中" : "-"}</td>
               <td>{tilts[joint]?.angle ?? "-"}</td>
               <td>{tilts[joint]?.seq ?? "-"}</td>
+              <td>{latencyText(latency[joint])}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </>
   );
+}
+
+function latencyText(latency: Latency | undefined): string {
+  if (latency === undefined) return "-";
+  return `${Math.round(latency.latest)}ms / ${Math.round(latency.median)}ms`;
 }
 
 function connectionText(

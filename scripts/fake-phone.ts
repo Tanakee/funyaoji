@@ -65,7 +65,6 @@ for (let i = 0; i < phones; i++) {
             connection.send({ type: "tilt", seq: nextSeq(), angle });
           }, TILT_INTERVAL_MS);
         }
-        if (message.type === "ping") connection.send({ type: "pong", id: message.id });
       },
       onStateChange(state) {
         console.log(name, JSON.stringify(state));
