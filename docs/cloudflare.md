@@ -14,6 +14,8 @@
 ## デプロイ
 
 - デプロイは GitHub Actions が行う（`.github/workflows/deploy.yml`）。PR ごとにプレビューを作り、`main` にマージされ、`main` の CI が通ると本番にデプロイする（`workflow_run`）
+- PR を閉じる（マージする）と、そのプレビューを消す（`cleanup` のジョブ）。そのプレビューの Durable Objects のデータも消える。閉じたあとに確かめ直したいときは、PR を開き直すと、プレビューがまた作られる
+- プレビューの名前はブランチ名（`/` を含んだまま）。URL では `/` が `-` に置き換わる
 - ローカルからのデプロイ（`npx cf deploy`）は、GitHub Actions が使えないときだけ行う。レビューと CI を通らず、コミットしていない変更も本番に出る
 - ローカルからデプロイすると、本番の内容が `main` とずれる。同じ変更を、あとで `main` に入れる
 - 本番で問題が起きたときは、前のバージョンに戻す（[Rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)）
@@ -41,4 +43,4 @@
 | `workers.dev` のサブドメイン（ダッシュボード） | 本番とプレビューの URL が全部変わる。データは残る |
 | Durable Objects のクラスを消す | そのクラスのデータが消える。クラスを足した・消したバージョンをまたいでは、前のバージョンに戻せない |
 | Durable Objects を `env` のバインディングで呼ぶ | プレビューが本番のストレージを使う。`ctx.exports` で呼ぶ（[Previews: Resources and isolation](https://developers.cloudflare.com/workers/previews/resources/)） |
-| プレビューを消す | そのプレビューの Durable Objects のデータも消える |
+| プレビューを消す・PR を閉じる | そのプレビューの Durable Objects のデータも消える。PR を閉じると、GitHub Actions がプレビューを消す |
