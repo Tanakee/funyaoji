@@ -3,12 +3,7 @@ name = "funyaoji-rl"
 version = "0.0.0"
 description = "ふにゃおじの強化学習（試作）"
 requires-python = ">=3.11,<3.13"
-dependencies = [
-  "gymnasium>=1.0",
-  "numpy>=1.26",
-  "stable-baselines3>=2.4",
-  "torch>=2.4",
-]
+dependencies = ["gymnasium>=1.0", "numpy>=1.26", "stable-baselines3>=2.4", "torch>=2.4"]
 
 [tool.uv]
 package = false
