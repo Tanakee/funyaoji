@@ -1,6 +1,7 @@
 """PPO でおじさんを歩かせる。
 
-使い方（ml/ で）：uv run python -m funyaoji_rl.train --steps 2000000 --out runs/try1
+使い方（ml/ で）：uv run python -m funyaoji_rl.train --steps 2000000 --name try1
+学習の経過と重みは、MLflow にも残る（tracking.py）。評価と登録まで通すときは pipeline.py を使う
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecNormalize
 
-from .vec_env import FunyaojiVecEnv
+from . import tracking
+from .tracking import mlflow
+from .vec_env import BODY_B, FunyaojiVecEnv
 
 
 class Stats(BaseCallback):
@@ -62,6 +65,10 @@ class Stats(BaseCallback):
             "best_clean": round(self.best_clean, 3) if self.best_clean < 1e9 else None,
         }
         self.history.append(row)
+        mlflow.log_metrics(
+            {k: v for k, v in row.items() if v is not None and k not in ("steps", "sec")},
+            step=self.num_timesteps,
+        )
         print(json.dumps(row), flush=True)
 
 
@@ -94,8 +101,7 @@ def export_policy(model: PPO, norm: VecNormalize, path: Path) -> None:
     path.write_text(json.dumps(out), encoding="utf-8")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
+def add_train_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--steps", type=int, default=2_000_000)
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--envs-per-worker", type=int, default=8)
@@ -104,14 +110,20 @@ def main() -> None:
     ap.add_argument("--gamma", type=float, default=0.99)
     ap.add_argument("--ent", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", type=Path, default=Path("runs/try"))
+    ap.add_argument("--name", type=str, default=None, help="MLflow に出す実験の名前")
+    ap.add_argument("--out", type=Path, default=None, help="結果を置く場所。省くと runs/<名前>")
     ap.add_argument(
         "--config", type=str, default="{}", help="環境の設定（JSON）。server.ts の EnvConfig"
     )
-    args = ap.parse_args()
 
+
+def train(args: argparse.Namespace) -> tuple[str, Path]:
+    """学習して、MLflow の run の ID と、重み（policy.json）の場所を返す"""
+    tracking.setup()
     torch.set_num_threads(4)
-    args.out.mkdir(parents=True, exist_ok=True)
+    name = args.name or time.strftime("ppo-%m%d-%H%M%S")
+    out: Path = args.out or Path("runs") / name
+    out.mkdir(parents=True, exist_ok=True)
     config = json.loads(args.config)
     venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, config)
     env = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=args.gamma)
@@ -130,17 +142,36 @@ def main() -> None:
         device="cpu",
     )
     stats = Stats()
-    try:
-        model.learn(args.steps, callback=stats)
-    finally:
-        model.save(args.out / "model")
-        env.save(str(args.out / "vecnormalize.pkl"))
-        export_policy(model, env, args.out / "policy.json")
-        (args.out / "history.json").write_text(json.dumps(stats.history), encoding="utf-8")
-        (args.out / "config.json").write_text(
-            json.dumps({**vars(args), "out": str(args.out)}), encoding="utf-8"
+    with mlflow.start_run(run_name=name) as run:
+        mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint()})
+        mlflow.log_params(
+            {
+                "algo": "PPO",
+                "net_arch": "64x64",
+                **{k: v for k, v in vars(args).items() if k not in ("out", "name", "config")},
+                # 環境の設定は、既定の値から変えたものだけが入る
+                **tracking.flatten("env", config),
+            }
         )
-        venv.close()
+        try:
+            model.learn(args.steps, callback=stats)
+        finally:
+            model.save(out / "model")
+            env.save(str(out / "vecnormalize.pkl"))
+            export_policy(model, env, out / "policy.json")
+            (out / "history.json").write_text(json.dumps(stats.history), encoding="utf-8")
+            venv.close()
+            mlflow.log_artifact(str(out / "policy.json"))
+            mlflow.log_artifact(str(out / "history.json"))
+            mlflow.log_artifact(str(BODY_B))
+    return run.info.run_id, out / "policy.json"
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    add_train_args(ap)
+    run_id, policy = train(ap.parse_args())
+    print(f"run {run_id} / {policy}")
 
 
 if __name__ == "__main__":

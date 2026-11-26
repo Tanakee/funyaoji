@@ -1,7 +1,8 @@
 /// <reference types="node" />
 // 試作（あとで捨てる）：学習した AI（policy.json）を1回走らせ、結果を出す。記録も作れる
 //
-// 使い方：node src/screen/game/prototype/lab/rl/play.ts <policy.json> [--out <記録.json>] [--label <名前>] [--body <候補.json>]
+// 使い方：node src/screen/game/prototype/lab/rl/play.ts <policy.json> [--out <記録.json>] [--label <名前>] [--body <候補.json>] [--json]
+//   --json で、結果を JSON の1行で出す（ml/ の評価が読む）
 //   記録は lab/render.ts で動画にできる
 import { readFileSync } from "node:fs";
 import { neutralInput } from "../../sim.ts";
@@ -14,11 +15,13 @@ const args = process.argv.slice(2);
 const policyPath = args[0];
 let out: string | undefined;
 let label = "AI";
+let asJson = false;
 let bodyPath = new URL("./body-b.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--out") out = args[++i];
   else if (args[i] === "--label") label = args[++i]!;
   else if (args[i] === "--body") bodyPath = args[++i]!;
+  else if (args[i] === "--json") asJson = true;
 }
 if (!policyPath) {
   console.error("使い方：play.ts <policy.json> [--out <記録.json>] [--label <名前>]");
@@ -36,7 +39,11 @@ const controller: Controller = (_time, _noise, sim) => {
 };
 const rec = record(label, params, controller, { note: "強化学習（PPO）" });
 const r = rec.result;
-console.log(
-  `${label}: ${r.ended} ${r.time.toFixed(3)}秒 ${r.distance.toFixed(2)}m 最大の速さ ${r.peakSpeed.toFixed(1)}m/s 両足が浮いた割合 ${(r.airFrac * 100).toFixed(0)}% ${r.problems.join("、")}`,
-);
+if (asJson) {
+  console.log(JSON.stringify(r));
+} else {
+  console.log(
+    `${label}: ${r.ended} ${r.time.toFixed(3)}秒 ${r.distance.toFixed(2)}m 最大の速さ ${r.peakSpeed.toFixed(1)}m/s 両足が浮いた割合 ${(r.airFrac * 100).toFixed(0)}% ${r.problems.join("、")}`,
+  );
+}
 if (out) save(out, rec);
