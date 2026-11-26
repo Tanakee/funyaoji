@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>試作：操作の方式の比較（あとで捨てる）</title>
+    <title>試作：おじさんの体と操作（あとで捨てる）</title>
     <style>
       body {
         margin: 0;
@@ -92,6 +92,7 @@
       }
       kbd {
         background: #fff;
+        color: #2b2b2b;
         border: 1px solid #a89f8c;
         border-radius: 4px;
         padding: 0 5px;
@@ -105,6 +106,29 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
+      }
+      details {
+        margin-top: 14px;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: bold;
+      }
+      .keys-help {
+        line-height: 1.8;
+      }
+      #toolbar kbd.key,
+      .strip kbd.key {
+        display: block;
+        width: fit-content;
+        margin: 2px auto 0;
+        padding: 0 4px;
+        font-size: 10px;
+        font-weight: normal;
+      }
+      .strip kbd.key {
+        display: inline-block;
+        margin: 0 0 0 4px;
       }
       #m-close,
       #m-settings {
@@ -220,6 +244,10 @@
         #m-settings {
           display: block;
         }
+        .key,
+        .keys-help {
+          display: none !important;
+        }
         aside {
           display: none;
         }
@@ -242,9 +270,9 @@
     <canvas id="view" width="1100" height="720"></canvas>
     <section id="controls">
       <div id="toolbar">
-        <button id="m-reset">やり直し</button>
-        <button id="m-pause">停止</button>
-        <button id="m-demo">お手本</button>
+        <button id="m-reset">やり直し<kbd class="key">R</kbd></button>
+        <button id="m-pause"><span>停止</span><kbd class="key">Space</kbd></button>
+        <button id="m-demo">お手本<kbd class="key">D</kbd></button>
         <button id="m-slow">速さ 1倍</button>
         <button id="m-guide" class="on">ガイド</button>
         <button id="m-settings">設定</button>
@@ -253,7 +281,7 @@
     </section>
     <aside>
       <div class="side-head">
-        <strong>試作：操作の方式の比較</strong>
+        <strong>試作：おじさんの体と操作</strong>
         <button id="m-close">閉じる</button>
       </div>
       <label class="check"
@@ -265,38 +293,40 @@
       >
       <h2>体の候補</h2>
       <select id="body" style="width: 100%"></select>
-      <h2>方式</h2>
-      <div id="modes"></div>
-      <p id="hint"></p>
-      <h2>入力（スマホ4台の代わり）</h2>
-      <div id="inputs"></div>
-      <label class="check"
-        ><input type="checkbox" id="mirror" />左を、右の逆向きに連動させる（2軸で操作）</label
-      >
-      <h2>操作</h2>
+      <h2>速さ <output id="slow-out">1倍</output></h2>
+      <input type="range" id="slow" min="0.1" max="1" step="0.1" value="1" style="width: 100%" />
       <div class="row">
-        <button id="demo">お手本を再生</button>
-        <button id="reset">やり直し (R)</button>
-        <button id="pause">一時停止 (Space)</button>
         <button id="step">1コマ進める</button>
       </div>
-      <label
-        ><span>お手本の再生中に、自分で動かす関節</span>
-        <select id="solo">
-          <option value="">なし（お手本が全部動かす）</option>
-          <option value="rightHip">右もも（Q/A）</option>
-          <option value="leftHip">左もも（W/S）</option>
-          <option value="rightKnee">右ひざ（O/L）</option>
-          <option value="leftKnee">左ひざ（P/;）</option>
-        </select>
-      </label>
-      <label
-        ><span>速さ <output id="slow-out">1倍</output></span
-        ><input type="range" id="slow" min="0.1" max="1" step="0.1" value="1"
-      /></label>
-      <h2>調整</h2>
-      <div id="tune"></div>
-      <label class="check"><input type="checkbox" id="upper" />腕を付ける</label>
+      <p class="keys-help">
+        キー：右もも <kbd>Q</kbd>/<kbd>A</kbd>、左もも <kbd>W</kbd>/<kbd>S</kbd>、右ひざ
+        <kbd>O</kbd>/<kbd>L</kbd>、左ひざ <kbd>P</kbd>/<kbd>;</kbd>。やり直し <kbd>R</kbd>、停止
+        <kbd>Space</kbd>、お手本 <kbd>D</kbd>
+      </p>
+      <details>
+        <summary>詳しい設定（操作の方式の比較と、物理の値）</summary>
+        <h2>方式</h2>
+        <div id="modes"></div>
+        <p id="hint"></p>
+        <h2>入力の値</h2>
+        <div id="inputs"></div>
+        <label class="check"
+          ><input type="checkbox" id="mirror" />左を、右の逆向きに連動させる（2軸で操作）</label
+        >
+        <label
+          ><span>お手本の再生中に、自分で動かす関節</span>
+          <select id="solo">
+            <option value="">なし（お手本が全部動かす）</option>
+            <option value="rightHip">右もも（Q/A）</option>
+            <option value="leftHip">左もも（W/S）</option>
+            <option value="rightKnee">右ひざ（O/L）</option>
+            <option value="leftKnee">左ひざ（P/;）</option>
+          </select>
+        </label>
+        <h2>物理の値</h2>
+        <div id="tune"></div>
+        <label class="check"><input type="checkbox" id="upper" />腕を付ける</label>
+      </details>
     </aside>
     <script type="module" src="/src/screen/game/prototype/main.ts"></script>
   </body>

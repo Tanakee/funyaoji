@@ -1,4 +1,4 @@
-// 試作（あとで捨てる）：操作の方式を切り替えて、キーボードとスライダーで触る
+// 試作（あとで捨てる）：おじさんの体と操作を、PC（キー・マウス）でもスマホ（指）でも触る
 import {
   DEFAULT_BODY,
   DEFAULT_PARAMS,
@@ -170,7 +170,7 @@ function buildUi(): void {
   for (const j of JOINTS) {
     const col = document.createElement("div");
     col.className = "strip";
-    col.innerHTML = `<span style="color:${COLOR[j]}">${LABEL[j]}</span><div class="track"><div class="fill" style="background:${COLOR[j]}"></div><div class="target"></div><div class="arrow"></div></div>`;
+    col.innerHTML = `<span style="color:${COLOR[j]}">${LABEL[j]}<kbd class="key">${KEYS[j][0].toUpperCase()}/${KEYS[j][1].toUpperCase()}</kbd></span><div class="track"><div class="fill" style="background:${COLOR[j]}"></div><div class="target"></div><div class="arrow"></div></div>`;
     const track = col.querySelector<HTMLDivElement>(".track")!;
     const setFrom = (e: PointerEvent) => {
       const r = track.getBoundingClientRect();
@@ -197,10 +197,10 @@ function buildUi(): void {
     pad.appendChild(col);
   }
 
-  // よく使うボタン（スマホでスクロールせずに押せるように、パネルの同じボタンを呼ぶ）
-  $("m-reset").onclick = () => $("reset").click();
-  $("m-pause").onclick = () => $("pause").click();
-  $("m-demo").onclick = () => (demo ? $("reset").click() : $("demo").click());
+  // よく使うボタン。PC とスマホで同じボタンを使い、キーも同じ処理を呼ぶ
+  $("m-reset").onclick = doReset;
+  $("m-pause").onclick = togglePause;
+  $("m-demo").onclick = () => (demo ? doReset() : startDemo());
   const SPEEDS = [1, 0.6, 0.3];
   $("m-slow").onclick = () => {
     const el = $<HTMLInputElement>("slow");
@@ -265,41 +265,43 @@ function buildUi(): void {
     timeScale = Number((e.target as HTMLInputElement).value);
     $("slow-out").textContent = `${timeScale}倍`;
   };
-  $("reset").onclick = () => {
-    demo = false;
-    reset();
-  };
   $<HTMLSelectElement>("solo").onchange = (e) => {
     solo = (e.target as HTMLSelectElement).value as JointName | "";
     (e.target as HTMLSelectElement).blur();
   };
-  $("demo").onclick = () => {
-    params.mode = "angle";
-    params.assist = bodyChoice.params.assist ?? 2;
-    params.kneeAuto = 0;
-    reset();
-    renderModes();
-    demo = true;
-  };
-  $("pause").onclick = () => {
-    paused = !paused;
-    $("pause").textContent = paused ? "再開 (Space)" : "一時停止 (Space)";
-  };
   $("step").onclick = () => {
     paused = true;
-    $("pause").textContent = "再開 (Space)";
     sim.step(input);
   };
 
   addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
-    if (k === "r") $("reset").click();
+    if (k === "r") doReset();
+    else if (k === "d") $("m-demo").click();
     else if (k === " ") {
       e.preventDefault();
-      $("pause").click();
+      togglePause();
     } else held.add(k);
   });
   addEventListener("keyup", (e) => held.delete(e.key.toLowerCase()));
+}
+
+function doReset(): void {
+  demo = false;
+  reset();
+}
+
+function startDemo(): void {
+  params.mode = "angle";
+  params.assist = bodyChoice.params.assist ?? 2;
+  params.kneeAuto = 0;
+  reset();
+  renderModes();
+  demo = true;
+}
+
+function togglePause(): void {
+  paused = !paused;
 }
 
 function renderModes(): void {
@@ -347,12 +349,12 @@ function applyKeys(dt: number): void {
 }
 
 // ---- 描画 ----
-const SCALE = 150; // 1m が何 px か
+const SCALE = 210; // 1m が何 px か
 function draw(): void {
   const w = canvas.width;
   const h = canvas.height;
   const camX = sim.torso.translation().x;
-  const groundY = h - 90;
+  const groundY = h - 80;
   const X = (x: number) => w / 2 + (x - camX) * SCALE;
   const Y = (y: number) => groundY - y * SCALE;
 
@@ -524,7 +526,7 @@ function syncPadHints(): void {
     const d = show ? guide![j] - input[j] : 0;
     st.arrow.textContent = d > GUIDE_DEADBAND ? "↑" : d < -GUIDE_DEADBAND ? "↓" : "";
   }
-  $("m-pause").textContent = paused ? "再開" : "停止";
+  $("m-pause").querySelector("span")!.textContent = paused ? "再開" : "停止";
   $("m-demo").classList.toggle("on", demo);
   $("m-slow").textContent = `速さ ${timeScale}倍`;
   $("m-guide").classList.toggle("on", guideOn);
