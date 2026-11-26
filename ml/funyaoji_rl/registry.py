@@ -5,9 +5,11 @@
   uv run python -m funyaoji_rl.registry export            いちばん良い重み（champion）を、/prototype が読む場所に書き出す
   uv run python -m funyaoji_rl.registry submit <run の ID>   学習の済んだ run を、評価して登録する
 
-評価：乱数なしで1回走らせる（物理も AI も乱数を使わないので、何回走らせても同じ結果になる）。
-登録の条件：10m に着き、不自然な動き（lab/run.ts の sanity()）が無い。
-champion（/prototype で使う重み）にする条件：今の champion より速い。体の設定が変わっていたら、速さにかかわらず入れ替える。
+評価：そのままの重みで1回と、重みをほんの少しずらして TRIALS 回走らせる（lab/rl/play.ts の --trials）。
+  物理も AI も乱数を使わないので、同じ重みなら何回走らせても同じ結果になる。ただし、重みが 100 万分の1 違うだけで
+  途中でつまずくかどうかが変わり、タイムが数秒変わる。1回のタイムはたまたまの値なので、中央値で比べる。
+登録の条件：そのままの重みで 10m に着き、不自然な動き（lab/run.ts の sanity()）が無い。ずらした走りも 9割以上がそうなる。
+champion（/prototype で使う重み）にする条件：中央値が今の champion より速い。体の設定が変わっていたら、速さにかかわらず入れ替える。
 """
 
 from __future__ import annotations
@@ -30,12 +32,14 @@ from .vec_env import BODY_B
 
 PLAY = PROTOTYPE / "lab/rl/play.ts"
 EXPORT_TO = PROTOTYPE / "policy-b.json"
+TRIALS = 16
+MIN_CLEAN_RATE = 0.9
 
 
 def evaluate(policy: Path, body: Path = BODY_B) -> dict[str, Any]:
-    """重みを Node で1回走らせる。ゲームと同じコード（policy.ts と sim.ts）で測る"""
+    """重みを Node で走らせる。ゲームと同じコード（policy.ts と sim.ts）で測る"""
     out = subprocess.run(
-        ["node", str(PLAY), str(policy.resolve()), "--body", str(body), "--json"],
+        ["node", str(PLAY), str(policy.resolve()), "--body", str(body), "--json", "--trials", str(TRIALS)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -46,7 +50,8 @@ def evaluate(policy: Path, body: Path = BODY_B) -> dict[str, Any]:
 
 
 def passed(result: dict[str, Any]) -> bool:
-    return result["ended"] == "goal" and not result["problems"]
+    exact = result["ended"] == "goal" and not result["problems"]
+    return exact and result["cleanRate"] >= MIN_CLEAN_RATE
 
 
 def champion(client: MlflowClient):
@@ -74,7 +79,11 @@ def submit(run_id: str, policy: Path | None = None) -> dict[str, Any]:
         mlflow.log_metrics(
             {
                 "eval_goal": float(result["ended"] == "goal"),
-                "eval_time": result["time"],
+                "eval_time": result["median"],
+                "eval_best": result["best"],
+                "eval_worst": result["worst"],
+                "eval_clean_rate": result["cleanRate"],
+                "eval_exact_time": result["time"],
                 "eval_distance": result["distance"],
                 "eval_problems": len(result["problems"]),
                 "eval_peak_speed": result["peakSpeed"],
@@ -96,11 +105,13 @@ def submit(run_id: str, policy: Path | None = None) -> dict[str, Any]:
         MODEL_NAME,
         source=f"runs:/{run_id}/policy.json",
         run_id=run_id,
-        tags={"body": body, "time": f"{result['time']:.3f}"},
+        tags={"body": body, "time": f"{result['median']:.3f}", "exact_time": f"{result['time']:.3f}"},
     )
     summary["version"] = version.version
     now = champion(client)
-    better = now is None or now.tags.get("body") != body or result["time"] < float(now.tags["time"])
+    better = (
+        now is None or now.tags.get("body") != body or result["median"] < float(now.tags["time"])
+    )
     if better:
         client.set_registered_model_alias(MODEL_NAME, CHAMPION, version.version)
     summary["champion"] = better

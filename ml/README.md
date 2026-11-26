@@ -24,9 +24,9 @@ uv run python -m funyaoji_rl.pipeline --steps 20000000 --name free
 ```
 
 1. PPO で学習する。経過と重みが MLflow に残る。`runs/<名前>/` にも同じものができる
-2. 重みを、乱数なしで1回走らせて評価する
+2. 重みを評価する。そのままの重みで1回と、重みをほんの少しずらして 16 回走らせ、タイムの中央値を出す
 3. 10m に着き、不自然な動き（`lab/run.ts` の `sanity()`）が無ければ、MLflow のモデルのレジストリに登録する
-4. 今の champion（`/prototype` で使う重み）より速ければ、champion を入れ替え、`src/screen/game/prototype/policy-b.json` に書き出す
+4. 中央値が今の champion（`/prototype` で使う重み）より速ければ、champion を入れ替え、`src/screen/game/prototype/policy-b.json` に書き出す
 
 書き出した `policy-b.json` は、コミットして PR に入れる。
 
@@ -45,6 +45,8 @@ uv run python -m funyaoji_rl.registry submit <run の ID>
 
 学習の間、更新のたびに1行ずつ出る。`goal_rate` は 10m に着いた割合、`best_time` は着いた中の最速、`best_clean` は不自然な動きに引っかからなかった中の最速。学習の間は行動に乱数を足しているので、乱数なしのタイムは評価（`eval_time`）で見る。
 
+評価で重みをずらすのは、1回のタイムがたまたまの値だから。同じ学習の重みでも、小数6桁に丸めただけで 8.67 秒が 13.54 秒になった（途中で1回つまずくかどうかが変わる）。16 回の中央値は 8.88 秒で、丸め方を変えてもほぼ動かない。`/prototype` で再生したときのタイムは、そのままの重みの1回（`eval_exact_time`）のほうになる。
+
 ## MLflow
 
 MLflow は、オープンソースのものを手元で動かす。アカウントの登録も料金も要らない。記録は `ml/mlflow.db`（SQLite）と `ml/mlartifacts/` にでき、どちらもリポジトリには入れない。
@@ -58,7 +60,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 |---|---|
 | パラメータ | 学習の設定（ステップ数・学習率など）と、環境の設定のうち既定から変えたもの（`env.` で始まる） |
 | タグ | コミット（`git_commit`、コミットしていない変更があったか `git_dirty`）、体の設定の指紋（`body`）、評価の結果（`eval_ended`・`eval_passed`） |
-| メトリクス | 学習の経過（`goal_rate`・`distance`・`goal_time`・`best_time` など）と、評価（`eval_time`・`eval_problems` など） |
+| メトリクス | 学習の経過（`goal_rate`・`distance`・`goal_time`・`best_time` など）と、評価（中央値 `eval_time`、最速 `eval_best`、最遅 `eval_worst`、きれいにゴールした割合 `eval_clean_rate`、そのままの重みの1回 `eval_exact_time` など） |
 | 成果物 | 重み（`policy.json`）、経過（`history.json`）、体の設定（`body-b.json`） |
 | レジストリ | モデル `funyaoji-walker`。評価を通った重みが version として並ぶ。`champion` の別名が付いたものを `/prototype` で使う |
 
@@ -70,6 +72,9 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```sh
 # リポジトリのルートで。Node で1回走らせ、タイムを出す
 node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json
+
+# 重みを少しずらして 16 回走らせ、中央値も出す（評価と同じ測り方）
+node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json --trials 16
 
 # ブラウザで見る：/prototype の「AI」を押す（policy-b.json の重みで動く）
 ```
@@ -192,7 +197,8 @@ node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/gam
 
 | 案 | 良い点 | 悪い点 |
 |---|---|---|
-| **乱数なしで1回走らせ、10m に着いて不自然な動きが無ければ登録。同じ体の中で、いちばん速いものを champion にする** | 物理も AI も乱数を使わないので、1回で結果が決まる。ゲームと同じコードで測る | 入力のずれや遅れへの強さは見ていない |
+| **そのままの重みで1回と、重みをほんの少しずらして 16 回走らせる。10m に着いて不自然な動きが無ければ登録。同じ体の中で、中央値がいちばん速いものを champion にする** | たまたまの1回に左右されない（丸め方を変えても、中央値は 8.8〜8.9 秒で動かない）。ゲームと同じコードで測る | 評価に 17 回走らせる（数秒）。`/prototype` で見えるタイムは、中央値ではなく、そのままの重みの1回になる。入力のずれや遅れへの強さは見ていない |
+| 乱数なしで1回だけ走らせる | 物理も AI も乱数を使わないので、結果は1つに決まる。速い | 重みが 100 万分の1 違うだけでタイムが数秒変わった（8.67 秒と 13.54 秒）。良い重みを、たまたまで落とすことがある |
 | 入力にずれを足して、何回も走らせる（`lab/run.ts` の `robustness`） | 人が真似できる走りかどうかが分かる | 理論値（いちばんうまく動かしたとき）とは別の物差しになる。本番で見せるときに足す |
 | 学習の間の成績（`goal_rate`・`best_time`）で決める | 追加の評価が要らない | 学習の間は行動に乱数が乗っていて、再生したタイムと合わない |
 | いつも新しい重みを champion にする | 単純 | 遅い重みで上書きすることがある |
