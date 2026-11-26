@@ -13,6 +13,7 @@ import {
 import { gaitInput, type Gait } from "./bot.ts";
 import { PolicyDriver, type Policy } from "./policy.ts";
 import POLICY_B from "./policy-b.json";
+import FASTEST_B from "./lab/rl/body-b-fastest.json";
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
   {
@@ -110,6 +111,11 @@ const BODIES: { id: string; label: string; params: Partial<Params>; demo: Gait }
 let bodyChoice = BODIES[0]!;
 const params: Params = { ...DEFAULT_PARAMS, ...bodyChoice.params };
 let DEMO: Gait = bodyChoice.demo;
+/** お手本を、探索で出した最速の歩き方（フィードバックなし）にする。体 B だけ */
+let fastestOn = false;
+function pickDemo(): Gait {
+  return fastestOn && bodyChoice.id === "B" ? FASTEST_B.gait : bodyChoice.demo;
+}
 const sliderEls: { key: keyof Params; el: HTMLInputElement; out: HTMLOutputElement }[] = [];
 let demo = false;
 /** 強化学習の AI が4つの関節を動かす。体 B・目標角度のモーターで学習したもの */
@@ -216,7 +222,7 @@ function buildUi(): void {
     // AI は体 B・目標角度のモーターで学習したので、その設定に戻してから動かす
     bodyChoice = BODIES[0]!;
     Object.assign(params, bodyChoice.params);
-    DEMO = bodyChoice.demo;
+    DEMO = pickDemo();
     params.mode = "angle";
     params.kneeAuto = 0;
     params.upperBody = false;
@@ -271,7 +277,7 @@ function buildUi(): void {
   bodySel.onchange = () => {
     bodyChoice = BODIES.find((b) => b.id === bodySel.value)!;
     Object.assign(params, bodyChoice.params);
-    DEMO = bodyChoice.demo;
+    DEMO = pickDemo();
     for (const s of sliderEls) {
       s.el.value = String(params[s.key] as number);
       s.out.textContent = String(params[s.key] as number);
@@ -285,6 +291,11 @@ function buildUi(): void {
   $<HTMLInputElement>("upper").onchange = (e) => {
     params.upperBody = (e.target as HTMLInputElement).checked;
     reset();
+  };
+  $<HTMLInputElement>("fastest").onchange = (e) => {
+    fastestOn = (e.target as HTMLInputElement).checked;
+    DEMO = pickDemo();
+    if (demo) $("demo").click();
   };
   $<HTMLInputElement>("guide").onchange = (e) => {
     guideOn = (e.target as HTMLInputElement).checked;

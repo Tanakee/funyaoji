@@ -1,0 +1,46 @@
+{
+  "label": "B 最速",
+  "note": "フィードバックなしの最速（openloop.ts で探した。7.746秒）",
+  "params": {
+    "assist": 1.006,
+    "stiffness": 780,
+    "damping": 108,
+    "footFriction": 1.845,
+    "motorMaxForce": 0.185,
+    "body": {
+      "torso": {
+        "hw": 0.24,
+        "hh": 0.373,
+        "density": 33
+      },
+      "head": {
+        "r": 0.12,
+        "density": 34
+      },
+      "thigh": {
+        "hw": 0.07,
+        "hh": 0.241,
+        "density": 143
+      },
+      "shin": {
+        "hw": 0.06,
+        "hh": 0.194,
+        "density": 66
+      },
+      "foot": {
+        "hw": 0.22,
+        "hh": 0.04,
+        "density": 300,
+        "offset": -0.1
+      },
+      "kneeRange": [0, -1.649]
+    }
+  },
+  "gait": {
+    "T": 1.305,
+    "h0": 0.01,
+    "A": 0.997,
+    "K": 0.994,
+    "kp": 0.309
+  }
+}

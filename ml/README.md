@@ -37,6 +37,17 @@ node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json
 
 重みは体の設定ごとに作る。体（`lab/rl/body-b.json` と `main.ts` の `BODIES`）を変えたら、学習し直す。
 
+## 比べる基準（フィードバックなしの最速）
+
+強化学習を使わずに、歩き方の機械（`bot.ts` の5つの値）だけで出せる最速のタイムを探す。AI がこれより速くなければ、深層を使う意味は薄い。
+
+```sh
+# リポジトリのルートで。乱数の種を変えて探し、最速の歩き方を候補の JSON に書く（種1つで30〜40秒）
+node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/game/prototype/lab/rl/body-b-fastest.json
+```
+
+`/prototype` の「設定」で「お手本を、探索で出した最速の歩き方にする」を入れると、この歩き方をお手本として再生できる。
+
 ## 仕組み
 
 | ファイル | 役割 |
@@ -45,6 +56,7 @@ node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json
 | `src/screen/game/prototype/lab/rl/server.ts` | 環境。おじさんを何体も持ち、標準入力の1行ごとに全員を1ステップ進める |
 | `src/screen/game/prototype/lab/rl/bench.ts` | 環境が `lab/run.ts` と同じ結果になるかを確かめ、速さを測る |
 | `src/screen/game/prototype/lab/rl/play.ts` | 重みを読み、1回走らせる |
+| `src/screen/game/prototype/lab/rl/openloop.ts` | フィードバックなしの最速の歩き方を探す |
 | `ml/funyaoji_rl/vec_env.py` | Node のプロセスを並べて、Stable-Baselines3 の環境にする |
 | `ml/funyaoji_rl/train.py` | PPO で学習し、重みを JSON に書き出す |
 
