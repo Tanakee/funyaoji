@@ -16,7 +16,7 @@ let ended: string | undefined;
 let total = 0;
 while (!ended) {
   const u = gaitInput(c.gait, env.sim.time, NO_NOISE);
-  const r = env.step(JOINTS.map((j) => u[j]));
+  const r = env.stepInput(JOINTS.map((j) => u[j]));
   total += r.rew;
   ended = r.ended;
 }
@@ -34,7 +34,7 @@ const N = 20000;
 const t0 = performance.now();
 for (let i = 0; i < N; i++) {
   const u = gaitInput(c.gait, e2.sim.time, NO_NOISE);
-  if (e2.step(JOINTS.map((j) => u[j])).ended) e2.reset();
+  if (e2.stepInput(JOINTS.map((j) => u[j])).ended) e2.reset();
   e2.obs();
 }
 const sec = (performance.now() - t0) / 1000;

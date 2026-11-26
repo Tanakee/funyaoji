@@ -77,7 +77,9 @@ def _r(x) -> list:
     return np.round(np.asarray(x, dtype=np.float64), 6).tolist()
 
 
-def export_policy(model: PPO, norm: VecNormalize, path: Path) -> None:
+def export_policy(
+    model: PPO, norm: VecNormalize, path: Path, base: dict | None = None
+) -> None:
     """ブラウザで順伝播を計算できるように、重みと観測の正規化を JSON に書く"""
     sd = model.policy.state_dict()
     layers = []
@@ -98,6 +100,8 @@ def export_policy(model: PPO, norm: VecNormalize, path: Path) -> None:
         "activation": "tanh",
         "layers": layers,
     }
+    if base:
+        out["base"] = base
     path.write_text(json.dumps(out), encoding="utf-8")
 
 
@@ -110,6 +114,18 @@ def add_train_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--gamma", type=float, default=0.99)
     ap.add_argument("--ent", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--log-std", type=float, default=-0.5, help="行動に足す乱数の大きさ（対数）の初めの値"
+    )
+    ap.add_argument(
+        "--base-gait",
+        type=Path,
+        default=None,
+        help="土台の歩き方（候補の JSON）。入れると、AI はこの歩き方に補正を足す",
+    )
+    ap.add_argument(
+        "--residual-scale", type=float, default=0.3, help="補正の大きさの上限（入力の目盛り）"
+    )
     ap.add_argument("--name", type=str, default=None, help="MLflow に出す実験の名前")
     ap.add_argument("--out", type=Path, default=None, help="結果を置く場所。省くと runs/<名前>")
     ap.add_argument(
@@ -125,6 +141,9 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
     out: Path = args.out or Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
     config = json.loads(args.config)
+    if args.base_gait:
+        gait = json.loads(args.base_gait.read_text(encoding="utf-8"))["gait"]
+        config["base"] = {"gait": gait, "scale": args.residual_scale}
     venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, config)
     env = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=args.gamma)
     model = PPO(
@@ -137,7 +156,7 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         gamma=args.gamma,
         gae_lambda=0.95,
         ent_coef=args.ent,
-        policy_kwargs={"net_arch": [64, 64], "log_std_init": -0.5},
+        policy_kwargs={"net_arch": [64, 64], "log_std_init": args.log_std},
         seed=args.seed,
         device="cpu",
     )
@@ -148,7 +167,8 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
             {
                 "algo": "PPO",
                 "net_arch": "64x64",
-                **{k: v for k, v in vars(args).items() if k not in ("out", "name", "config")},
+                **{k: v for k, v in vars(args).items() if k not in ("out", "name", "config", "base_gait")},
+                "base_gait": json.dumps(config["base"]["gait"]) if "base" in config else "none",
                 # 環境の設定は、既定の値から変えたものだけが入る
                 **tracking.flatten("env", config),
             }
@@ -158,7 +178,7 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         finally:
             model.save(out / "model")
             env.save(str(out / "vecnormalize.pkl"))
-            export_policy(model, env, out / "policy.json")
+            export_policy(model, env, out / "policy.json", config.get("base"))
             (out / "history.json").write_text(json.dumps(stats.history), encoding="utf-8")
             venv.close()
             mlflow.log_artifact(str(out / "policy.json"))

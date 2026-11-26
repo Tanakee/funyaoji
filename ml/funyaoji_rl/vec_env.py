@@ -18,7 +18,6 @@ from stable_baselines3.common.vec_env import VecEnv
 ROOT = Path(__file__).resolve().parents[2]
 SERVER = ROOT / "src/screen/game/prototype/lab/rl/server.ts"
 BODY_B = ROOT / "src/screen/game/prototype/lab/rl/body-b.json"
-OBS_DIM = 20
 ACT_DIM = 4
 
 
@@ -36,10 +35,6 @@ class FunyaojiVecEnv(VecEnv):
         self.workers = workers
         self.per = envs_per_worker
         self.config = {"params": load_body(), **(config or {})}
-        obs_space = spaces.Box(-np.inf, np.inf, (OBS_DIM,), np.float32)
-        # 行動は -1〜1。関節の入力（0〜1）には (a + 1) / 2 で直す
-        act_space = spaces.Box(-1.0, 1.0, (ACT_DIM,), np.float32)
-        super().__init__(workers * envs_per_worker, obs_space, act_space)
         self.procs = [
             subprocess.Popen(
                 ["node", str(SERVER)],
@@ -52,7 +47,16 @@ class FunyaojiVecEnv(VecEnv):
             )
             for _ in range(workers)
         ]
-        self._obs = self._all({"cmd": "init", "n": self.per, "config": self.config})
+        # 最初の返事で、観測の数が分かる（土台の歩き方があると増える）
+        init = {"cmd": "init", "n": self.per, "config": self.config}
+        for p in self.procs:
+            self._send(p, init)
+        replies = [self._recv(p) for p in self.procs]
+        self._obs = np.concatenate([np.asarray(r["obs"], np.float32) for r in replies])
+        obs_space = spaces.Box(-np.inf, np.inf, (replies[0]["obsDim"],), np.float32)
+        # 行動は -1〜1。関節の入力（0〜1）には、Node の側（policy.ts の toInput）で直す
+        act_space = spaces.Box(-1.0, 1.0, (ACT_DIM,), np.float32)
+        super().__init__(workers * envs_per_worker, obs_space, act_space)
 
     def _send(self, p: subprocess.Popen, msg: dict[str, Any]) -> None:
         assert p.stdin is not None
@@ -76,7 +80,7 @@ class FunyaojiVecEnv(VecEnv):
         return self._obs
 
     def step_async(self, actions: np.ndarray) -> None:
-        u = (np.clip(actions, -1.0, 1.0) + 1.0) / 2.0
+        u = np.clip(actions, -1.0, 1.0)
         for i, p in enumerate(self.procs):
             self._send(p, {"cmd": "step", "a": u[i * self.per : (i + 1) * self.per].tolist()})
 

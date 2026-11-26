@@ -1,6 +1,7 @@
 // 試作（あとで捨てる）：強化学習で作った AI。観測を作り、小さいニューラルネットを計算して、4つの関節の入力を返す
 // DOM にも Node にも依存しない。学習（lab/rl/server.ts）とブラウザ（main.ts）で同じものを使う
 import { JOINTS, neutralInput, type JointName, type Params, type Sim } from "./sim.ts";
+import { gaitInput, type Gait } from "./bot.ts";
 
 /** 学習した重み。ml/ の train.py が書き出す policy.json の形 */
 export interface Policy {
@@ -9,11 +10,22 @@ export interface Policy {
   clipObs: number;
   /** 全結合の層。最後の層のほかは、出力に tanh をかける */
   layers: { w: number[][]; b: number[] }[];
+  /** 土台の歩き方。あれば、AI の出力は、この歩き方の入力に足す補正になる */
+  base?: Base;
+}
+
+/** 土台の歩き方（フィードバックなし）と、AI が足せる補正の大きさ（入力 0〜1 の目盛りで、最大 ±scale） */
+export interface Base {
+  gait: Gait;
+  scale: number;
 }
 
 /** AI が行動を変える頻度（1秒あたり）。スマホの tilt と同じ */
 export const ACTION_HZ = 30;
-export const OBS_DIM = 20;
+/** 観測の数。土台の歩き方があるときは、歩き方の位相（sin, cos）の2つが増える */
+export function obsDim(base?: Base): number {
+  return base ? 22 : 20;
+}
 
 /** 立った姿勢の胴の中心の高さ */
 export function standingTorsoY(params: Params): number {
@@ -44,10 +56,11 @@ export function footContact(sim: Sim): [boolean, boolean] {
 }
 
 /**
- * 観測（20個の数）。前後の位置は入れない（どこにいても同じ歩き方になる）
- * 胴の高さ・傾き（sin, cos）・速度（前後, 上下）・回る速さ、関節の角度4つ、関節の回る速さ4つ、足の接地2つ、前の行動4つ
+ * 観測。前後の位置は入れない（どこにいても同じ歩き方になる）
+ * 胴の高さ・傾き（sin, cos）・速度（前後, 上下）・回る速さ、関節の角度4つ、関節の回る速さ4つ、足の接地2つ、前の入力4つ。
+ * 土台の歩き方があるときは、その位相（sin, cos）も入れる（今が歩き方のどこかを、AI が知るため）
  */
-export function observe(sim: Sim, prev: number[]): number[] {
+export function observe(sim: Sim, prev: number[], base?: Base): number[] {
   const t = sim.torso.translation();
   const v = sim.torso.linvel();
   const rot = sim.torso.rotation();
@@ -70,10 +83,25 @@ export function observe(sim: Sim, prev: number[]): number[] {
   const [r, l] = footContact(sim);
   out.push(r ? 1 : 0, l ? 1 : 0);
   out.push(...prev);
+  if (base) {
+    const ph = (sim.time / base.gait.T) * Math.PI * 2;
+    out.push(Math.sin(ph), Math.cos(ph));
+  }
   return out;
 }
 
-/** 観測から、4つの関節の入力（0〜1。JOINTS の順）を計算する */
+/**
+ * AI の出力（-1〜1 が4つ。JOINTS の順）を、関節の入力（0〜1）に直す。
+ * 土台の歩き方が無ければ (a + 1) / 2。あれば、歩き方の入力に a × scale を足す
+ */
+export function toInput(a: number[], time: number, base?: Base): number[] {
+  const c = a.map((x) => Math.min(1, Math.max(-1, x)));
+  if (!base) return c.map((x) => (x + 1) / 2);
+  const g = gaitInput(base.gait, time);
+  return JOINTS.map((j, i) => Math.min(1, Math.max(0, g[j] + c[i]! * base.scale)));
+}
+
+/** 観測から、AI の出力（4つ。JOINTS の順）を計算する。関節の入力には toInput で直す */
 export function act(policy: Policy, obs: number[]): number[] {
   let x = obs.map((o, i) => {
     const z = (o - policy.obsMean[i]!) / policy.obsStd[i]!;
@@ -87,7 +115,7 @@ export function act(policy: Policy, obs: number[]): number[] {
       return last ? sum : Math.tanh(sum);
     });
   });
-  return x.map((a) => (Math.min(1, Math.max(-1, a)) + 1) / 2);
+  return x;
 }
 
 /** 物理の1ステップ（1/240 秒）ごとに input() を呼ぶと、ACTION_HZ ごとに行動を計算し直して返す */
@@ -105,7 +133,10 @@ export class PolicyDriver {
 
   input(sim: Sim): Record<JointName, number> {
     const step = Math.round(sim.time / sim.world.timestep);
-    if (step % this.sub === 0) this.prev = act(this.policy, observe(sim, this.prev));
+    if (step % this.sub === 0) {
+      const base = this.policy.base;
+      this.prev = toInput(act(this.policy, observe(sim, this.prev, base)), sim.time, base);
+    }
     const out = {} as Record<JointName, number>;
     JOINTS.forEach((j, i) => (out[j] = this.prev[i]!));
     return out;

@@ -3,18 +3,21 @@
 //
 // 使い方：node src/screen/game/prototype/lab/rl/server.ts
 //   {"cmd":"init","n":8,"config":{...}}      → {"obs":[[...], ...]}
-//   {"cmd":"step","a":[[u,u,u,u], ...]}      → {"obs":..., "rew":[...], "done":[...], "info":[...]}
-//   行動 u は4つの関節の入力（0〜1）。順番は JOINTS（右もも・左もも・右ひざ・左ひざ）
+//   {"cmd":"step","a":[[a,a,a,a], ...]}      → {"obs":..., "rew":[...], "done":[...], "info":[...]}
+//   行動 a は AI の出力（-1〜1 が4つ）。順番は JOINTS（右もも・左もも・右ひざ・左ひざ）。
+//   関節の入力（0〜1）には、policy.ts の toInput で直す（ブラウザで再生するときと同じ計算）
 //   終わったおじさんは、その場で最初からやり直す。obs はやり直したあとの観測で、終わる直前の観測は info.final に入る
 import { createInterface } from "node:readline";
 import { Sim, JOINTS, GOAL_M, footContact, sanity, standingTorsoY, type Params } from "../run.ts";
 import { toParams, type Candidate } from "../candidate.ts";
 import { neutralInput, type JointName } from "../../sim.ts";
-import { observe, OBS_DIM, ACTION_HZ } from "../../policy.ts";
+import { observe, obsDim, toInput, ACTION_HZ, type Base } from "../../policy.ts";
 
 export interface EnvConfig {
   /** 体と操作の設定。DEFAULT_PARAMS との差分 */
   params: Candidate["params"];
+  /** 土台の歩き方。入れると、行動は、この歩き方の入力に足す補正になる（policy.ts の Base） */
+  base?: Base;
   /** 行動を変える頻度（1秒あたり）。スマホの tilt と同じ 30 が標準 */
   actionHz: number;
   /** 打ち切る時間（秒） */
@@ -104,13 +107,19 @@ class Env {
   }
 
   obs(): number[] {
-    return observe(this.sim, this.prev);
+    return observe(this.sim, this.prev, this.cfg.base);
   }
 
+  /** AI の出力（-1〜1）で1ステップ進める */
   step(a: number[]): { rew: number; ended?: Ended } {
+    return this.stepInput(toInput(a, this.sim.time, this.cfg.base));
+  }
+
+  /** 関節の入力（0〜1）で1ステップ進める */
+  stepInput(input01: number[]): { rew: number; ended?: Ended } {
     const cfg = this.cfg;
     const s = this.sim;
-    const u = a.map((x) => Math.min(1, Math.max(0, x)));
+    const u = input01.map((x) => Math.min(1, Math.max(0, x)));
     const input = {} as Record<JointName, number>;
     JOINTS.forEach((j, i) => (input[j] = u[i]!));
     let airSteps = 0;
@@ -183,7 +192,7 @@ function handle(msg: { cmd: string; n?: number; config?: Partial<EnvConfig>; a?:
   if (msg.cmd === "init") {
     const cfg = { ...DEFAULT_CONFIG, ...msg.config };
     envs = Array.from({ length: msg.n ?? 1 }, () => new Env(cfg));
-    return { obs: envs.map((e) => e.obs()), obsDim: OBS_DIM };
+    return { obs: envs.map((e) => e.obs()), obsDim: obsDim(cfg.base) };
   }
   if (msg.cmd === "reset") {
     return { obs: envs.map((e) => e.reset()) };
