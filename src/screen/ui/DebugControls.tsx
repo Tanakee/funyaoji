@@ -24,6 +24,12 @@ export function DebugControls({ session, view }: { session: ScreenSession; view:
   return (
     <section className="debug-controls" aria-label="デバッグ操作">
       <div className="debug-actions">
+        {view.flow.kind !== "result" && (
+          // 結果の画面には、結果の側に同じボタンがある
+          <button type="button" className="debug-button" onClick={() => session.restart()}>
+            もう一度
+          </button>
+        )}
         <button
           type="button"
           className="debug-button"
@@ -36,7 +42,12 @@ export function DebugControls({ session, view }: { session: ScreenSession; view:
           お手本の間も、つまみをつかんだ関節は指に従う。白い線がお手本の位置
         </p>
       </div>
-      <Strips session={session} players={players} showGuide={view.debug.autoplay} />
+      <Strips
+        session={session}
+        players={players}
+        absent={view.absent}
+        showGuide={view.debug.autoplay}
+      />
     </section>
   );
 }
@@ -49,10 +60,12 @@ type Refs = Record<
 function Strips({
   session,
   players,
+  absent,
   showGuide,
 }: {
   session: ScreenSession;
   players: readonly Joint[];
+  absent: ScreenView["absent"];
   showGuide: boolean;
 }) {
   const refs = useRef<Refs>({
@@ -85,6 +98,7 @@ function Strips({
           session={session}
           joint={joint}
           phone={players.includes(joint)}
+          absentSec={absent[joint]}
           showGuide={showGuide}
           refs={refs}
         />
@@ -97,12 +111,15 @@ function Strip({
   session,
   joint,
   phone,
+  absentSec,
   showGuide,
   refs,
 }: {
   session: ScreenSession;
   joint: Joint;
   phone: boolean;
+  /** つなぎ直しを待っているときの残り秒数 */
+  absentSec: number | undefined;
   showGuide: boolean;
   refs: React.RefObject<Refs>;
 }) {
@@ -142,7 +159,13 @@ function Strip({
     >
       <div className="strip-name">
         {JOINT_LABELS[joint]}
-        <small>{phone ? "スマホ" : `${up.label}/${down.label}`}</small>
+        <small>
+          {absentSec !== undefined
+            ? `切断中 あと${absentSec}秒`
+            : phone
+              ? "スマホ"
+              : `${up.label}/${down.label}`}
+        </small>
       </div>
       <div
         className="strip-track"

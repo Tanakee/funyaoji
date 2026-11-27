@@ -52,21 +52,40 @@ describe("reduce", () => {
     });
   });
 
-  it("players の誰かが room から抜けたら、どの状態からもロビーに戻る", () => {
+  it("プレイ中とカウントダウン中は、players の誰かが抜けても戻さない（つなぎ直しを待つ）", () => {
     const joints = all.filter((joint) => joint !== "leftKnee");
     const states: Flow[] = [
       { kind: "countdown", count: 2, players: all },
       { kind: "playing", players: all },
-      { kind: "result", result: goal, players: all },
     ];
     for (const state of states) {
-      expect(run([{ type: "room", joints }], state)).toEqual(INITIAL_FLOW);
+      expect(run([{ type: "room", joints }], state)).toBe(state);
     }
   });
 
-  it("players にいない関節のスマホが増えても、プレイは続ける", () => {
-    const flow: Flow = { kind: "playing", players: ["rightHip"] };
+  it("結果の画面で players の誰かが抜けたら、ロビーに戻る。増えるだけなら残る", () => {
+    const flow: Flow = { kind: "result", result: goal, players: ["rightHip"] };
     expect(run([{ type: "room", joints: ["rightHip", "leftHip"] }], flow)).toBe(flow);
     expect(run([{ type: "room", joints: [] }], flow)).toEqual(INITIAL_FLOW);
+  });
+
+  it("プレイ中のやり直しは、同じ players でカウントダウンに戻る", () => {
+    const players = ["leftHip"] as const;
+    for (const state of [
+      { kind: "playing", players },
+      { kind: "countdown", count: 1, players },
+    ] satisfies Flow[]) {
+      expect(run([{ type: "restart" }], state)).toEqual({ kind: "countdown", count: 3, players });
+    }
+    expect(run([{ type: "restart" }])).toEqual(INITIAL_FLOW);
+  });
+
+  it("切断の結果でも、プレイ中なら結果の画面になる", () => {
+    const result = { outcome: "disconnected", distanceM: 3.2 } as const;
+    expect(run([{ type: "ended", result }], { kind: "playing", players: all })).toEqual({
+      kind: "result",
+      result,
+      players: all,
+    });
   });
 });

@@ -27,6 +27,13 @@ const STATUS_INTERVAL_MS = 1_000;
 const ACTIVE_CHECK_MS = 100;
 /** カウントダウンの1つぶん */
 const COUNT_MS = 1_000;
+/**
+ * プレイ中に切れたスマホを待つ時間。サーバーが関節を取っておく60秒と同じ（docs/game.md の「切断と、つなぎ直し」）。
+ * サーバーは予約が切れたことを知らせないので、スクリーンが、関節が room から抜けたときから数える
+ */
+export const RECONNECT_WAIT_MS = 60_000;
+/** つなぎ直しを待つあいだ、その関節に書く入力。傾き 0 と同じ */
+const ABSENT_INPUT = tiltToInput(0);
 
 export type RoomState =
   | { status: "creating" }
@@ -58,6 +65,8 @@ export interface ScreenView {
   joints: readonly Joint[];
   /** 直近 0.5 秒に tilt が届いた関節 */
   active: readonly Joint[];
+  /** つなぎ直しを待っている関節と、待つ残り秒数（切り上げ。1秒に1回だけ変わる） */
+  absent: Readonly<Partial<Record<Joint, number>>>;
   game: GameState;
   debug: DebugState;
 }
@@ -84,6 +93,7 @@ export class ScreenSession {
     flow: INITIAL_FLOW,
     joints: [],
     active: [],
+    absent: {},
     game: "loading",
     debug: { enabled: false, autoplay: false },
   };
@@ -93,6 +103,14 @@ export class ScreenSession {
   /** 関節ごとに最後に tilt が届いた時刻（performance.now()） */
   private readonly lastTiltAt = new Map<Joint, number>();
   private countdownTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * プレイを始めた関節のうち、room から抜けて、つなぎ直しを待っているもの。
+   * since は抜けたとき（performance.now()）、timer は RECONNECT_WAIT_MS 後に結果を出す予約
+   */
+  private readonly absent = new Map<
+    Joint,
+    { since: number; timer: ReturnType<typeof setTimeout> }
+  >();
   private statusTimer: ReturnType<typeof setInterval> | undefined;
   private lastStatus = { key: "", at: -Infinity };
   private detachKeyboard: (() => void) | undefined;
@@ -142,6 +160,7 @@ export class ScreenSession {
     window.removeEventListener("keydown", this.onKeyDown);
     clearInterval(this.statusTimer);
     clearTimeout(this.countdownTimer);
+    this.clearAbsent();
     cancelAnimationFrame(this.frame);
     if (this.view.debug.enabled) delete document.documentElement.dataset.debug;
     this.connection?.close();
@@ -204,6 +223,8 @@ export class ScreenSession {
         this.updateRoom({ rejected: message.reason });
         break;
       case "tilt":
+        // 待っている関節に古い tilt が遅れて届いても、入力は 0 のまま
+        if (this.absent.has(message.joint)) break;
         this.inputs[message.joint] = tiltToInput(message.angle);
         this.lastTiltAt.set(message.joint, performance.now());
         this.debug.tilts[message.joint] = { seq: message.seq, angle: message.angle };
@@ -222,6 +243,7 @@ export class ScreenSession {
     }
     this.update({ joints });
     this.dispatch({ type: "room", joints });
+    this.syncAbsent();
     this.checkActive();
   }
 
@@ -253,10 +275,10 @@ export class ScreenSession {
     if (event.code === "Space") {
       event.preventDefault();
       if (flow.kind === "lobby") this.start();
-      else if (flow.kind === "result") this.restart();
+      else this.restart();
     } else if (event.code === "Enter" && flow.kind === "lobby") {
       this.startDebug();
-    } else if (event.code === "KeyR" && flow.kind === "result") {
+    } else if (event.code === "KeyR") {
       this.restart();
     }
   };
@@ -271,7 +293,7 @@ export class ScreenSession {
     this.operate({ type: "start", joints: this.view.joints, debug: true });
   }
 
-  /** 結果の画面から、同じ担当でもう一度 */
+  /** 同じ担当でもう一度。結果の画面からも、動けなくなったプレイ中・カウントダウン中からも */
   restart(): void {
     this.operate({ type: "restart" });
   }
@@ -334,15 +356,73 @@ export class ScreenSession {
     if (next === prev) return;
     this.update({ flow: next });
     this.runEffects(prev, next);
+    this.syncAbsent();
+  }
+
+  /**
+   * room に合わせて、つなぎ直しの待ちを増やす・減らす。待つのはカウントダウンとプレイ中だけで、
+   * 結果とロビーでは待ちを持たない
+   */
+  private syncAbsent(): void {
+    const { flow, joints } = this.view;
+    if (flow.kind === "lobby" || flow.kind === "result") {
+      this.clearAbsent();
+      return;
+    }
+    for (const joint of flow.players) {
+      const waiting = this.absent.get(joint);
+      if (joints.includes(joint)) {
+        // 戻った。次の tilt から入力が効く
+        if (waiting) clearTimeout(waiting.timer);
+        this.absent.delete(joint);
+      } else if (!waiting) {
+        this.inputs[joint] = ABSENT_INPUT;
+        this.lastTiltAt.delete(joint);
+        this.absent.set(joint, {
+          since: performance.now(),
+          timer: setTimeout(() => this.giveUp(), RECONNECT_WAIT_MS),
+        });
+      }
+    }
+    this.refreshAbsent();
+  }
+
+  private clearAbsent(): void {
+    for (const { timer } of this.absent.values()) clearTimeout(timer);
+    this.absent.clear();
+    this.refreshAbsent();
+  }
+
+  /** view の absent を、いまの残り秒数に合わせる。変わったときだけ描き直す */
+  private refreshAbsent(): void {
+    const now = performance.now();
+    const next: Partial<Record<Joint, number>> = {};
+    for (const [joint, { since }] of this.absent) {
+      next[joint] = Math.max(0, Math.ceil((since + RECONNECT_WAIT_MS - now) / 1000));
+    }
+    const prev = this.view.absent;
+    if (JOINTS.every((joint) => prev[joint] === next[joint])) return;
+    this.update({ absent: next });
+  }
+
+  /** 待ちきれなかった。ゲームを今の場所で止め、距離だけの結果を出す */
+  private giveUp(): void {
+    if (this.view.flow.kind !== "playing" || this.game === undefined) return;
+    const distanceM = this.game.stop();
+    this.dispatch({ type: "ended", result: { outcome: "disconnected", distanceM } });
   }
 
   /** 遷移（prev → next）に合わせた副作用 */
   private runEffects(prev: Flow, next: Flow): void {
     switch (next.kind) {
       case "countdown":
-        if (prev.kind !== "countdown") {
+        // 始まりは、ロビー・結果・やり直し（count が 3 に戻る）。tick は 2・1 にしか進まない
+        if (prev.kind !== "countdown" || next.count === 3) {
           // 始めに phase を送り、スマホの画面を切り替えて、途中参加を断る
           // 前の走りのキーボードの入力を持ち越さない。スマホの関節は、次の tilt で上書きされる
+          clearTimeout(this.countdownTimer);
+          // 待ちは数え直す。いま抜けている関節は、syncAbsent が改めて待ち始める
+          this.clearAbsent();
           Object.assign(this.inputs, NEUTRAL_INPUTS);
           this.game?.reset();
           this.send({ type: "phase", phase: "playing", mode: "10m" });
@@ -367,6 +447,9 @@ export class ScreenSession {
   // 入力の状態。変わったとき、または1秒に1回、status を送る
   private readonly checkActive = (): void => {
     const now = performance.now();
+    // 待っている関節は、キーボードで動かされても 0 に戻す
+    for (const joint of this.absent.keys()) this.inputs[joint] = ABSENT_INPUT;
+    this.refreshAbsent();
     const active = JOINTS.filter(
       (joint) =>
         this.view.joints.includes(joint) &&

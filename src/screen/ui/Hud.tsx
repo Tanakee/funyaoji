@@ -3,18 +3,25 @@ import { KEYBOARD_KEYS } from "../game/index.ts";
 import { JOINT_LABELS } from "./labels.ts";
 import type { ScreenView } from "./session.ts";
 
-type JointStatus = "active" | "idle" | "keyboard";
+type JointStatus = "active" | "idle" | "keyboard" | "absent";
 
 /**
  * 4つの関節の入力の状態。直近0.5秒に tilt が届いている（active）・スマホはいるが届いていない（idle）・
- * スマホがいなくてキーボード（keyboard）。active の集合が変わったときだけ描き直す
+ * スマホがいなくてキーボード（keyboard）・切れてつなぎ直しを待っている（absent）。
+ * active の集合が変わったときと、待つ残り秒数が変わった（1秒に1回）ときだけ描き直す
  */
 export function Hud({ view }: { view: ScreenView }) {
   // ?debug のときは、ゲームの下のつまみが、関節ごとの担当（スマホ・キー）を見せる
   if (view.flow.kind === "lobby" || view.debug.enabled) return null;
   const { players } = view.flow;
   const status = (joint: Joint): JointStatus =>
-    !players.includes(joint) ? "keyboard" : view.active.includes(joint) ? "active" : "idle";
+    view.absent[joint] !== undefined
+      ? "absent"
+      : !players.includes(joint)
+        ? "keyboard"
+        : view.active.includes(joint)
+          ? "active"
+          : "idle";
   return (
     <ul className="hud" aria-label="入力の状態">
       {JOINTS.map((joint) => (
@@ -23,7 +30,10 @@ export function Hud({ view }: { view: ScreenView }) {
           {status(joint) === "keyboard" ? (
             <KeyHint joint={joint} />
           ) : (
-            <span className="hud-joint-state">{STATUS_TEXT[status(joint)]}</span>
+            <span className="hud-joint-state">
+              {STATUS_TEXT[status(joint)]}
+              {status(joint) === "absent" && `（あと${view.absent[joint]}秒）`}
+            </span>
           )}
         </li>
       ))}
@@ -46,4 +56,15 @@ const STATUS_TEXT: Record<JointStatus, string> = {
   active: "入力中",
   idle: "入力なし",
   keyboard: "キーボード",
+  absent: "切断中",
 };
+
+/** プレイ中・カウントダウン中の、やり直しのキー。動けなくなったときのために、いつでも出しておく */
+export function RestartHint({ view }: { view: ScreenView }) {
+  if (view.flow.kind !== "countdown" && view.flow.kind !== "playing") return null;
+  return (
+    <p className="restart-hint">
+      動けなくなったら <kbd>Space</kbd> か <kbd>R</kbd> でやり直す
+    </p>
+  );
+}
