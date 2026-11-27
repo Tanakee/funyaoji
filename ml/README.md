@@ -27,7 +27,7 @@ uv run python -m funyaoji_rl.pipeline --steps 20000000 --name residual \
 uv run python -m funyaoji_rl.pipeline --steps 20000000 --name free
 ```
 
-土台の歩き方は、先に「比べる基準」の `openloop.ts` で作る。体の設定を変えたら、`openloop.ts` → `pipeline` の順に流し直す。
+土台の歩き方は、先に「比べる基準」の `openloop.ts` で作る。体の設定を変えたら、`openloop.ts` → `pipeline` の順に流し直す。`--base-gait` の候補の `params` が学習に使う体と違うときは、学習を始めずにエラーで止まる。
 
 1. PPO で学習する。経過と重みが MLflow に残る。`runs/<名前>/` にも同じものができる
 2. 重みを評価する。そのままの重みで1回と、重みをほんの少しずらして 16 回走らせ、タイムの中央値を出す
@@ -70,7 +70,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 | 成果物 | 重み（`policy.json`）、経過（`history.json`）、学習に使った体の設定（`body-b.json`） |
 | レジストリ | モデル `funyaoji-walker`。評価を通った重みが version として並ぶ。`champion` の別名が付いたものを `/prototype` で使う |
 
-- 体の設定の指紋は、学習に使った体の値（`--config` の `params`、無ければ `body-b.json`）と、物理と評価のコード（`sim.ts`・`policy.ts`・`lab/run.ts`・`lab/rl/play.ts`）から作る。指紋が違う重みどうしは、タイムを比べない。体を変えたあとの最初の登録は、速さにかかわらず champion になる
+- 体の設定の指紋は、学習に使った体の値（`--config` の `params`、無ければ `body-b.json`）と、物理と評価のコード（`sim.ts`・`policy.ts`・`bot.ts`・`lab/run.ts`・`lab/rl/play.ts`）から作る。指紋が違う重みどうしは、タイムを比べない。体を変えたあとの最初の登録は、速さにかかわらず champion になる
 - `registry submit` は、run の指紋が今の指紋（今の `body-b.json` とコード）と違えば止める。評価は run に上げた `policy.json` で行う
 - 別のマシンの MLflow に記録するときは、環境変数 `MLFLOW_TRACKING_URI` にその URL を入れる
 
@@ -116,7 +116,7 @@ node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/gam
 | `ml/funyaoji_rl/pipeline.py` | 学習・評価・登録・書き出しを続けて行う |
 | `ml/funyaoji_rl/tracking.py` | MLflow の置き場所、コミット、体の設定の指紋 |
 
-- AI の出力は4つ（-1〜1）で、毎秒30回（スマホの `tilt` と同じ）変える。`--config` の `actionHz` で変えたときは、その値を重みの JSON（`actionHz`）に書き、再生も同じ頻度にする。土台なしなら、そのまま関節の入力（0〜1）に直す。土台ありなら、土台の歩き方の入力に、出力 × 0.3 を足す
+- AI の出力は4つ（-1〜1）で、毎秒30回（スマホの `tilt` と同じ）変える。`--config` の `actionHz` で変えたときは、その値を重みの JSON（`actionHz`）に書き、再生も同じ頻度にする。土台なしなら、そのまま関節の入力（0〜1）に直す。土台ありなら、土台の歩き方の入力に、出力 × 補正の大きさ（`--residual-scale`、標準 0.3。重みの `base.scale`）を足す
 - 観測は20個の数（胴の高さ・傾き・速度、関節の角度と回る速さ、足の接地、前の入力）。前後の位置は入れない。土台ありなら、歩き方の位相（sin, cos）の2つが増える
 - 土台の歩き方と補正の大きさは、重みの JSON（`base`）に入る。再生する側は、JSON を読むだけでよい
 - ニューラルネットは 64 個のユニットが2層。ブラウザでは `policy.ts` が計算するので、推論のサーバーは要らない

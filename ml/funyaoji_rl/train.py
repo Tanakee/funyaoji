@@ -146,9 +146,16 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
     out: Path = args.out or Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
     config = json.loads(args.config)
+    # 学習に使う体。--config の params があればそれ（vec_env.py と同じ決め方）
+    params = config.get("params", load_body())
     if args.base_gait:
-        gait = json.loads(args.base_gait.read_text(encoding="utf-8"))["gait"]
-        config["base"] = {"gait": gait, "scale": args.residual_scale}
+        cand = json.loads(args.base_gait.read_text(encoding="utf-8"))
+        # 土台の歩き方は、探索したときの体でしか意味がない。体を変えたら openloop.ts で作り直す
+        if json.dumps(cand["params"], sort_keys=True) != json.dumps(params, sort_keys=True):
+            raise SystemExit(
+                f"{args.base_gait} の params が、学習に使う体と違う。今の体で openloop.ts を流し直す"
+            )
+        config["base"] = {"gait": cand["gait"], "scale": args.residual_scale}
     venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, config)
     env = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=args.gamma)
     model = PPO(
@@ -166,8 +173,6 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         device="cpu",
     )
     stats = Stats()
-    # 学習に使う体。--config の params があればそれ（vec_env.py と同じ決め方）
-    params = config.get("params", load_body())
     with mlflow.start_run(run_name=name) as run:
         mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint(params)})
         mlflow.log_params(

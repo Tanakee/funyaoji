@@ -24,10 +24,11 @@ MODEL_NAME = "funyaoji-walker"
 CHAMPION = "champion"
 PROTOTYPE = ROOT / "src/screen/game/prototype"
 # 体の動きと評価の結果を決めるファイル。どれかが変わると、前に学習した重みとはタイムを比べられない
-# （lab/run.ts は打ち切りと sanity()、lab/rl/play.ts は評価のずらし方を持つ）
+# （lab/run.ts は打ち切りと sanity()、lab/rl/play.ts は評価のずらし方、bot.ts は土台の歩き方の入力を持つ）
 PHYSICS_FILES = [
     PROTOTYPE / "sim.ts",
     PROTOTYPE / "policy.ts",
+    PROTOTYPE / "bot.ts",
     PROTOTYPE / "lab/run.ts",
     PROTOTYPE / "lab/rl/play.ts",
 ]
