@@ -23,8 +23,8 @@ from .vec_env import NodeProcess
 
 KEYS = ["T", "h0", "A", "K", "kp"]
 # 探す範囲。CMA-ES は 0〜1 に直した値で探す
-LOW = np.array([0.5, 0.05, 0.05, 0.0, 0.0])
-HIGH = np.array([3.0, 0.7, 0.7, 1.0, 2 * np.pi])
+LOW = np.array([0.5, -0.5, 0.05, 0.0, 0.0])
+HIGH = np.array([3.0, 0.8, 1.6, 1.6, 2 * np.pi])
 DEMO = {"T": 2.16, "h0": 0.34, "A": 0.38, "K": 0.76, "kp": 0.21}
 
 
