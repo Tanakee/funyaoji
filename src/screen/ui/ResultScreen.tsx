@@ -1,4 +1,5 @@
 import type { PlayResult } from "../../shared/messages.ts";
+import type { ScreenSession, ScreenView } from "./session.ts";
 
 type Outcome = PlayResult["outcome"];
 
@@ -9,7 +10,15 @@ const resultCopy: Record<Outcome, { label: string; title: string; note: string }
   disconnected: { label: "DISCONNECTED", title: "切断", note: "参加者との接続が切れました" },
 };
 
-export function ResultScreen({ result }: { result: PlayResult }) {
+export function ResultScreen({
+  session,
+  view,
+  result,
+}: {
+  session: ScreenSession;
+  view: ScreenView;
+  result: PlayResult;
+}) {
   const { outcome } = result;
   const copy = resultCopy[outcome];
 
@@ -78,6 +87,15 @@ export function ResultScreen({ result }: { result: PlayResult }) {
       <p className="result-hint">
         <kbd>Space</kbd> か <kbd>R</kbd> でもう一度（同じ4人・同じ担当）
       </p>
+      {view.debug.enabled && (
+        <button
+          type="button"
+          className="debug-button debug-button--start"
+          onClick={() => session.restart()}
+        >
+          もう一度
+        </button>
+      )}
     </main>
   );
 }

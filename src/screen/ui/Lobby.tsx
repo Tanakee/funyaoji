@@ -3,9 +3,9 @@ import { JOINTS } from "../../shared/messages.ts";
 import { isFull } from "./flow.ts";
 import { JOINT_LABELS } from "./labels.ts";
 import { QrCode } from "./QrCode.tsx";
-import type { RoomState, ScreenView } from "./session.ts";
+import { canOperate, type RoomState, type ScreenSession, type ScreenView } from "./session.ts";
 
-export function Lobby({ view }: { view: ScreenView }) {
+export function Lobby({ session, view }: { session: ScreenSession; view: ScreenView }) {
   const { room, joints } = view;
   const full = isFull(joints);
   const notice = noticeText(view);
@@ -54,6 +54,17 @@ export function Lobby({ view }: { view: ScreenView }) {
               <kbd>Enter</kbd>
               <span>デバッグ開始（空きの関節はキーボード操作）</span>
             </p>
+            {view.debug.enabled && (
+              // 画面のタップ・クリックで、Enter と同じ開始。空きの関節は、ゲームの下のつまみで動かす
+              <button
+                type="button"
+                className="debug-button debug-button--start"
+                disabled={!canOperate(view)}
+                onClick={() => session.startDebug()}
+              >
+                デバッグ開始
+              </button>
+            )}
           </div>
         </section>
       </div>

@@ -24,6 +24,12 @@
   --color-active: #3f9d6a;
   --color-idle: #c9c2b6;
   --color-keyboard: #6b86c4;
+  /* デバッグ操作（?debug） */
+  --color-debug-bg: #2d2a28;
+  --color-debug-surface: #403c39;
+  --color-debug-ink: #f6f1e7;
+  --color-debug-ink-soft: #b9b1a5;
+  --color-debug-guide: #ffffff;
   --qr-dark: #302c2a;
   --qr-light: #ffffff;
   /* ゲームの Canvas の後ろ。ゲームが背景を描くまでの色 */
@@ -320,6 +326,260 @@ kbd {
   padding: 2px 10px;
   text-align: left;
   font-variant-numeric: tabular-nums;
+}
+
+/* デバッグ操作（?debug）。ゲームの下に操作の場所を空け、そこにつまみを置く。ロビーと結果は、その上も覆う */
+:root {
+  --debug-h: 0px;
+}
+html[data-debug] {
+  --debug-h: 240px;
+}
+html[data-debug] #stage,
+html[data-debug] #root {
+  bottom: var(--debug-h);
+}
+html[data-debug] .lobby,
+html[data-debug] .result-screen {
+  position: fixed;
+  z-index: 5;
+}
+.debug-button {
+  min-height: 56px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--color-debug-surface);
+  color: var(--color-debug-ink);
+  font: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.debug-button[aria-pressed="true"] {
+  background: var(--color-active);
+}
+.debug-button--start {
+  margin-top: 8px;
+  background: var(--color-brand);
+  color: var(--color-brand-ink);
+  font-size: clamp(20px, 2vw, 28px);
+}
+.debug-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.result-screen .debug-button--start {
+  align-self: center;
+  margin-top: 12px;
+}
+.debug-controls {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  height: var(--debug-h);
+  display: flex;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--color-debug-bg);
+  color: var(--color-debug-ink);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.debug-actions {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.debug-actions-note {
+  margin: 0;
+  color: var(--color-debug-ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.debug-strips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 12px;
+}
+.strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.strip-name {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--joint-color);
+  font-size: 16px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.strip-name small {
+  color: var(--color-debug-ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+.strip-track {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--color-debug-surface);
+  /* つまみをなぞっている間、ページが動かないように */
+  touch-action: none;
+  cursor: ns-resize;
+}
+.strip--phone .strip-track {
+  cursor: default;
+  opacity: 0.7;
+}
+.strip-fill {
+  position: absolute;
+  inset: auto 0 0;
+  height: calc(var(--value, 0) * 100%);
+  background: var(--joint-color);
+  opacity: 0.85;
+}
+/* 値の高さに、はっきりした線を引く。指がどこにあるかが見える */
+.strip-fill::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 6px;
+  background: var(--color-debug-ink);
+}
+.strip-guide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--value, 0) * 100%);
+  height: 0;
+  border-top: 3px dashed var(--color-debug-guide);
+  pointer-events: none;
+}
+.strip-end {
+  position: absolute;
+  left: 8px;
+  color: var(--color-debug-ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  mix-blend-mode: difference;
+}
+.strip-end--top {
+  top: 6px;
+}
+.strip-end--bottom {
+  bottom: 6px;
+}
+.strip-value {
+  color: var(--color-debug-ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+  html[data-debug] {
+    --debug-h: min(46vh, 380px);
+  }
+  .debug-controls {
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .debug-actions {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+  }
+  .debug-actions-note {
+    display: none;
+  }
+  .debug-button {
+    width: 100%;
+  }
+  /* スマホで開いたロビーと結果は、キーボードの案内と飾りを省き、1画面に収める */
+  html[data-debug] .lobby,
+  html[data-debug] .result-screen {
+    padding: 16px;
+  }
+  html[data-debug] .lobby-layout,
+  html[data-debug] .result-layout {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin: 0;
+    padding: 12px 0 0;
+    align-content: start;
+  }
+  html[data-debug] .lobby-join {
+    flex-direction: row;
+    justify-content: center;
+    gap: 16px;
+  }
+  /* 傾きの数字の表は、スマホ1台では使わない。結果の見出しに重なるので隠す */
+  html[data-debug] .debug {
+    display: none;
+  }
+  html[data-debug] .lobby-lead,
+  html[data-debug] .lobby-start .start-row,
+  html[data-debug] .eyebrow,
+  html[data-debug] .result-illustration,
+  html[data-debug] .panel-footer,
+  html[data-debug] .result-hint {
+    display: none;
+  }
+  html[data-debug] .qr {
+    width: 120px;
+  }
+  html[data-debug] .room-code {
+    flex-direction: column;
+    gap: 4px;
+  }
+  html[data-debug] .room-code-value {
+    font-size: 48px;
+  }
+  html[data-debug] .lobby-count {
+    margin-bottom: 12px;
+    font-size: 32px;
+  }
+  html[data-debug] .slot {
+    padding: 12px 16px;
+  }
+  html[data-debug] .slot-joint {
+    font-size: 24px;
+  }
+  html[data-debug] .lobby-start {
+    margin-top: 16px;
+  }
+  html[data-debug] .debug-button--start {
+    width: 100%;
+    margin-top: 0;
+  }
+  html[data-debug] .result-heading h1 {
+    font-size: 56px;
+  }
+  html[data-debug] .metric {
+    margin-top: 10px;
+    padding-bottom: 10px;
+  }
+  html[data-debug] .metric-value {
+    font-size: 52px;
+  }
 }
 
 /* 結果。ロビーと同じ背景で、Canvas を隠す */
