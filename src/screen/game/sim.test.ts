@@ -1,24 +1,10 @@
 import { beforeAll, describe, expect, test } from "vite-plus/test";
-import { JOINTS } from "../../shared/messages.ts";
 import { NEUTRAL_INPUTS } from "./body.ts";
+import { demoGait as gait } from "./demo.ts";
 import { SIT_MS, Sim, initPhysics } from "./sim.ts";
 import type { JointInputs } from "./types.ts";
 
 const NEUTRAL: JointInputs = { ...NEUTRAL_INPUTS };
-
-// 試作（#55）のお手本の歩き方。脚を交互に振る
-const GAIT = { T: 2.16, h0: 0.34, A: 0.38, K: 0.76, kp: 0.21 };
-const clamp = (x: number) => Math.min(1, Math.max(0, x));
-function gait(timeSec: number): JointInputs {
-  const out = { ...NEUTRAL };
-  for (const j of JOINTS) {
-    const ph = (timeSec / GAIT.T) * Math.PI * 2 + (j.startsWith("left") ? Math.PI : 0);
-    out[j] = j.endsWith("Hip")
-      ? clamp(GAIT.h0 + GAIT.A * Math.sin(ph))
-      : clamp(GAIT.K * Math.max(0, Math.sin(ph + GAIT.kp)));
-  }
-  return out;
-}
 
 const FRAME = 1 / 60;
 /** 終わるか limitSec 秒たつまで、1/60 秒ずつ進める */
