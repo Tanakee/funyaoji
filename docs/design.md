@@ -161,7 +161,7 @@
 - 門番が「今日はもう作れない」と答えたら、その isolate は朝9時まで門番を呼ばずに断る。断るたびに Durable Object のリクエストを使わない
 - 断るときは 429 と理由（`too-many-requests`・`daily-limit`）を返し、スクリーンが理由に合った文を出す。仕様は [API](api.md) の「POST /api/rooms」、上限の数の根拠は [Cloudflare の注意点](cloudflare.md) の「ルームを作る回数の上限」にある
 - 1分に10回は、会場の Wi-Fi で全員が同じ IP になっても、スクリーンを開き直すくらいでは当たらない数。ルームを作るのはスクリーンだけで、スマホは作らない
-- Rate Limiting は Cloudflare のロケーションごとに数え、すぐには揃わない（[Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)）。厳密でなくてよい連打よけに使い、総量は門番で厳密に数える
+- Rate Limiting は Cloudflare のロケーションごとに数え、すぐには揃わない（[Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)）。プレビューで試すと、1つの接続で続けて呼んだときは11回目から断ったが、呼ぶたびに接続を張り直すと、2分で約40回通った。厳密でなくてよい連打よけに使い、総量は門番で厳密に数える
 - 本番とプレビューは、門番のストレージが別なので、別に数える。Rate Limiting の数は、同じ `namespace` を使うので、本番とプレビューで共有する
 
 残る穴：
