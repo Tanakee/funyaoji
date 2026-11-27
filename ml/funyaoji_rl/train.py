@@ -77,8 +77,8 @@ def _r(x) -> list:
     return np.round(np.asarray(x, dtype=np.float64), 6).tolist()
 
 
-def export_policy(model: PPO, norm: VecNormalize, path: Path) -> None:
-    """ブラウザで順伝播を計算できるように、重みと観測の正規化を JSON に書く"""
+def export_policy(model: PPO, norm: VecNormalize, path: Path, action_hz: float = 30) -> None:
+    """ブラウザで順伝播を計算できるように、重みと観測の正規化と、行動を変える頻度を JSON に書く"""
     sd = model.policy.state_dict()
     layers = []
     i = 0
@@ -95,6 +95,7 @@ def export_policy(model: PPO, norm: VecNormalize, path: Path) -> None:
         "obsMean": _r(norm.obs_rms.mean),
         "obsStd": _r(np.sqrt(norm.obs_rms.var + norm.epsilon)),
         "clipObs": float(norm.clip_obs),
+        "actionHz": action_hz,
         "activation": "tanh",
         "layers": layers,
     }
@@ -158,7 +159,8 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         finally:
             model.save(out / "model")
             env.save(str(out / "vecnormalize.pkl"))
-            export_policy(model, env, out / "policy.json")
+            # 再生（policy.ts の PolicyDriver）も、学習と同じ頻度で行動を変える
+            export_policy(model, env, out / "policy.json", config.get("actionHz", 30))
             (out / "history.json").write_text(json.dumps(stats.history), encoding="utf-8")
             venv.close()
             mlflow.log_artifact(str(out / "policy.json"))

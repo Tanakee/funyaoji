@@ -34,6 +34,13 @@ function cost(params: Params, g: Gait): number {
   return r.time + (sanity(params, r).length ? 50 : 0);
 }
 
+/** cost() の値をログ用の言葉にする。ゴールしたときだけ秒で出す */
+function show(f: number): string {
+  if (f < 50) return `${f.toFixed(3)}秒`;
+  if (f < 90) return `${(f - 50).toFixed(3)}秒（不自然な動きあり）`;
+  return `ゴールせず（${(100 - f).toFixed(2)}m）`;
+}
+
 export function search(
   params: Params,
   start: Gait,
@@ -74,11 +81,11 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("lab/rl/openloop.ts")) {
   }
   const c = JSON.parse(readFileSync(bodyPath, "utf8")) as Candidate;
   const params = toParams(c.params);
-  console.log(`今のお手本: ${cost(params, c.gait).toFixed(3)}秒 ${JSON.stringify(c.gait)}`);
+  console.log(`今のお手本: ${show(cost(params, c.gait))} ${JSON.stringify(c.gait)}`);
   let best: { gait: Gait; time: number } | undefined;
   for (let seed = 1; seed <= seeds; seed++) {
     const r = search(params, c.gait, seed, gens);
-    console.log(`種 ${seed}: ${r.time.toFixed(3)}秒 ${JSON.stringify(r.gait)}`);
+    console.log(`種 ${seed}: ${show(r.time)} ${JSON.stringify(r.gait)}`);
     if (!best || r.time < best.time) best = r;
   }
   if (best && best.time < 50) {
