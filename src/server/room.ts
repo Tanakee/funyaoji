@@ -18,9 +18,10 @@ import { parseMessage } from "../shared/parse.ts";
 
 /**
  * WebSocket に付けておく情報。休止（Hibernation）から戻っても残る。connectedAt は接続した時刻（ミリ秒）。
- * clientId は、スマホが接続の URL の client に付けてきた ID。付けていなければ無い
+ * clientId は、スマホが接続の URL の client に付けてきた ID。付けていなければ無い。
+ * departed は、切断を処理し終えたか、置き換えた（切断を処理しない）接続のとき true
  */
-type Attachment = { connectedAt: number } & (
+type Attachment = { connectedAt: number; departed?: true } & (
   | { role: "screen" }
   | { role: "phone"; joint: Joint; clientId?: string }
 );
@@ -57,8 +58,6 @@ const RESERVATIONS_KEY = "reservations";
 
 /** ルームごとに1つ。WebSocket の接続を持ち、スマホとスクリーンの間でメッセージを中継する */
 export class Room extends DurableObject<Env> {
-  /** 切断を処理し終えた接続 */
-  private readonly departed = new WeakSet<WebSocket>();
   /**
    * 接続ごとに、最後にメッセージ（ハートビート以外）を受信した時刻。
    * ストレージに書くと受信のたびに書き込みが増えるので、メモリだけに置く。休止から戻ると空になる
@@ -136,7 +135,9 @@ export class Room extends DurableObject<Env> {
    * clientId のスマホが戻ってきたのなら、渡す関節を返す。新しく参加するスマホなら undefined。
    * 古い接続がまだ開いていれば（サーバーがまだ古い接続を閉じていなければ）、その関節を渡し、古い接続を置き換える。
    * 古い接続が無く、期限内の予約があれば、予約していた関節を渡す。
-   * ただし、その関節をほかのスマホの開いた接続が持っていれば、予約は無いものとして扱う
+   * ただし、その関節をほかのスマホの開いた接続が持っていれば、予約は無いものとして扱う。
+   * 予約も無く、古い接続が閉じかけで、まだ切断を処理していなければ（close がまだ webSocketClose に届いていない）、
+   * その関節を渡し、古い接続を置き換える。切断を処理する前なので、予約がまだ無いため
    */
   private findReturning(
     clientId: string | undefined,
@@ -150,6 +151,27 @@ export class Room extends DurableObject<Env> {
       (r) => r.clientId === clientId && !held.includes(r.joint),
     );
     if (reservation !== undefined) return { joint: reservation.joint, reservation };
+    // ほかのスマホの開いた接続が持つ関節と、予約されている関節は渡さない
+    const reserved = reservations.map((r) => r.joint);
+    const closing = this.ctx
+      .getWebSockets("phone")
+      .filter(
+        (ws) =>
+          !isDeparted(ws) &&
+          phoneAttachment(ws).clientId === clientId &&
+          !held.includes(phoneJoint(ws)) &&
+          !reserved.includes(phoneJoint(ws)),
+      )
+      // 同じ ID の閉じかけの接続が2つあれば、新しいほう
+      .reduce<WebSocket | undefined>(
+        (latest, ws) =>
+          latest === undefined ||
+          phoneAttachment(ws).connectedAt > phoneAttachment(latest).connectedAt
+            ? ws
+            : latest,
+        undefined,
+      );
+    if (closing !== undefined) return { joint: phoneJoint(closing), old: closing };
     return undefined;
   }
 
@@ -168,7 +190,7 @@ export class Room extends DurableObject<Env> {
     if (old.readyState === WebSocket.OPEN) {
       this.log({ event: "replaced", role: "phone", joint: phoneJoint(old) });
     }
-    this.departed.add(old);
+    markDeparted(old);
     try {
       old.close(CLOSE_REPLACED, "replaced");
     } catch {
@@ -194,8 +216,8 @@ export class Room extends DurableObject<Env> {
 
   /**
    * 切れたスマホの関節を、同じ ID のスマホのために RESERVATION_TTL_MS のあいだとっておく。
-   * 同じ ID の別の接続が開いていれば（置き換えたあとに、古い接続の close が届いたとき）、とっておかない。
-   * 休止から戻ると departed が空になり、置き換えた古い接続もここに来ることがあるため。
+   * 同じ ID の別の接続が開いていれば、とっておかない。
+   * 置き換えた古い接続は、attachment の departed で depart が止めるので、ここには来ないはずだが、念のため。
    * ほかの開いた接続がその関節を持っていても、とっておかない（切断の処理が遅れ、先に別のスマホが入ったとき）
    */
   private async reserve(ws: WebSocket, clientId: string, joint: Joint): Promise<void> {
@@ -365,8 +387,8 @@ export class Room extends DurableObject<Env> {
    */
   private async depart(ws: WebSocket): Promise<boolean> {
     // エラーと close の両方が届いても、room を2回送らない
-    if (this.departed.has(ws)) return false;
-    this.departed.add(ws);
+    if (isDeparted(ws)) return false;
+    markDeparted(ws);
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.role === "phone") {
       if (attachment.clientId !== undefined) {
@@ -510,6 +532,16 @@ export class Room extends DurableObject<Env> {
   private sendToPhones(message: ServerToPhoneMessage): void {
     for (const ws of this.openPhones()) send(ws, message);
   }
+}
+
+/** 切断を処理し終えたか、置き換えた接続か。attachment に書くので、休止から戻っても分かる */
+function isDeparted(ws: WebSocket): boolean {
+  return (ws.deserializeAttachment() as Attachment | null)?.departed === true;
+}
+
+function markDeparted(ws: WebSocket): void {
+  const attachment = ws.deserializeAttachment() as Attachment | null;
+  if (attachment !== null) ws.serializeAttachment({ ...attachment, departed: true });
 }
 
 function phoneAttachment(ws: WebSocket): Attachment & { role: "phone" } {
