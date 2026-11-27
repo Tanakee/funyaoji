@@ -67,15 +67,25 @@ const isEditable = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
+/** attachKeyboard の戻り値 */
+export interface KeyboardHandle {
+  /** 止める */
+  detach(): void;
+  /** 動かしている関節を全部放す。やり直しで inputs を戻したときに呼ぶ。押したままのキーは、次のフレームでまた動かす */
+  reset(): void;
+  /** その関節を放す。つまみでつかんだときに呼ぶ（次のフレームを待つと、つまみの値を戻してしまうことがある） */
+  release(joint: Joint): void;
+}
+
 /**
- * target のキー入力を inputs に書き込み始める。戻り値を呼ぶと止める。
+ * target のキー入力を inputs に書き込み始める。
  * controls は毎フレーム、関節ごとに、キーボードで動かしてよいかを答える
  */
 export function attachKeyboard(
   inputs: JointInputs,
   controls: (joint: Joint) => boolean = () => true,
   target: Window = window,
-): () => void {
+): KeyboardHandle {
   const held = new Set<string>();
   const driving = new Set<Joint>();
   let last = performance.now();
@@ -97,12 +107,16 @@ export function attachKeyboard(
   target.addEventListener("keyup", onKeyUp);
   target.addEventListener("blur", onBlur);
 
-  return () => {
-    cancelAnimationFrame(frame);
-    target.removeEventListener("keydown", onKeyDown);
-    target.removeEventListener("keyup", onKeyUp);
-    target.removeEventListener("blur", onBlur);
-    held.clear();
-    driving.clear();
+  return {
+    detach() {
+      cancelAnimationFrame(frame);
+      target.removeEventListener("keydown", onKeyDown);
+      target.removeEventListener("keyup", onKeyUp);
+      target.removeEventListener("blur", onBlur);
+      held.clear();
+      driving.clear();
+    },
+    reset: () => driving.clear(),
+    release: (joint) => void driving.delete(joint),
   };
 }

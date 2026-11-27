@@ -15,7 +15,13 @@ import {
   type PhaseMessage,
   type RejectedMessage,
 } from "../../shared/messages.ts";
-import { attachKeyboard, createGame, demoGait, NEUTRAL_INPUTS } from "../game/index.ts";
+import {
+  attachKeyboard,
+  createGame,
+  demoGait,
+  NEUTRAL_INPUTS,
+  type KeyboardHandle,
+} from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
 import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
 
@@ -78,6 +84,21 @@ export function canOperate(view: ScreenView): boolean {
   );
 }
 
+/**
+ * キーボードで動かす関節か（docs/game.md の「関節の入力」）。カウントダウンとプレイ中の、スマホのいない関節だけ。
+ * プレイを始めたスマホの関節（つなぎ直しを待っているものも）と、いまスマホがつながっている関節は動かさない。
+ * お手本を入れている間は、お手本に任せる。画面のキーの案内も、これに合わせて出す
+ */
+export function keyboardDrives(view: ScreenView, joint: Joint): boolean {
+  const { flow, joints, debug } = view;
+  return (
+    (flow.kind === "countdown" || flow.kind === "playing") &&
+    !flow.players.includes(joint) &&
+    !joints.includes(joint) &&
+    !debug.autoplay
+  );
+}
+
 /** 確かめるための情報。tilt のたびに書き換える。React の state ではないので、読む側が間引いて読む */
 export interface DebugInfo {
   tilts: Partial<Record<Joint, { seq: number; angle: number }>>;
@@ -113,7 +134,7 @@ export class ScreenSession {
   >();
   private statusTimer: ReturnType<typeof setInterval> | undefined;
   private lastStatus = { key: "", at: -Infinity };
-  private detachKeyboard: (() => void) | undefined;
+  private keyboard: KeyboardHandle | undefined;
   private disposed = false;
   /** お手本の今の値。デバッグのときだけ、毎フレーム更新する */
   private demo: JointInputs = { ...NEUTRAL_INPUTS };
@@ -142,7 +163,7 @@ export class ScreenSession {
 
   /** ルームを作ってつなぎ、ゲームを作る。ページに1回だけ呼ぶ */
   open(): void {
-    this.detachKeyboard = attachKeyboard(this.inputs, this.isKeyboardControlled);
+    this.keyboard = attachKeyboard(this.inputs, this.isKeyboardControlled);
     window.addEventListener("keydown", this.onKeyDown);
     this.statusTimer = setInterval(this.checkActive, ACTIVE_CHECK_MS);
     if (this.view.debug.enabled) {
@@ -156,7 +177,7 @@ export class ScreenSession {
 
   dispose(): void {
     this.disposed = true;
-    this.detachKeyboard?.();
+    this.keyboard?.detach();
     window.removeEventListener("keydown", this.onKeyDown);
     clearInterval(this.statusTimer);
     clearTimeout(this.countdownTimer);
@@ -311,8 +332,14 @@ export class ScreenSession {
 
   /** つまみをつかんだ・離した。つかんでいる間は、お手本が値を上書きしない */
   grab(joint: Joint, grabbed: boolean): void {
-    if (grabbed) this.grabbed.add(joint);
-    else this.grabbed.delete(joint);
+    if (grabbed) {
+      this.grabbed.add(joint);
+      // キーボードが離したキーで戻している途中でも、すぐに手を放させる。
+      // 次のフレームまでに離されると、キーボードはつかんだことに気づかず、つまみの値を戻してしまう
+      this.keyboard?.release(joint);
+    } else {
+      this.grabbed.delete(joint);
+    }
   }
 
   /** 画面のつまみが毎フレーム読む、関節の今の入力 */
@@ -331,19 +358,9 @@ export class ScreenSession {
     return flow.kind !== "lobby" && !flow.players.includes(joint);
   }
 
-  /**
-   * キーボードで動かしてよい関節か。カウントダウンとプレイ中の、スマホのいない関節だけ。
-   * つまみでつかんでいる関節と、お手本を入れている間は、そちらに任せる
-   */
-  private readonly isKeyboardControlled = (joint: Joint): boolean => {
-    const { flow, debug } = this.view;
-    return (
-      (flow.kind === "countdown" || flow.kind === "playing") &&
-      !flow.players.includes(joint) &&
-      !this.grabbed.has(joint) &&
-      !debug.autoplay
-    );
-  };
+  /** キーボードで動かしてよい関節か（keyboardDrives）。つまみでつかんでいる関節は、つまみに任せる */
+  private readonly isKeyboardControlled = (joint: Joint): boolean =>
+    keyboardDrives(this.view, joint) && !this.grabbed.has(joint);
 
   // デバッグのときだけ回す。お手本の値を計算し、入れているなら、プレイ中の関節に書く
   private readonly onFrame = (now: number): void => {
@@ -438,6 +455,8 @@ export class ScreenSession {
           // 待ちは数え直す。いま抜けている関節は、syncAbsent が改めて待ち始める
           this.clearAbsent();
           Object.assign(this.inputs, NEUTRAL_INPUTS);
+          // 前の走りで離したキーの戻りも持ち越さない。押したままのキーは、次のフレームからまた効く
+          this.keyboard?.reset();
           this.game?.reset();
           this.send({ type: "phase", phase: "playing", mode: "10m" });
         }
@@ -452,6 +471,8 @@ export class ScreenSession {
         break;
       case "lobby":
         clearTimeout(this.countdownTimer);
+        // ロビーではつまみが消え、つかんだまま消えると離したことが届かない。次のプレイに持ち越さない
+        this.grabbed.clear();
         this.game?.reset();
         this.send({ type: "phase", phase: "lobby" });
         break;

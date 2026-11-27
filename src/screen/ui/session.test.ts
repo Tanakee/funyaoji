@@ -9,8 +9,13 @@ let handlers: { onMessage: (m: ScreenReceived) => void; onStateChange?: (s: unkn
 let game: GameOptions;
 const calls: string[] = [];
 let stopDistance = 3.2;
-const keydown: { listener?: (e: Partial<KeyboardEvent>) => void } = {};
+type Listener = (e: Partial<KeyboardEvent>) => void;
+/** window に付いたリスナー。セッションのキー操作と、キーボード操作（keyboard.ts）の両方が付く */
+const listeners: Record<string, Listener[]> = {};
 let keyboardControls: (joint: Joint) => boolean = () => false;
+/** キーボード操作の次のフレーム */
+let nextFrame: FrameRequestCallback | undefined;
+let frameTime = 0;
 
 vi.mock("../../net/api.ts", () => ({ createRoom: async () => "ABCD" }));
 vi.mock("../../net/client.ts", () => ({
@@ -25,12 +30,14 @@ vi.mock("../../net/client.ts", () => ({
 vi.mock("../game/index.ts", async () => {
   const { NEUTRAL_INPUTS } = await import("../game/body.ts");
   const { demoGait } = await import("../game/demo.ts");
+  const { attachKeyboard } = await import("../game/keyboard.ts");
   return {
     NEUTRAL_INPUTS,
     demoGait,
-    attachKeyboard: (_inputs: JointInputs, controls: (joint: Joint) => boolean) => {
+    // キーボード操作は本物を使い、フレームはテストが進める
+    attachKeyboard: (inputs: JointInputs, controls: (joint: Joint) => boolean) => {
       keyboardControls = controls;
-      return () => {};
+      return attachKeyboard(inputs, controls);
     },
     createGame: async (options: GameOptions) => {
       game = options;
@@ -52,12 +59,16 @@ beforeEach(() => {
   sent.length = 0;
   calls.length = 0;
   connectionOpen = true;
+  for (const type of Object.keys(listeners)) delete listeners[type];
   vi.stubGlobal("window", {
-    addEventListener: (type: string, f: (e: Partial<KeyboardEvent>) => void) => {
-      if (type === "keydown") keydown.listener = f;
-    },
+    addEventListener: (type: string, f: Listener) => (listeners[type] ??= []).push(f),
     removeEventListener() {},
   });
+  vi.stubGlobal("requestAnimationFrame", (f: FrameRequestCallback) => {
+    nextFrame = f;
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", () => {});
   vi.stubGlobal("location", { href: "http://localhost/screen" });
   vi.stubGlobal("HTMLElement", class {});
 });
@@ -66,8 +77,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const press = (code: string) =>
-  keydown.listener?.({ code, repeat: false, preventDefault() {}, target: null });
+const fire = (type: string, code: string) => {
+  for (const f of listeners[type] ?? [])
+    f({ code, repeat: false, preventDefault() {}, target: null });
+};
+/** キーを押して、すぐ離す */
+const press = (code: string) => {
+  fire("keydown", code);
+  fire("keyup", code);
+};
+/** キーボード操作を n フレーム（1フレーム 0.1 秒）進める */
+const frames = (n: number) => {
+  for (let i = 0; i < n; i++) {
+    frameTime = Math.max(frameTime, performance.now()) + 100;
+    nextFrame?.(frameTime);
+  }
+};
 const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "ABCD", joints });
 const inputs = (): JointInputs => game.inputs;
 
@@ -134,8 +159,79 @@ describe("ScreenSession", () => {
     session.grab("leftHip", true);
     expect(keyboardControls("leftHip")).toBe(false);
     session.grab("leftHip", false);
+    expect(keyboardControls("leftHip")).toBe(true);
     session.setAutoplay(true);
     expect(keyboardControls("leftHip")).toBe(false);
+    session.setAutoplay(false);
+    game.onEnd({ outcome: "fell", distanceM: 1 });
+    expect(keyboardControls("leftHip")).toBe(false); // 結果
+  });
+
+  it("やり直したあと、前の走りで離したキーの関節を、キーボードが動かさない", async () => {
+    const { NEUTRAL_INPUTS } = await import("../game/body.ts");
+    const { RELEASED_INPUT } = await import("../game/keyboard.ts");
+    await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    fire("keydown", "KeyW");
+    frames(2);
+    fire("keyup", "KeyW");
+    frames(1);
+    // 離したときの値へ戻っている途中
+    expect(inputs().leftHip).toBeGreaterThan(RELEASED_INPUT.hip);
+    press("KeyR");
+    frames(10);
+
+    expect(inputs().leftHip).toBe(NEUTRAL_INPUTS.leftHip);
+  });
+
+  it("結果の画面のあとに入ったスマホの関節は、やり直してもキーボードが動かさない", async () => {
+    await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    game.onEnd({ outcome: "fell", distanceM: 1 });
+    room(["rightHip", "leftHip"]);
+    press("KeyR");
+    handlers.onMessage({ type: "tilt", joint: "leftHip", seq: 1, angle: 45 });
+    fire("keydown", "KeyW");
+    frames(5);
+
+    expect(keyboardControls("leftHip")).toBe(false);
+    expect(inputs().leftHip).toBe(0.5);
+  });
+
+  it("キーで戻している途中に、つまみを短くつかんで離しても、つまみの値を戻さない", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    fire("keydown", "KeyW");
+    frames(2);
+    fire("keyup", "KeyW");
+    frames(1);
+    // フレームの間に、つかんで離す
+    session.grab("leftHip", true);
+    session.setInput("leftHip", 0.9);
+    session.grab("leftHip", false);
+    frames(10);
+
+    expect(inputs().leftHip).toBe(0.9);
+  });
+
+  it("つまみをつかんだままロビーに戻っても、次のプレイではキーボードが効く", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    session.grab("leftHip", true);
+    // つなぎ直すと、サーバーが持つ playing が届き、ロビーに戻る。つまみは消え、離したことは届かない
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m" });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    press("Enter");
+
+    expect(keyboardControls("leftHip")).toBe(true);
   });
 
   it("やり直すと、前の走りのキーボードの入力を持ち越さない", async () => {
