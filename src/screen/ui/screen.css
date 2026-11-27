@@ -16,8 +16,6 @@
   --color-accent-soft: #ffe5d5;
   --color-fell: #bd7558;
   --color-fell-soft: #f6ded2;
-  --color-timeout: #667da8;
-  --color-timeout-soft: #e3e8f5;
   --color-disconnected: #7c8590;
   --color-disconnected-soft: #e6e9ec;
   /* 入力の状態（HUD、ロビーの枠） */
@@ -608,10 +606,6 @@ html[data-debug] .result-screen {
   --accent: var(--color-fell);
   --accent-soft: var(--color-fell-soft);
 }
-.result-screen--timeout {
-  --accent: var(--color-timeout);
-  --accent-soft: var(--color-timeout-soft);
-}
 .result-screen--disconnected {
   --accent: var(--color-disconnected);
   --accent-soft: var(--color-disconnected-soft);
@@ -786,9 +780,6 @@ html[data-debug] .result-screen {
 .result-screen--fell .illustration-person {
   transform: translateX(-50%) rotate(66deg);
   bottom: -8px;
-}
-.result-screen--timeout .illustration-person {
-  transform: translateX(-50%) rotate(-16deg);
 }
 .result-screen--disconnected .illustration-person {
   opacity: 0.48;

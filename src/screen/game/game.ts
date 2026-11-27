@@ -18,10 +18,11 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   const view = await createView(container);
   let sim = new Sim();
   let reported = false;
+  let stopped = false;
   let destroyed = false;
 
   view.onFrame((dtSec) => {
-    sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
+    if (!stopped) sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
     const state = sim.state();
     view.render(state);
     if (import.meta.env.DEV) {
@@ -42,9 +43,16 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
       sim.free();
       sim = new Sim();
       reported = false;
+      stopped = false;
     },
     start() {
       sim.start();
+    },
+    stop() {
+      // 描画は続けるので、止めた場所の絵が残る。終わりの知らせも出さない
+      stopped = true;
+      reported = true;
+      return sim.state().distanceM;
     },
     destroy() {
       if (destroyed) return;
