@@ -158,7 +158,7 @@
 
 - 同じ IP からの連打は、Workers の Rate Limiting（`cloudflare.config.ts` の `ROOM_RATE_LIMIT`）で、1分に10回までにする。超えたら Durable Object を呼ばずに断る
 - 1日の総量は、門番の Durable Object（`RoomGate`。Worker 全体で1つ）が数え、1日に200ルームまでにする。日付は UTC で区切る（日本時間の朝9時。Cloudflare の上限が戻る時刻と同じ）
-- 門番が「今日はもう作れない」と答えたら、その isolate は朝9時まで門番を呼ばずに断る。断るたびに Durable Object のリクエストを使わない
+- 門番が「今日はもう作れない」と答えたら、その isolate はその応答を覚え、朝9時まで門番を呼ばずに断る。断るたびに Durable Object のリクエストを使わない（覚える前に同時に来たリクエストは、それぞれ門番を呼ぶ）
 - 断るときは 429 と理由（`too-many-requests`・`daily-limit`）を返し、スクリーンが理由に合った文を出す。仕様は [API](api.md) の「POST /api/rooms」、上限の数の根拠は [Cloudflare の注意点](cloudflare.md) の「ルームを作る回数の上限」にある
 - 1分に10回は、会場の Wi-Fi で全員が同じ IP になっても、スクリーンを開き直すくらいでは当たらない数。ルームを作るのはスクリーンだけで、スマホは作らない
 - Rate Limiting は Cloudflare のロケーションごとに数え、すぐには揃わない（[Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)）。プレビューで試すと、1つの接続で続けて呼んだときは11回目から断ったが、呼ぶたびに接続を張り直すと、2分で約40回通った。厳密でなくてよい連打よけに使い、総量は門番で厳密に数える

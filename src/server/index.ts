@@ -90,13 +90,15 @@ async function rejectRoomCreation(c: Context<{ Bindings: Env }>): Promise<Respon
     });
   }
   let resetsAt = roomGateClosedUntil;
-  if (Date.now() >= resetsAt) {
+  // 断られた応答が届くまでに日付が変わっていたら、新しい日の分を聞き直す（1回で足りる）
+  for (let attempt = 0; Date.now() >= resetsAt && attempt < 2; attempt++) {
     const result = await c.executionCtx.exports.RoomGate.getByName(ROOM_GATE_NAME).admit();
     if (result.admitted) return undefined;
-    resetsAt = roomGateClosedUntil = result.resetsAt;
+    resetsAt = result.resetsAt;
   }
+  if (resetsAt > Date.now()) roomGateClosedUntil = resetsAt;
   console.log({ event: "rejected", reason: "daily-limit" });
-  const retryAfter = Math.ceil((resetsAt - Date.now()) / 1000);
+  const retryAfter = Math.max(1, Math.ceil((resetsAt - Date.now()) / 1000));
   return c.json<CreateRoomRejected>({ reason: "daily-limit" }, 429, {
     "Retry-After": String(retryAfter),
   });
