@@ -45,6 +45,12 @@ const ROOM_GATE_NAME = "room-gate";
  */
 let roomGateClosedUntil = 0;
 
+/**
+ * ルームの Durable Object を置く地域。指定しないと、ルームを作ったリクエストを受けた拠点の近くにでき、
+ * スクリーンの回線が日本の外の拠点（LAX など）につながると、日本のスマホとの往復が遠くなる（設計の「ルームの場所」）
+ */
+const ROOM_LOCATION_HINT = "apac";
+
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/api/ping", async (c) => {
@@ -57,7 +63,7 @@ app.post("/api/rooms", async (c) => {
   if (rejected) return rejected;
   for (let i = 0; i < CREATE_ROOM_ATTEMPTS; i++) {
     const roomCode = generateRoomCode();
-    if (await c.executionCtx.exports.Room.getByName(roomCode).create(roomCode)) {
+    if (await getRoom(c, roomCode).create(roomCode)) {
       return c.json<CreateRoomResponse>({ roomCode });
     }
   }
@@ -80,7 +86,7 @@ app.get("/api/rooms/:roomCode/ws", (c) => {
   }
   const url = new URL(c.req.url);
   url.searchParams.set("role", role);
-  return c.executionCtx.exports.Room.getByName(roomCode).fetch(new Request(url, c.req.raw));
+  return getRoom(c, roomCode).fetch(new Request(url, c.req.raw));
 });
 
 app.get("/api/rankings", async (c) => {
@@ -113,6 +119,11 @@ app.post("/api/rankings", async (c) => {
   });
   return c.json<SubmitRankingResponse>(result, 201);
 });
+
+/** ルームの Durable Object。場所の指定は、初めて作るときだけ効く */
+function getRoom(c: Context<{ Bindings: Env }>, roomCode: string) {
+  return c.executionCtx.exports.Room.getByName(roomCode, { locationHint: ROOM_LOCATION_HINT });
+}
 
 /** 文字の出やすさが偏らないように、文字の数で割り切れない範囲の乱数は捨てて引き直す */
 function generateRoomCode(): string {
