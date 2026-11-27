@@ -16,7 +16,7 @@ export interface GameOptions {
   container: HTMLElement;
   /** 毎フレーム読む入力。呼び出し側が持ち、書き換える。ゲームは書き換えない */
   inputs: JointInputs;
-  /** ゴール・転倒・タイムアウトのどれかで、1回の走りにつき1回だけ呼ぶ */
+  /** ゴール・転倒のどちらかで、1回の走りにつき1回だけ呼ぶ */
   onEnd: (result: GameResult) => void;
 }
 
@@ -25,6 +25,8 @@ export interface Game {
   reset(): void;
   /** 物理演算とタイムを進め始める。reset() のあとに呼ぶ */
   start(): void;
+  /** 物理演算とタイムをいまの場所で止め、最後の絵を残す。onEnd は呼ばない。いまの距離（m）を返す */
+  stop(): number;
   /** Canvas と物理演算の世界を片付ける */
   destroy(): void;
 }

@@ -1,4 +1,4 @@
-// 物理演算とゲームのルール（距離・ゴール・転倒・座り込み・タイムアウト）。DOM にも PixiJS にも依存しない
+// 物理演算とゲームのルール（距離・ゴール・転倒・座り込み）。DOM にも PixiJS にも依存しない
 // 入力は関節ごとの 0〜1。1 ステップずつ進め、いまの姿勢は state() で読む
 import RAPIER from "@dimforge/rapier2d-compat";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
@@ -19,8 +19,6 @@ import {
 import type { GameResult, JointInputs } from "./types.ts";
 
 export const GOAL_M = 10;
-/** 開始からこの時間でタイムアウト（docs/game.md）。仮の値で、遊んで直す */
-export const TIMEOUT_MS = 120_000;
 /**
  * 胴の中心がこの高さ（m）より低い状態が SIT_MS 続いたら、座り込んだとみなし、転倒と同じに終える（docs/game.md）。
  * 立っていると約1.3m、歩いていても1.2m より下がらない。ひざを深く曲げて座り込むと0.9m 以下になり、そこからは立ち上がれない
@@ -77,12 +75,10 @@ export class Sim {
   private status: RunStatus = "ready";
   private result: GameResult | undefined;
 
-  private readonly timeoutMs: number;
   /** 胴が SIT_HEIGHT_M より低くなった時刻。低くなければ undefined */
   private sittingSinceMs: number | undefined;
 
-  constructor(timeoutMs: number = TIMEOUT_MS) {
-    this.timeoutMs = timeoutMs;
+  constructor() {
     const world = new RAPIER.World({ x: 0, y: -GRAVITY });
     world.timestep = STEP_S;
     this.world = world;
@@ -169,8 +165,6 @@ export class Sim {
       this.end({ outcome: "goal", distanceM, timeMs: Math.round(elapsedMs) });
     } else if (touchesGround(poses.torso) || sat) {
       this.end({ outcome: "fell", distanceM });
-    } else if (elapsedMs >= this.timeoutMs) {
-      this.end({ outcome: "timeout", distanceM });
     }
   }
 

@@ -80,16 +80,6 @@ describe("Sim", () => {
     }
   });
 
-  test("タイムアウトは、決めた時間で来る", () => {
-    const timeoutMs = 5_000;
-    const sim = new Sim(timeoutMs);
-    const s = run(sim, () => NEUTRAL, timeoutMs / 1000 + 5);
-    expect(s.result?.outcome).toBe("timeout");
-    expect(s.elapsedMs).toBeGreaterThanOrEqual(timeoutMs);
-    expect(s.elapsedMs).toBeLessThan(timeoutMs + 100);
-    sim.free();
-  });
-
   test("立ったまま止まっていても、終わらない", () => {
     const sim = new Sim();
     const s = run(sim, () => NEUTRAL, 20);
