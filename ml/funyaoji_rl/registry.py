@@ -9,7 +9,8 @@
   物理も AI も乱数を使わないので、同じ重みなら何回走らせても同じ結果になる。ただし、重みが 100 万分の1 違うだけで
   途中でつまずくかどうかが変わり、タイムが数秒変わる。1回のタイムはたまたまの値なので、中央値で比べる。
 登録の条件：そのままの重みで 10m に着き、不自然な動き（lab/run.ts の sanity()）が無い。ずらした走りも 9割以上がそうなる。
-champion（/prototype で使う重み）にする条件：中央値が今の champion より速い。体の設定が変わっていたら、速さにかかわらず入れ替える。
+champion（/prototype で使う重み）にする条件：中央値（小数3桁）が今の champion より速い。体の設定が変わっていたら、速さにかかわらず入れ替える。
+run の体の設定の指紋（タグ body）が今の指紋と違えば、評価せずに止める（別の体で学習した重みを、今の体で測って登録しない）。
 """
 
 from __future__ import annotations
@@ -61,20 +62,27 @@ def champion(client: MlflowClient):
         return None
 
 
-def submit(run_id: str, policy: Path | None = None) -> dict[str, Any]:
-    """run の重みを評価し、結果を run に書く。通れば登録し、今の champion より良ければ入れ替える"""
+def submit(run_id: str) -> dict[str, Any]:
+    """run に上げた重みを評価し、結果を run に書く。通れば登録し、今の champion より良ければ入れ替える"""
     tracking.setup()
     client = MlflowClient()
+    body = tracking.body_fingerprint()
+    trained = client.get_run(run_id).data.tags.get("body")
+    if trained != body:
+        raise SystemExit(
+            f"run は別の体の設定（{trained}）で学習したもの。今の体（{body}）では評価も登録もしない"
+        )
+    # 登録するのは run の成果物なので、評価もそれを落として行う（手元の runs/ は別の学習で上書きされうる）
     with tempfile.TemporaryDirectory() as tmp:
-        if policy is None:
-            policy = Path(
-                mlflow.artifacts.download_artifacts(
-                    run_id=run_id, artifact_path="policy.json", dst_path=tmp
-                )
+        policy = Path(
+            mlflow.artifacts.download_artifacts(
+                run_id=run_id, artifact_path="policy.json", dst_path=tmp
             )
+        )
         result = evaluate(policy)
     ok = passed(result)
-    body = tracking.body_fingerprint()
+    # champion と同じ丸め（小数3桁）で比べる
+    time = round(result["median"], 3)
     with mlflow.start_run(run_id=run_id):
         mlflow.log_metrics(
             {
@@ -105,12 +113,12 @@ def submit(run_id: str, policy: Path | None = None) -> dict[str, Any]:
         MODEL_NAME,
         source=f"runs:/{run_id}/policy.json",
         run_id=run_id,
-        tags={"body": body, "time": f"{result['median']:.3f}", "exact_time": f"{result['time']:.3f}"},
+        tags={"body": body, "time": f"{time:.3f}", "exact_time": f"{result['time']:.3f}"},
     )
     summary["version"] = version.version
     now = champion(client)
     better = (
-        now is None or now.tags.get("body") != body or result["median"] < float(now.tags["time"])
+        now is None or now.tags.get("body") != body or time < float(now.tags["time"])
     )
     if better:
         client.set_registered_model_alias(MODEL_NAME, CHAMPION, version.version)

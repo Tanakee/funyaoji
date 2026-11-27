@@ -20,7 +20,7 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 from . import tracking
 from .tracking import mlflow
-from .vec_env import BODY_B, FunyaojiVecEnv
+from .vec_env import BODY_B, FunyaojiVecEnv, load_body
 
 
 class Stats(BaseCallback):
@@ -143,14 +143,16 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         device="cpu",
     )
     stats = Stats()
+    # 学習に使う体。--config の params があればそれ（vec_env.py と同じ決め方）
+    params = config.get("params", load_body())
     with mlflow.start_run(run_name=name) as run:
-        mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint()})
+        mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint(params)})
         mlflow.log_params(
             {
                 "algo": "PPO",
                 "net_arch": "64x64",
                 **{k: v for k, v in vars(args).items() if k not in ("out", "name", "config")},
-                # 環境の設定は、既定の値から変えたものだけが入る
+                # 環境の設定は、既定の値から変えたものだけが入る。体（params）は JSON の文字列
                 **tracking.flatten("env", config),
             }
         )
@@ -165,7 +167,9 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
             venv.close()
             mlflow.log_artifact(str(out / "policy.json"))
             mlflow.log_artifact(str(out / "history.json"))
-            mlflow.log_artifact(str(BODY_B))
+            # 体の設定は、学習に実際に使った値で残す
+            body = json.loads(BODY_B.read_text(encoding="utf-8"))
+            mlflow.log_dict({**body, "params": params}, BODY_B.name)
     return run.info.run_id, out / "policy.json"
 
 
