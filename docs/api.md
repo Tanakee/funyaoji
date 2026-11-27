@@ -26,7 +26,7 @@ sequenceDiagram
   end
   C->>S: status
   S-->>P: status
-  Note over C: ゴール・転倒・タイムアウト
+  Note over C: ゴール・転倒・切断
   C->>S: phase（result）
   S-->>P: phase（result）
   opt ゴールしたとき
@@ -225,7 +225,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 |---|---|---|
 | `phase` | `string` | `lobby`：ロビー。`playing`：プレイ中。`result`：結果 |
 | `mode` | `string` | `playing` のときだけ。現在は `10m` のみ |
-| `result.outcome` | `string` | `result` のときだけ。`goal`：ゴール。`fell`：転倒。`timeout`：タイムアウト。`disconnected`：切断 |
+| `result.outcome` | `string` | `result` のときだけ。`goal`：ゴール。`fell`：転倒。`disconnected`：切断（切れたスマホが60秒の予約のうちにつなぎ直さなかった） |
 | `result.distanceM` | `number` | 進んだ距離（m）。後ろに進むと負の値 |
 | `result.timeMs` | `number` | ゴールまでの時間（ミリ秒）。`goal` のときだけ |
 

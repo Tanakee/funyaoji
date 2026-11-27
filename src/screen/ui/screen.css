@@ -28,10 +28,6 @@ body:has(.result-screen) {
   --accent: #bd7558;
   --accent-soft: #f6ded2;
 }
-.result-screen--timeout {
-  --accent: #667da8;
-  --accent-soft: #e3e8f5;
-}
 .result-screen--disconnected {
   --accent: #7c8590;
   --accent-soft: #e6e9ec;
@@ -206,9 +202,6 @@ body:has(.result-screen) {
 .result-screen--fell .illustration-person {
   transform: translateX(-50%) rotate(66deg);
   bottom: -8px;
-}
-.result-screen--timeout .illustration-person {
-  transform: translateX(-50%) rotate(-16deg);
 }
 .result-screen--disconnected .illustration-person {
   opacity: 0.48;

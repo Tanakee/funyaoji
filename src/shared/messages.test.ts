@@ -75,11 +75,6 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
-    name: "phase: result (timeout)",
-    message: { type: "phase", phase: "result", result: { outcome: "timeout", distanceM: 6 } },
-    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
-  },
-  {
     name: "phase: result (disconnected)",
     message: { type: "phase", phase: "result", result: { outcome: "disconnected", distanceM: 3 } },
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
