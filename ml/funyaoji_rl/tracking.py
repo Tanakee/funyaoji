@@ -10,22 +10,27 @@ import hashlib
 import json
 import os
 import subprocess
-from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 
 import mlflow  # noqa: E402
 
-from .vec_env import BODY_B, ROOT  # noqa: E402
+from .vec_env import ROOT, load_body  # noqa: E402
 
 ML_DIR = ROOT / "ml"
 EXPERIMENT = "funyaoji-walk"
 MODEL_NAME = "funyaoji-walker"
 CHAMPION = "champion"
 PROTOTYPE = ROOT / "src/screen/game/prototype"
-# 体の動きを決めるファイル。どれかが変わると、前に学習した重みは使えない
-PHYSICS_FILES = [PROTOTYPE / "sim.ts", PROTOTYPE / "policy.ts"]
+# 体の動きと評価の結果を決めるファイル。どれかが変わると、前に学習した重みとはタイムを比べられない
+# （lab/run.ts は打ち切りと sanity()、lab/rl/play.ts は評価のずらし方を持つ）
+PHYSICS_FILES = [
+    PROTOTYPE / "sim.ts",
+    PROTOTYPE / "policy.ts",
+    PROTOTYPE / "lab/run.ts",
+    PROTOTYPE / "lab/rl/play.ts",
+]
 
 
 def setup() -> None:
@@ -48,10 +53,14 @@ def git_info() -> dict[str, str]:
     return {"git_commit": git("rev-parse", "HEAD"), "git_dirty": str(bool(git("status", "--porcelain")))}
 
 
-def body_fingerprint(body_path: Path = BODY_B) -> str:
-    """体の設定と物理のコードから作る指紋。同じ指紋の重みどうしだけ、タイムを比べられる"""
+def body_fingerprint(params: dict[str, Any] | None = None) -> str:
+    """体の設定と物理のコードから作る指紋。同じ指紋の重みどうしだけ、タイムを比べられる
+
+    params は学習に使った体の設定（EnvConfig の params）。省くと今の body-b.json の値
+    """
     h = hashlib.sha256()
-    params = json.loads(body_path.read_text(encoding="utf-8"))["params"]
+    if params is None:
+        params = load_body()
     h.update(json.dumps(params, sort_keys=True).encode())
     for f in PHYSICS_FILES:
         # 改行コードの違い（Windows と Linux）で指紋が変わらないようにする
@@ -60,4 +69,8 @@ def body_fingerprint(body_path: Path = BODY_B) -> str:
 
 
 def flatten(prefix: str, d: dict[str, Any]) -> dict[str, Any]:
-    return {f"{prefix}.{k}": v for k, v in d.items() if not isinstance(v, dict)}
+    """MLflow のパラメータにする。入れ子の値（体の設定 params など）は JSON の文字列にする"""
+    return {
+        f"{prefix}.{k}": json.dumps(v, sort_keys=True) if isinstance(v, (dict, list)) else v
+        for k, v in d.items()
+    }

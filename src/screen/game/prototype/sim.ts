@@ -134,6 +134,11 @@ export class Sim {
     await RAPIER.init();
   }
 
+  /** Rapier の World（WebAssembly のメモリ）を返す。このあとこの Sim は使えない */
+  free(): void {
+    this.world.free();
+  }
+
   constructor(params: Params) {
     this.params = params;
     const B = params.body;

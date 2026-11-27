@@ -2,8 +2,9 @@
 
 使い方（ml/ で）：uv run python -m funyaoji_rl.pipeline --steps 20000000 --name free
   1. PPO で学習する（train.py）。経過と重みが MLflow に残る
-  2. 重みを乱数なしで1回走らせて評価する（registry.py）
-  3. 10m に着き、不自然な動きが無ければ、レジストリに登録する。今の champion より速ければ入れ替える
+  2. run に上げた重みを評価する（registry.py）。そのままの重みで1回と、重みを少しずらして16回走らせ、中央値を出す
+  3. そのままの重みで 10m に着いて不自然な動きが無く、ずらした16回も9割以上（15回以上）がそうなら、
+     レジストリに登録する。中央値が今の champion より速ければ入れ替える
   4. champion が入れ替わったら、/prototype が読む場所（policy-b.json）に書き出す
 """
 
@@ -26,8 +27,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    run_id, policy = train(args)
-    summary = registry.submit(run_id, policy)
+    run_id, _ = train(args)
+    summary = registry.submit(run_id)
     print(json.dumps(summary, ensure_ascii=False))
     if not summary["passed"]:
         print("評価を通らなかったので、登録しない")

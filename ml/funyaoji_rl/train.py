@@ -20,7 +20,7 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 from . import tracking
 from .tracking import mlflow
-from .vec_env import BODY_B, FunyaojiVecEnv
+from .vec_env import BODY_B, FunyaojiVecEnv, load_body
 
 
 class Stats(BaseCallback):
@@ -78,9 +78,13 @@ def _r(x) -> list:
 
 
 def export_policy(
-    model: PPO, norm: VecNormalize, path: Path, base: dict | None = None
+    model: PPO,
+    norm: VecNormalize,
+    path: Path,
+    action_hz: float = 30,
+    base: dict | None = None,
 ) -> None:
-    """ブラウザで順伝播を計算できるように、重みと観測の正規化を JSON に書く"""
+    """ブラウザで順伝播を計算できるように、重みと観測の正規化と、行動を変える頻度（と土台の歩き方）を JSON に書く"""
     sd = model.policy.state_dict()
     layers = []
     i = 0
@@ -97,6 +101,7 @@ def export_policy(
         "obsMean": _r(norm.obs_rms.mean),
         "obsStd": _r(np.sqrt(norm.obs_rms.var + norm.epsilon)),
         "clipObs": float(norm.clip_obs),
+        "actionHz": action_hz,
         "activation": "tanh",
         "layers": layers,
     }
@@ -161,15 +166,17 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         device="cpu",
     )
     stats = Stats()
+    # 学習に使う体。--config の params があればそれ（vec_env.py と同じ決め方）
+    params = config.get("params", load_body())
     with mlflow.start_run(run_name=name) as run:
-        mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint()})
+        mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint(params)})
         mlflow.log_params(
             {
                 "algo": "PPO",
                 "net_arch": "64x64",
                 **{k: v for k, v in vars(args).items() if k not in ("out", "name", "config", "base_gait")},
                 "base_gait": json.dumps(config["base"]["gait"]) if "base" in config else "none",
-                # 環境の設定は、既定の値から変えたものだけが入る
+                # 環境の設定は、既定の値から変えたものだけが入る。体（params）は JSON の文字列
                 **tracking.flatten("env", config),
             }
         )
@@ -178,12 +185,17 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
         finally:
             model.save(out / "model")
             env.save(str(out / "vecnormalize.pkl"))
-            export_policy(model, env, out / "policy.json", config.get("base"))
+            # 再生（policy.ts の PolicyDriver）も、学習と同じ頻度で行動を変える
+            export_policy(
+                model, env, out / "policy.json", config.get("actionHz", 30), config.get("base")
+            )
             (out / "history.json").write_text(json.dumps(stats.history), encoding="utf-8")
             venv.close()
             mlflow.log_artifact(str(out / "policy.json"))
             mlflow.log_artifact(str(out / "history.json"))
-            mlflow.log_artifact(str(BODY_B))
+            # 体の設定は、学習に実際に使った値で残す
+            body = json.loads(BODY_B.read_text(encoding="utf-8"))
+            mlflow.log_dict({**body, "params": params}, BODY_B.name)
     return run.info.run_id, out / "policy.json"
 
 

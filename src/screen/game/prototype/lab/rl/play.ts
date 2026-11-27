@@ -8,6 +8,7 @@
 //   --json で、結果を JSON の1行で出す（ml/ の評価が読む）
 //   記録は lab/render.ts で動画にできる
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { neutralInput } from "../../sim.ts";
 import { PolicyDriver, type Policy } from "../../policy.ts";
 import { toParams, type Candidate } from "../candidate.ts";
@@ -22,7 +23,7 @@ let asJson = false;
 let trials = 0;
 /** ずらす大きさ。最後の層のバイアスに足す乱数の標準偏差（行動は -1〜1） */
 const JITTER = 0.001;
-let bodyPath = new URL("./body-b.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+let bodyPath = fileURLToPath(new URL("./body-b.json", import.meta.url));
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--out") out = args[++i];
   else if (args[i] === "--label") label = args[++i]!;
@@ -35,7 +36,7 @@ if (!policyPath) {
   process.exit(1);
 }
 const policy = JSON.parse(readFileSync(policyPath, "utf8")) as Policy;
-const body = JSON.parse(readFileSync(decodeURIComponent(bodyPath), "utf8")) as Candidate;
+const body = JSON.parse(readFileSync(bodyPath, "utf8")) as Candidate;
 const params = toParams(body.params);
 
 function controllerOf(p: Policy): Controller {

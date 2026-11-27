@@ -31,7 +31,7 @@ uv run python -m funyaoji_rl.pipeline --steps 20000000 --name free
 
 1. PPO で学習する。経過と重みが MLflow に残る。`runs/<名前>/` にも同じものができる
 2. 重みを評価する。そのままの重みで1回と、重みをほんの少しずらして 16 回走らせ、タイムの中央値を出す
-3. 10m に着き、不自然な動き（`lab/run.ts` の `sanity()`）が無ければ、MLflow のモデルのレジストリに登録する
+3. そのままの重みで 10m に着いて不自然な動き（`lab/run.ts` の `sanity()`）が無く、ずらした 16 回のうち 15 回以上（`cleanRate >= 0.9`）もそうなら、MLflow のモデルのレジストリに登録する
 4. 中央値が今の champion（`/prototype` で使う重み）より速ければ、champion を入れ替え、`src/screen/game/prototype/policy-b.json` に書き出す
 
 書き出した `policy-b.json` は、コミットして PR に入れる。
@@ -64,13 +64,14 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 | 残るもの | 内容 |
 |---|---|
-| パラメータ | 学習の設定（ステップ数・学習率など）と、環境の設定のうち既定から変えたもの（`env.` で始まる） |
+| パラメータ | 学習の設定（ステップ数・学習率など）と、環境の設定のうち既定から変えたもの（`env.` で始まる。体の設定 `env.params` は JSON の文字列） |
 | タグ | コミット（`git_commit`、コミットしていない変更があったか `git_dirty`）、体の設定の指紋（`body`）、評価の結果（`eval_ended`・`eval_passed`） |
 | メトリクス | 学習の経過（`goal_rate`・`distance`・`goal_time`・`best_time` など）と、評価（中央値 `eval_time`、最速 `eval_best`、最遅 `eval_worst`、きれいにゴールした割合 `eval_clean_rate`、そのままの重みの1回 `eval_exact_time` など） |
-| 成果物 | 重み（`policy.json`）、経過（`history.json`）、体の設定（`body-b.json`） |
+| 成果物 | 重み（`policy.json`）、経過（`history.json`）、学習に使った体の設定（`body-b.json`） |
 | レジストリ | モデル `funyaoji-walker`。評価を通った重みが version として並ぶ。`champion` の別名が付いたものを `/prototype` で使う |
 
-- 体の設定の指紋は、`body-b.json` の値と、物理のコード（`sim.ts`・`policy.ts`）から作る。指紋が違う重みどうしは、タイムを比べない。体を変えたあとの最初の登録は、速さにかかわらず champion になる
+- 体の設定の指紋は、学習に使った体の値（`--config` の `params`、無ければ `body-b.json`）と、物理と評価のコード（`sim.ts`・`policy.ts`・`lab/run.ts`・`lab/rl/play.ts`）から作る。指紋が違う重みどうしは、タイムを比べない。体を変えたあとの最初の登録は、速さにかかわらず champion になる
+- `registry submit` は、run の指紋が今の指紋（今の `body-b.json` とコード）と違えば止める。評価は run に上げた `policy.json` で行う
 - 別のマシンの MLflow に記録するときは、環境変数 `MLFLOW_TRACKING_URI` にその URL を入れる
 
 ## 再生
@@ -98,6 +99,8 @@ node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/gam
 
 `/prototype` の「設定」で「お手本を、探索で出した最速の歩き方にする」を入れると、この歩き方をお手本として再生できる。
 
+`body-b-fastest.json` は体 B の値の写しを持つ。体（`body-b.json` と `main.ts` の `BODIES`）を変えたら、上のコマンドで作り直す。
+
 ## 仕組み
 
 | ファイル | 役割 |
@@ -113,7 +116,7 @@ node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/gam
 | `ml/funyaoji_rl/pipeline.py` | 学習・評価・登録・書き出しを続けて行う |
 | `ml/funyaoji_rl/tracking.py` | MLflow の置き場所、コミット、体の設定の指紋 |
 
-- AI の出力は4つ（-1〜1）で、毎秒30回（スマホの `tilt` と同じ）変える。土台なしなら、そのまま関節の入力（0〜1）に直す。土台ありなら、土台の歩き方の入力に、出力 × 0.3 を足す
+- AI の出力は4つ（-1〜1）で、毎秒30回（スマホの `tilt` と同じ）変える。`--config` の `actionHz` で変えたときは、その値を重みの JSON（`actionHz`）に書き、再生も同じ頻度にする。土台なしなら、そのまま関節の入力（0〜1）に直す。土台ありなら、土台の歩き方の入力に、出力 × 0.3 を足す
 - 観測は20個の数（胴の高さ・傾き・速度、関節の角度と回る速さ、足の接地、前の入力）。前後の位置は入れない。土台ありなら、歩き方の位相（sin, cos）の2つが増える
 - 土台の歩き方と補正の大きさは、重みの JSON（`base`）に入る。再生する側は、JSON を読むだけでよい
 - ニューラルネットは 64 個のユニットが2層。ブラウザでは `policy.ts` が計算するので、推論のサーバーは要らない
