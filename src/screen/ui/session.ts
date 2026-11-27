@@ -15,7 +15,7 @@ import {
   type PhaseMessage,
   type RejectedMessage,
 } from "../../shared/messages.ts";
-import { createGame, attachKeyboard } from "../game/index.ts";
+import { attachKeyboard, createGame, NEUTRAL_INPUTS } from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
 import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
 
@@ -61,12 +61,7 @@ export interface DebugInfo {
 export class ScreenSession {
   readonly debug: DebugInfo = { tilts: {}, latency: {} };
   /** 毎フレーム、ゲームが読む入力。tilt とキーボードが書く */
-  private readonly inputs: JointInputs = {
-    rightHip: 0,
-    leftHip: 0,
-    rightKnee: 0,
-    leftKnee: 0,
-  };
+  private readonly inputs: JointInputs = { ...NEUTRAL_INPUTS };
   private view: ScreenView = {
     room: { status: "creating" },
     flow: INITIAL_FLOW,
@@ -184,7 +179,7 @@ export class ScreenSession {
     // 抜けたスマホの入力と角度を残さない。次に同じ関節に入ったスマホに、前の値を見せない
     for (const joint of JOINTS) {
       if (joints.includes(joint)) continue;
-      this.inputs[joint] = 0;
+      this.inputs[joint] = NEUTRAL_INPUTS[joint];
       this.lastTiltAt.delete(joint);
       delete this.debug.tilts[joint];
     }
