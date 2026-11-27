@@ -7,6 +7,8 @@ export interface Policy {
   obsMean: number[];
   obsStd: number[];
   clipObs: number;
+  /** 行動を変える頻度（1秒あたり）。学習の設定（EnvConfig の actionHz）。無ければ ACTION_HZ */
+  actionHz?: number;
   /** 全結合の層。最後の層のほかは、出力に tanh をかける */
   layers: { w: number[][]; b: number[] }[];
 }
@@ -90,7 +92,7 @@ export function act(policy: Policy, obs: number[]): number[] {
   return x.map((a) => (Math.min(1, Math.max(-1, a)) + 1) / 2);
 }
 
-/** 物理の1ステップ（1/240 秒）ごとに input() を呼ぶと、ACTION_HZ ごとに行動を計算し直して返す */
+/** 物理の1ステップ（1/240 秒）ごとに input() を呼ぶと、重みの actionHz（無ければ ACTION_HZ）ごとに行動を計算し直して返す */
 export class PolicyDriver {
   private prev: number[];
   private readonly sub: number;
@@ -98,7 +100,7 @@ export class PolicyDriver {
 
   constructor(policy: Policy, sim: Sim) {
     this.policy = policy;
-    this.sub = Math.round(1 / sim.world.timestep / ACTION_HZ);
+    this.sub = Math.round(1 / sim.world.timestep / (policy.actionHz ?? ACTION_HZ));
     const n = neutralInput(sim.params.mode);
     this.prev = JOINTS.map((j) => n[j]);
   }
