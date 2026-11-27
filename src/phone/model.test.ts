@@ -74,6 +74,13 @@ describe("reduce", () => {
     expect(denied.kind).toBe("permission-denied");
     expect(reduce(denied, { type: "tap-join" }).kind).toBe("asking-permission");
   });
+  it("続けて断られた回数を数え、許可されたら数え直す", () => {
+    const deny: PhoneEvent[] = [{ type: "tap-join" }, { type: "permission", granted: false }];
+    expect(run(deny)).toEqual({ kind: "permission-denied", denials: 1 });
+    expect(run([...deny, ...deny])).toEqual({ kind: "permission-denied", denials: 2 });
+    const granted = run([...deny, { type: "tap-join" }, { type: "permission", granted: true }]);
+    expect(granted.kind).toBe("connecting");
+  });
 
   it("joined で担当の関節が決まり、room・phase・status が反映される", () => {
     const state = run([

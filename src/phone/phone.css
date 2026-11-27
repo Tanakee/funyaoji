@@ -93,6 +93,14 @@ body {
   margin: 0;
   font-size: 18px;
 }
+.steps {
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.6;
+  text-align: left;
+}
 
 button {
   font: inherit;

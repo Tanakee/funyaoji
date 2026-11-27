@@ -17,10 +17,13 @@ export type PhoneState =
   | { kind: "invalid-room" }
   /** 参加ボタンを出している */
   | { kind: "ready" }
-  /** 傾きの読み取りの許可を求めている（iOS） */
-  | { kind: "asking-permission" }
-  /** 許可されなかった。もう一度押せる */
-  | { kind: "permission-denied" }
+  /** 傾きの読み取りの許可を求めている（iOS）。denials は、これまでに続けて断られた回数 */
+  | { kind: "asking-permission"; denials: number }
+  /**
+   * 許可されなかった。もう一度押せる。denials は続けて断られた回数。
+   * iOS は一度断ると Safari を開いているあいだ覚えていて、2回目からは許可の画面を出さずにすぐ断る
+   */
+  | { kind: "permission-denied"; denials: number }
   /** つないでいる。joined か rejected を待つ */
   | { kind: "connecting" }
   | {
@@ -63,12 +66,16 @@ export function initialState(room: string | undefined): PhoneState {
 export function reduce(state: PhoneState, event: PhoneEvent): PhoneState {
   switch (event.type) {
     case "tap-join":
-      return state.kind === "ready" || state.kind === "permission-denied"
-        ? { kind: "asking-permission" }
-        : state;
+      if (state.kind === "ready") return { kind: "asking-permission", denials: 0 };
+      if (state.kind === "permission-denied") {
+        return { kind: "asking-permission", denials: state.denials };
+      }
+      return state;
     case "permission":
       if (state.kind !== "asking-permission") return state;
-      return event.granted ? { kind: "connecting" } : { kind: "permission-denied" };
+      return event.granted
+        ? { kind: "connecting" }
+        : { kind: "permission-denied", denials: state.denials + 1 };
     case "connection":
       return onConnection(state, event.state);
     case "message":
