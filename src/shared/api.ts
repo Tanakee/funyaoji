@@ -12,24 +12,30 @@ export type CreateRoomResponse = v.InferOutput<typeof CreateRoomResponse>;
 
 /** チーム名の文字数（書記素で数える。絵文字や濁点の付いた文字も1文字）の上限 */
 export const TEAM_NAME_MAX_LENGTH = 10;
-/** 受け付けるタイムの上限（ミリ秒）。制限時間が決まるまでのゆるい値（Issue #81） */
-export const RANKING_MAX_TIME_MS = 10 * 60_000;
+/** 受け付けるタイムの上限（ミリ秒）。制限時間は設けないので（Issue #81）、明らかにおかしな値を断るためだけの値 */
+export const RANKING_MAX_TIME_MS = 60 * 60_000;
 /** 上位として返す件数 */
 export const RANKING_TOP_COUNT = 10;
 
-/** 整える前の文字列の長さの上限。極端に長い文字列を、正規化する前に断る */
+/** 整える前の文字列の長さ（UTF-16 のコード単位で数える）の上限。極端に長い文字列を、正規化する前に断る */
 const TEAM_NAME_RAW_MAX_LENGTH = 100;
-/** 制御文字（改行・タブを含む）、行と段落の区切り、文字の向きを変える文字を含まない */
-const TEAM_NAME_PATTERN = /^[^\p{Cc}\p{Zl}\p{Zp}‪-‮⁦-⁩]*$/u;
+/** 孤立したサロゲート（UTF-16 として壊れた文字）を含まない */
+const WELL_FORMED_PATTERN = /^\P{Cs}*$/u;
+/**
+ * 制御文字（改行・タブを含む）、行と段落の区切り、書式の文字（文字の向きを変える文字や幅のない空白）を含まない。
+ * 書式の文字のうち、絵文字をつなぐ ZWJ（U+200D）だけは家族の絵文字などに要るので許す
+ */
+const TEAM_NAME_PATTERN = /^(?:[^\p{Cc}\p{Zl}\p{Zp}\p{Cf}]|\u{200D})*$/u;
 
 /** チーム名。NFKC で正規化して前後の空白を除き、1〜10文字にする */
 export const TeamName = v.pipe(
   v.string(),
   v.maxLength(TEAM_NAME_RAW_MAX_LENGTH),
+  v.regex(WELL_FORMED_PATTERN, "チーム名に壊れた文字が含まれています"),
   // 全角の英数字や全角の空白を半角にそろえてから、前後の空白を除く
   v.normalize("NFKC"),
   v.trim(),
-  v.regex(TEAM_NAME_PATTERN, "チーム名に改行や制御文字は使えません"),
+  v.regex(TEAM_NAME_PATTERN, "チーム名に改行や見えない文字は使えません"),
   v.minGraphemes(1, "チーム名を入れてください"),
   v.maxGraphemes(TEAM_NAME_MAX_LENGTH, `チーム名は${TEAM_NAME_MAX_LENGTH}文字までです`),
 );

@@ -1,5 +1,9 @@
 import { describe, expect, inject, test } from "vite-plus/test";
-import type { RankingsResponse, SubmitRankingResponse } from "../shared/api.ts";
+import {
+  RANKING_MAX_TIME_MS,
+  type RankingsResponse,
+  type SubmitRankingResponse,
+} from "../shared/api.ts";
 
 // src/server/test-server.ts が立てた開発サーバーに、HTTP でつないで確かめる
 const serverUrl = inject("serverUrl");
@@ -44,9 +48,10 @@ describe("/api/rankings", () => {
       { mode: "50m", teamName: "a", timeMs: 1000 },
       { mode: "10m", teamName: "  ", timeMs: 1000 },
       { mode: "10m", teamName: "a\nb", timeMs: 1000 },
+      { mode: "10m", teamName: "\u200B", timeMs: 1000 },
       { mode: "10m", teamName: "12345678901", timeMs: 1000 },
       { mode: "10m", teamName: "a", timeMs: 0 },
-      { mode: "10m", teamName: "a", timeMs: 10 * 60_000 + 1 },
+      { mode: "10m", teamName: "a", timeMs: RANKING_MAX_TIME_MS + 1 },
       "10m",
     ]) {
       const response = await submit(body);
