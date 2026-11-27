@@ -32,7 +32,7 @@ export function Hud({ view }: { view: ScreenView }) {
           ) : (
             <span className="hud-joint-state">
               {STATUS_TEXT[status(joint)]}
-              {status(joint) === "absent" && `（あと${view.absent[joint]}秒）`}
+              {status(joint) === "absent" && <small> あと{view.absent[joint]}秒</small>}
             </span>
           )}
         </li>
