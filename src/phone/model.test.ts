@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { initialState, parseRoom, reduce, type PhoneEvent, type PhoneState } from "./model.ts";
-import { toAngle } from "./tilt.ts";
+import { JumpFilter, toAngle } from "./tilt.ts";
 
 const run = (events: PhoneEvent[], from: PhoneState = initialState("K7Q2")) =>
   events.reduce(reduce, from);
@@ -32,6 +32,25 @@ describe("toAngle", () => {
   });
   it("0〜90度に収める", () => {
     expect([toAngle(-20), toAngle(30), toAngle(120)]).toEqual([0, 30, 90]);
+  });
+});
+
+describe("JumpFilter", () => {
+  const feed = (angles: number[]) => {
+    const filter = new JumpFilter();
+    return angles.map((angle) => filter.accept(angle));
+  };
+  it("少しずつ変わる値は、そのまま使う", () => {
+    expect(feed([0, 10, 30, 60, 90])).toEqual([0, 10, 30, 60, 90]);
+  });
+  it("1回だけ飛んだ値は捨てる", () => {
+    expect(feed([10, 85, 12])).toEqual([10, undefined, 12]);
+  });
+  it("飛んだ先に2回続けば、本当に動いたとみなして使う", () => {
+    expect(feed([0, 90, 88, 87])).toEqual([0, undefined, 88, 87]);
+  });
+  it("飛んだあと元の近くに戻れば、保留した値は使わない", () => {
+    expect(feed([0, 90, 5, 8])).toEqual([0, undefined, 5, 8]);
   });
 });
 
