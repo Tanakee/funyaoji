@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { DebugControls } from "./DebugControls.tsx";
 import { DebugPanel } from "./DebugPanel.tsx";
 import { Hud } from "./Hud.tsx";
 import { Lobby } from "./Lobby.tsx";
@@ -15,7 +16,7 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
   const { flow } = view;
   return (
     <>
-      {flow.kind === "lobby" && <Lobby view={view} />}
+      {flow.kind === "lobby" && <Lobby session={session} view={view} />}
       {flow.kind === "countdown" && (
         // key で、数字が変わるたびにアニメーションをやり直す
         <div className="overlay countdown" key={flow.count} aria-live="assertive">
@@ -23,7 +24,10 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
         </div>
       )}
       <Hud view={view} />
-      {flow.kind === "result" && <ResultScreen result={flow.result} />}
+      <DebugControls session={session} view={view} />
+      {flow.kind === "result" && (
+        <ResultScreen session={session} view={view} result={flow.result} />
+      )}
       <DebugPanel session={session} view={view} />
     </>
   );

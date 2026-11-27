@@ -10,7 +10,8 @@ type JointStatus = "active" | "idle" | "keyboard";
  * スマホがいなくてキーボード（keyboard）。active の集合が変わったときだけ描き直す
  */
 export function Hud({ view }: { view: ScreenView }) {
-  if (view.flow.kind === "lobby") return null;
+  // ?debug のときは、ゲームの下のつまみが、関節ごとの担当（スマホ・キー）を見せる
+  if (view.flow.kind === "lobby" || view.debug.enabled) return null;
   const { players } = view.flow;
   const status = (joint: Joint): JointStatus =>
     !players.includes(joint) ? "keyboard" : view.active.includes(joint) ? "active" : "idle";
