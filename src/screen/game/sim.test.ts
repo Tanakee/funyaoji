@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "vite-plus/test";
 import { JOINTS } from "../../shared/messages.ts";
 import { NEUTRAL_INPUTS } from "./body.ts";
-import { Sim, TIMEOUT_MS, initPhysics } from "./sim.ts";
+import { STALL_MS, Sim, initPhysics } from "./sim.ts";
 import type { JointInputs } from "./types.ts";
 
 const NEUTRAL: JointInputs = { ...NEUTRAL_INPUTS };
@@ -94,13 +94,34 @@ describe("Sim", () => {
     }
   });
 
-  test("タイムアウトは TIMEOUT_MS で来る", () => {
-    const sim = new Sim();
-    const s = run(sim, () => NEUTRAL, TIMEOUT_MS / 1000 + 5);
+  test("タイムアウトは、決めた時間で来る", () => {
+    const timeoutMs = 5_000;
+    const sim = new Sim(timeoutMs);
+    const s = run(sim, () => NEUTRAL, timeoutMs / 1000 + 5);
     expect(s.result?.outcome).toBe("timeout");
-    expect(s.elapsedMs).toBeGreaterThanOrEqual(TIMEOUT_MS);
-    expect(s.elapsedMs).toBeLessThan(TIMEOUT_MS + 100);
+    expect(s.elapsedMs).toBeGreaterThanOrEqual(timeoutMs);
+    expect(s.elapsedMs).toBeLessThan(timeoutMs + 100);
     sim.free();
+  });
+
+  test("立ったまま進まないと、STALL_MS で転倒と同じに終わる", () => {
+    const sim = new Sim();
+    const s = run(sim, () => NEUTRAL, STALL_MS / 1000 + 5);
+    expect(s.result?.outcome).toBe("fell");
+    expect(s.elapsedMs).toBeGreaterThanOrEqual(STALL_MS);
+    expect(s.elapsedMs).toBeLessThan(STALL_MS + 100);
+    sim.free();
+  });
+
+  test("作り直して3回走らせても、1回目と同じ結果になる", () => {
+    const results = [1, 2, 3].map(() => {
+      const sim = new Sim();
+      const s = run(sim, gait, 60);
+      sim.free();
+      return s.result;
+    });
+    expect(results[0]?.outcome).toBe("goal");
+    expect(results).toEqual([results[0], results[0], results[0]]);
   });
 
   test("フレームレートが違っても、同じ時間なら同じ結果になる", () => {

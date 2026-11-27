@@ -1,4 +1,4 @@
-// 物理演算とゲームのルール（距離・ゴール・転倒・タイムアウト）。DOM にも PixiJS にも依存しない
+// 物理演算とゲームのルール（距離・ゴール・転倒・座り込み・タイムアウト）。DOM にも PixiJS にも依存しない
 // 入力は関節ごとの 0〜1。1 ステップずつ進め、いまの姿勢は state() で読む
 import RAPIER from "@dimforge/rapier2d-compat";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
@@ -10,6 +10,7 @@ import {
   MOTOR,
   PART_NAMES,
   PART_SHAPES,
+  STEP_S,
   TORSO_ASSIST,
   TORSO_SIZE,
   type PartName,
@@ -20,8 +21,12 @@ import type { GameResult, JointInputs } from "./types.ts";
 export const GOAL_M = 10;
 /** 開始からこの時間でタイムアウト（docs/game.md）。仮の値で、遊んで直す */
 export const TIMEOUT_MS = 120_000;
-/** 物理の 1 ステップ。細かく刻むほど、強いモーターでも振動しにくい */
-export const STEP_S = 1 / 240;
+/**
+ * この時間のうちに STALL_MIN_PROGRESS_M 以上進まないと、座り込んだとみなし、転倒と同じに終える（docs/game.md）。
+ * 体がほとんど倒れないので、胴が地面に触れる転倒だけでは、座り込んだまま120秒待つことになる
+ */
+export const STALL_MS = 10_000;
+export const STALL_MIN_PROGRESS_M = 0.3;
 
 const GRAVITY = 9.81;
 // 体は地面とだけ当たる。左右の脚は互いにすり抜ける
@@ -73,6 +78,8 @@ export class Sim {
   private result: GameResult | undefined;
 
   private readonly timeoutMs: number;
+  /** 最後に STALL_MIN_PROGRESS_M 以上進んだときの距離と時刻。後ろに進んでも更新しない */
+  private progress = { distanceM: 0, atMs: 0 };
 
   constructor(timeoutMs: number = TIMEOUT_MS) {
     this.timeoutMs = timeoutMs;
@@ -155,9 +162,12 @@ export class Sim {
     this.steps++;
 
     const { poses, distanceM, elapsedMs } = this.readPose();
+    if (distanceM >= this.progress.distanceM + STALL_MIN_PROGRESS_M) {
+      this.progress = { distanceM, atMs: elapsedMs };
+    }
     if (distanceM >= GOAL_M) {
       this.end({ outcome: "goal", distanceM, timeMs: Math.round(elapsedMs) });
-    } else if (touchesGround(poses.torso)) {
+    } else if (touchesGround(poses.torso) || elapsedMs - this.progress.atMs >= STALL_MS) {
       this.end({ outcome: "fell", distanceM });
     } else if (elapsedMs >= this.timeoutMs) {
       this.end({ outcome: "timeout", distanceM });

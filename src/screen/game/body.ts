@@ -132,6 +132,9 @@ export const MOTOR = {
 /** 胴を起こす補助の強さ（胴が傾いたら戻すトルク） */
 export const TORSO_ASSIST = 1.006;
 
+/** 物理の 1 ステップ（秒）。細かく刻むほど、強いモーターでも振動しにくい */
+export const STEP_S = 1 / 240;
+
 /** 胴と頭が地面に触れたとみなす高さ（m） */
 export const GROUND_TOUCH_M = 0.02;
 export const TORSO_SIZE = { hw: TORSO.hw, hh: TORSO.hh, headR: HEAD.r };
