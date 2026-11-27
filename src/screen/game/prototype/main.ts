@@ -143,6 +143,8 @@ const canvas = $<HTMLCanvasElement>("view");
 const ctx = canvas.getContext("2d")!;
 
 function reset(): void {
+  // 古い Sim の World（WebAssembly のメモリ）を返す。最初の1回はまだ無い
+  sim?.free();
   sim = new Sim(params);
   input = neutralInput(params.mode);
   ai = aiOn ? new PolicyDriver(POLICY_B as Policy, sim) : undefined;
@@ -294,8 +296,10 @@ function buildUi(): void {
   };
   $<HTMLInputElement>("fastest").onchange = (e) => {
     fastestOn = (e.target as HTMLInputElement).checked;
+    const prev = DEMO;
     DEMO = pickDemo();
-    if (demo) $("demo").click();
+    // お手本が変わったときだけ、最初から再生し直す（体 A では変わらない）
+    if (demo && DEMO !== prev) $("demo").click();
   };
   $<HTMLInputElement>("guide").onchange = (e) => {
     guideOn = (e.target as HTMLInputElement).checked;
@@ -332,6 +336,7 @@ function buildUi(): void {
   $("step").onclick = () => {
     paused = true;
     $("pause").textContent = "再開 (Space)";
+    if (ai) input = ai.input(sim);
     sim.step(input);
   };
 

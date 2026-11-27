@@ -14,7 +14,7 @@ import argparse
 import json
 import sys
 
-from . import registry
+from . import registry, tracking
 from .train import add_train_args, train
 
 
@@ -26,6 +26,15 @@ def main() -> None:
         "--no-export", action="store_true", help="champion が入れ替わっても、書き出さない"
     )
     args = ap.parse_args()
+
+    # 登録（registry.submit）は、今の体（body-b.json）の指紋の run しか通さない。
+    # --config の params で体を変えると、学習が済んでから必ず止まるので、学習の前に止める
+    params = json.loads(args.config).get("params")
+    if params is not None and tracking.body_fingerprint(params) != tracking.body_fingerprint():
+        raise SystemExit(
+            "--config の params が今の体（body-b.json）と違うので、登録できない。"
+            "体を変えるなら body-b.json を書き換えてから流す。学習だけなら funyaoji_rl.train を使う"
+        )
 
     run_id, _ = train(args)
     summary = registry.submit(run_id)

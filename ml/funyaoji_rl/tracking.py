@@ -54,6 +54,25 @@ def git_info() -> dict[str, str]:
     return {"git_commit": git("rev-parse", "HEAD"), "git_dirty": str(bool(git("status", "--porcelain")))}
 
 
+def _normalize_numbers(x: Any) -> Any:
+    """整数の値の小数（780.0）を整数（780）にそろえる。整数で書いた今までの指紋は変わらない"""
+    if isinstance(x, float) and x.is_integer():
+        return int(x)
+    if isinstance(x, dict):
+        return {k: _normalize_numbers(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_normalize_numbers(v) for v in x]
+    return x
+
+
+def canonical_params(params: dict[str, Any]) -> str:
+    """体の設定を、比べる・指紋を作るための文字列にする
+
+    キーの順と数の書き方（780 と 780.0）で変わらない。Node（JavaScript）ではどちらも同じ数なので、同じ体として扱う
+    """
+    return json.dumps(_normalize_numbers(params), sort_keys=True)
+
+
 def body_fingerprint(params: dict[str, Any] | None = None) -> str:
     """体の設定と物理のコードから作る指紋。同じ指紋の重みどうしだけ、タイムを比べられる
 
@@ -62,7 +81,7 @@ def body_fingerprint(params: dict[str, Any] | None = None) -> str:
     h = hashlib.sha256()
     if params is None:
         params = load_body()
-    h.update(json.dumps(params, sort_keys=True).encode())
+    h.update(canonical_params(params).encode())
     for f in PHYSICS_FILES:
         # 改行コードの違い（Windows と Linux）で指紋が変わらないようにする
         h.update(f.read_bytes().replace(b"\r\n", b"\n"))

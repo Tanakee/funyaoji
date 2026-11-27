@@ -1,7 +1,7 @@
 """PPO でおじさんを歩かせる。
 
 使い方（ml/ で）：uv run python -m funyaoji_rl.train --steps 2000000 --name try1
-学習の経過と重みは、MLflow にも残る（tracking.py）。評価と登録まで通すときは pipeline.py を使う
+結果は runs/<名前>/<run の ID>/ にできる。学習の経過と重みは、MLflow にも残る（tracking.py）。評価と登録まで通すときは pipeline.py を使う
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 from . import tracking
 from .tracking import mlflow
-from .vec_env import BODY_B, FunyaojiVecEnv, load_body
+from .vec_env import BODY_B, FunyaojiVecEnv
 
 
 class Stats(BaseCallback):
@@ -132,7 +132,12 @@ def add_train_args(ap: argparse.ArgumentParser) -> None:
         "--residual-scale", type=float, default=0.3, help="補正の大きさの上限（入力の目盛り）"
     )
     ap.add_argument("--name", type=str, default=None, help="MLflow に出す実験の名前")
-    ap.add_argument("--out", type=Path, default=None, help="結果を置く場所。省くと runs/<名前>")
+    ap.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="結果を置く場所。この下に run の ID のフォルダを作る。省くと runs/<名前>",
+    )
     ap.add_argument(
         "--config", type=str, default="{}", help="環境の設定（JSON）。server.ts の EnvConfig"
     )
@@ -143,11 +148,11 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
     tracking.setup()
     torch.set_num_threads(4)
     name = args.name or time.strftime("ppo-%m%d-%H%M%S")
-    out: Path = args.out or Path("runs") / name
-    out.mkdir(parents=True, exist_ok=True)
     config = json.loads(args.config)
-    # 学習に使う体。--config の params があればそれ（vec_env.py と同じ決め方）
-    params = config.get("params", load_body())
+    # 学習に使う体。--config の params があればそれ、無ければ今の body-b.json。
+    # ここで1回だけ読み、Node に渡す値と MLflow に残す値（指紋・body-b.json）を同じにする
+    body = json.loads(BODY_B.read_text(encoding="utf-8"))
+    params = config.get("params", body["params"])
     if args.base_gait:
         cand = json.loads(args.base_gait.read_text(encoding="utf-8"))
         # 土台の歩き方は、探索したときの体でしか意味がない。体を変えたら openloop.ts で作り直す
@@ -156,7 +161,7 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
                 f"{args.base_gait} の params が、学習に使う体と違う。今の体で openloop.ts を流し直す"
             )
         config["base"] = {"gait": cand["gait"], "scale": args.residual_scale}
-    venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, config)
+    venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, {**config, "params": params})
     env = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=args.gamma)
     model = PPO(
         "MlpPolicy",
@@ -174,6 +179,9 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
     )
     stats = Stats()
     with mlflow.start_run(run_name=name) as run:
+        # 同じ名前の学習を並べても上書きし合わないように、run ごとのフォルダに置く
+        out: Path = (args.out or Path("runs") / name) / run.info.run_id
+        out.mkdir(parents=True, exist_ok=True)
         mlflow.set_tags({**tracking.git_info(), "body": tracking.body_fingerprint(params)})
         mlflow.log_params(
             {
@@ -199,7 +207,6 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
             mlflow.log_artifact(str(out / "policy.json"))
             mlflow.log_artifact(str(out / "history.json"))
             # 体の設定は、学習に実際に使った値で残す
-            body = json.loads(BODY_B.read_text(encoding="utf-8"))
             mlflow.log_dict({**body, "params": params}, BODY_B.name)
     return run.info.run_id, out / "policy.json"
 

@@ -29,6 +29,23 @@ export function obsDim(base?: Base): number {
   return base ? 22 : 20;
 }
 
+/** 物理の1秒あたりのステップ数（sim.ts の timestep は 1/240 秒） */
+const PHYSICS_HZ = 240;
+
+/** 行動を変える間隔（物理のステップ数）。学習（lab/rl/server.ts）と再生（PolicyDriver）で同じ式を使う */
+export function actionSteps(actionHz: number): number {
+  return Math.round(PHYSICS_HZ / actionHz);
+}
+
+/**
+ * Node の再生（lab/rl/play.ts）で学習と同じ間隔になる頻度か。
+ * play.ts は lab/run.ts の run() から 1/60 秒（4ステップ）ごとにしか AI を呼ばないので、間隔が 4 の倍数でないとずれる
+ */
+export function playableActionHz(actionHz: number): boolean {
+  const sub = actionSteps(actionHz);
+  return Number.isFinite(sub) && sub >= 4 && sub % 4 === 0;
+}
+
 /** 立った姿勢の胴の中心の高さ */
 export function standingTorsoY(params: Params): number {
   const b = params.body;
@@ -128,7 +145,7 @@ export class PolicyDriver {
 
   constructor(policy: Policy, sim: Sim) {
     this.policy = policy;
-    this.sub = Math.round(1 / sim.world.timestep / (policy.actionHz ?? ACTION_HZ));
+    this.sub = actionSteps(policy.actionHz ?? ACTION_HZ);
     const n = neutralInput(sim.params.mode);
     this.prev = JOINTS.map((j) => n[j]);
   }
