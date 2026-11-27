@@ -28,6 +28,10 @@ export const RoomMessage = v.object({
 });
 export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 
+/** 遊び方（モード）。今は 10m だけ */
+export const Mode = v.picklist(["10m"]);
+export type Mode = v.InferOutput<typeof Mode>;
+
 export const PlayResult = v.variant("outcome", [
   v.object({ outcome: v.literal("goal"), distanceM: FiniteNumber, timeMs: FiniteNumber }),
   v.object({
@@ -39,7 +43,7 @@ export type PlayResult = v.InferOutput<typeof PlayResult>;
 
 export const PhaseMessage = v.variant("phase", [
   v.object({ type: v.literal("phase"), phase: v.literal("lobby") }),
-  v.object({ type: v.literal("phase"), phase: v.literal("playing"), mode: v.literal("10m") }),
+  v.object({ type: v.literal("phase"), phase: v.literal("playing"), mode: Mode }),
   v.object({ type: v.literal("phase"), phase: v.literal("result"), result: PlayResult }),
 ]);
 export type PhaseMessage = v.InferOutput<typeof PhaseMessage>;
