@@ -24,8 +24,14 @@ export { RoomGate } from "./room-gate.ts";
 /** /api/ping の Durable Object の名前。小文字で、使わない文字の I を含むので、ルームコードと重ならない */
 const PING_OBJECT_NAME = "ping";
 
-/** ランキングの Durable Object の名前。全体で1つ */
-const RANKING_OBJECT_NAME = "rankings";
+/**
+ * ランキングのシーズン。値を変えると、新しい名前の Durable Object になり、ランキングが空から始まる。
+ * 前の値のデータは消えずに残る。発表の前に、この値を変える PR をマージして空にする（手順書の「当日の朝」の「ランキングを空にする」）
+ */
+const RANKING_SEASON = "dev";
+
+/** ランキングの Durable Object の名前。シーズンごとに全体で1つ */
+const RANKING_OBJECT_NAME = `rankings-${RANKING_SEASON}`;
 
 /** ルームコードが重なったときに作り直す回数 */
 const CREATE_ROOM_ATTEMPTS = 10;
