@@ -1,6 +1,6 @@
 {
   "label": "B",
-  "note": "main.ts の BODIES の B と同じ値。変えるときは両方を直す",
+  "note": "main.ts の BODIES の B と同じ値。変えるときは両方を直し、openloop.ts で body-b-fastest.json を作り直す",
   "params": {
     "assist": 1.006,
     "stiffness": 780,

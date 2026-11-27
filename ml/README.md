@@ -48,6 +48,8 @@ node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/gam
 
 `/prototype` の「設定」で「お手本を、探索で出した最速の歩き方にする」を入れると、この歩き方をお手本として再生できる。
 
+`body-b-fastest.json` は体 B の値の写しを持つ。体（`body-b.json` と `main.ts` の `BODIES`）を変えたら、上のコマンドで作り直す。
+
 ## 仕組み
 
 | ファイル | 役割 |
