@@ -36,6 +36,16 @@ describe("toAngle", () => {
 });
 
 describe("reduce", () => {
+  it("参加していたスマホがつなぎ直して断られたら、断られた理由を出す", () => {
+    const state = run([
+      ...joinedEvents,
+      message({ type: "phase", phase: "playing", mode: "10m" }),
+      { type: "connection", state: { status: "reconnecting", attempt: 1 } },
+      { type: "connection", state: { status: "open" } },
+      message({ type: "rejected", reason: "playing" }),
+    ]);
+    expect(state).toEqual({ kind: "rejected", reason: "playing" });
+  });
   it("ルームコードが無ければ invalid-room", () => {
     expect(initialState(undefined)).toEqual({ kind: "invalid-room" });
   });

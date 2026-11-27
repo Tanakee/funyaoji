@@ -121,7 +121,8 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
       }
       return state;
     case "rejected":
-      return state.kind === "connecting" || state.kind === "rejected"
+      // 参加していたスマホも、つなぎ直したときに断られることがある（60秒を過ぎて、次のプレイが始まっていたなど）
+      return state.kind === "connecting" || state.kind === "rejected" || state.kind === "joined"
         ? { kind: "rejected", reason: message.reason }
         : state;
     case "room":
