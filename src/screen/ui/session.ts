@@ -176,8 +176,9 @@ export class ScreenSession {
   }
 
   private onRoom(joints: readonly Joint[]): void {
-    // 抜けたスマホの入力と角度を残さない。次に同じ関節に入ったスマホに、前の値を見せない
-    for (const joint of JOINTS) {
+    // 抜けたスマホの入力と角度を残さない。次に同じ関節に入ったスマホに、前の値を見せない。
+    // 抜けた関節だけを戻す。もともとスマホのいない関節はキーボードが動かしているので、触らない
+    for (const joint of this.view.joints) {
       if (joints.includes(joint)) continue;
       this.inputs[joint] = NEUTRAL_INPUTS[joint];
       this.lastTiltAt.delete(joint);
@@ -194,6 +195,12 @@ export class ScreenSession {
    */
   private onPhase(message: PhaseMessage): void {
     if (message.phase !== "playing") return;
+    const flow = this.view.flow;
+    // 終わったときに切れていて、result を送れなかった。結果の画面は残し、送り直す
+    if (flow.kind === "result") {
+      this.send({ type: "phase", phase: "result", result: flow.result });
+      return;
+    }
     const wasLobby = this.view.flow.kind === "lobby";
     this.dispatch({ type: "toLobby" });
     // ロビーのままだと遷移の副作用が無いので、サーバーが持つ playing を直すために送る
@@ -241,6 +248,8 @@ export class ScreenSession {
       case "countdown":
         if (prev.kind !== "countdown") {
           // 始めに phase を送り、スマホの画面を切り替えて、途中参加を断る
+          // 前の走りのキーボードの入力を持ち越さない。スマホの関節は、次の tilt で上書きされる
+          Object.assign(this.inputs, NEUTRAL_INPUTS);
           this.game?.reset();
           this.send({ type: "phase", phase: "playing", mode: "10m" });
         }
