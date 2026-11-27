@@ -26,6 +26,8 @@ const WELL_FORMED_PATTERN = /^\P{Cs}*$/u;
  * 書式の文字のうち、絵文字をつなぐ ZWJ（U+200D）だけは家族の絵文字などに要るので許す
  */
 const TEAM_NAME_PATTERN = /^(?:[^\p{Cc}\p{Zl}\p{Zp}\p{Cf}]|\u{200D})*$/u;
+/** 空白と見えない文字（ZWJ や異体字セレクタなど）だけでできている */
+const INVISIBLE_ONLY_PATTERN = /^[\s\p{Default_Ignorable_Code_Point}]*$/u;
 
 /** チーム名。NFKC で正規化して前後の空白を除き、1〜10文字にする */
 export const TeamName = v.pipe(
@@ -36,6 +38,7 @@ export const TeamName = v.pipe(
   v.normalize("NFKC"),
   v.trim(),
   v.regex(TEAM_NAME_PATTERN, "チーム名に改行や見えない文字は使えません"),
+  v.check((name) => !INVISIBLE_ONLY_PATTERN.test(name), "チーム名を入れてください"),
   v.minGraphemes(1, "チーム名を入れてください"),
   v.maxGraphemes(TEAM_NAME_MAX_LENGTH, `チーム名は${TEAM_NAME_MAX_LENGTH}文字までです`),
 );

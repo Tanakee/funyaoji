@@ -49,6 +49,7 @@ describe("/api/rankings", () => {
       { mode: "10m", teamName: "  ", timeMs: 1000 },
       { mode: "10m", teamName: "a\nb", timeMs: 1000 },
       { mode: "10m", teamName: "\u200B", timeMs: 1000 },
+      { mode: "10m", teamName: "\u200D", timeMs: 1000 },
       { mode: "10m", teamName: "12345678901", timeMs: 1000 },
       { mode: "10m", teamName: "a", timeMs: 0 },
       { mode: "10m", teamName: "a", timeMs: RANKING_MAX_TIME_MS + 1 },
