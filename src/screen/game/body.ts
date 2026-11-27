@@ -1,6 +1,7 @@
 // おじさんの体の形・重さ・モーターの強さ。物理（sim.ts）と描画（view.ts）が同じ表を読む。DOM にも PixiJS にも依存しない
 // 試作（Tanakee/funyaoji の #55）で一番歩きやすかった体「B」だけを持つ
 import type { Joint } from "../../shared/messages.ts";
+import type { JointInputs } from "./types.ts";
 
 export const PART_NAMES = ["torso", "rightThigh", "rightShin", "leftThigh", "leftShin"] as const;
 export type PartName = (typeof PART_NAMES)[number];
@@ -110,6 +111,14 @@ export const JOINT_SPECS: Record<Joint, JointSpec> = {
   leftHip: hip("leftThigh"),
   rightKnee: knee("rightThigh", "rightShin"),
   leftKnee: knee("leftThigh", "leftShin"),
+};
+
+/** 操作しないときの入力。ももが真っすぐ下を向き、ひざが伸びた、立った姿勢になる */
+export const NEUTRAL_INPUTS: Readonly<JointInputs> = {
+  rightHip: 0.3,
+  leftHip: 0.3,
+  rightKnee: 0,
+  leftKnee: 0,
 };
 
 /** 目標角度のモーター */

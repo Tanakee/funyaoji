@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, test } from "vite-plus/test";
 import { JOINTS } from "../../shared/messages.ts";
+import { NEUTRAL_INPUTS } from "./body.ts";
 import { Sim, TIMEOUT_MS, initPhysics } from "./sim.ts";
 import type { JointInputs } from "./types.ts";
 
-/** 操作しないときの入力。立った姿勢になる */
-const NEUTRAL: JointInputs = { rightHip: 0.3, leftHip: 0.3, rightKnee: 0, leftKnee: 0 };
+const NEUTRAL: JointInputs = { ...NEUTRAL_INPUTS };
 
 // 試作（#55）のお手本の歩き方。脚を交互に振る
 const GAIT = { T: 2.16, h0: 0.34, A: 0.38, K: 0.76, kp: 0.21 };
