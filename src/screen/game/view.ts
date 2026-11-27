@@ -37,7 +37,7 @@ const JOINT_LABELS: Record<Joint, string> = {
   leftKnee: "左ひざ",
 };
 
-// 部位が動かす関節（色分けに使う）
+// 部位を動かす関節（色分けに使う）
 const PART_JOINT: Record<Exclude<PartName, "torso">, Joint> = {
   rightThigh: "rightHip",
   rightShin: "rightKnee",
@@ -77,7 +77,7 @@ function installHudFont(): void {
 }
 
 export interface View {
-  /** 描画のたびに呼ばれる。dtSec は前のコマからの実時間 */
+  /** 描画のたびに呼ばれる。dtSec は前のフレームからの実時間 */
   onFrame(callback: (dtSec: number) => void): void;
   render(state: SimState): void;
   destroy(): void;

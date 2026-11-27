@@ -70,7 +70,7 @@ describe("Sim", () => {
   });
 
   test("関節をでたらめに動かし続けると、転倒で終わる", () => {
-    // 0.5 秒ごとに、4つの関節を 0 か 1 に切り替える。種を変えても、20 秒以内に全部転ぶ
+    // 0.5 秒ごとに、4つの関節を 0 か 1 に切り替える。シードを変えても、20 秒以内に全部転ぶ
     for (const seed of [1, 2, 3]) {
       let x = seed;
       const rnd = () => ((x = (x * 1664525 + 1013904223) >>> 0) / 4294967296 < 0.5 ? 0 : 1);
@@ -88,7 +88,7 @@ describe("Sim", () => {
         },
         30,
       );
-      expect(s.result?.outcome, `種 ${seed}`).toBe("fell");
+      expect(s.result?.outcome, `シード ${seed}`).toBe("fell");
       expect(s.elapsedMs).toBeLessThan(20_000);
       sim.free();
     }
@@ -103,7 +103,7 @@ describe("Sim", () => {
     sim.free();
   });
 
-  test("描画のコマ数が違っても、同じ時間なら同じ結果になる", () => {
+  test("フレームレートが違っても、同じ時間なら同じ結果になる", () => {
     const at = (frameSec: number) => {
       const sim = new Sim();
       sim.start();

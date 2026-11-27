@@ -3,12 +3,12 @@ import { Sim, initPhysics } from "./sim.ts";
 import type { Game, GameOptions } from "./types.ts";
 import { createView } from "./view.ts";
 
-/** タブが裏に回ったあとなど、大きな間隔は物理に渡さない（1 コマで進めすぎない） */
+/** タブが裏に回ったあとなど、大きな間隔は物理に渡さない（1 フレームで進めすぎない） */
 const MAX_FRAME_S = 0.1;
 
 declare global {
   interface Window {
-    /** 自動の確認用。開発のときだけ、毎コマ更新する */
+    /** 自動の確認用。開発のときだけ、毎フレーム更新する */
     __funyaojiGame?: { distanceM: number; elapsedMs: number; ended: boolean };
   }
 }

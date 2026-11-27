@@ -1,5 +1,5 @@
 // 物理演算とゲームのルール（距離・ゴール・転倒・タイムアウト）。DOM にも PixiJS にも依存しない
-// 入力は関節ごとの 0〜1。1 コマずつ進め、いまの姿勢は state() で読む
+// 入力は関節ごとの 0〜1。1 ステップずつ進め、いまの姿勢は state() で読む
 import RAPIER from "@dimforge/rapier2d-compat";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import {
@@ -20,7 +20,7 @@ import type { GameResult, JointInputs } from "./types.ts";
 export const GOAL_M = 10;
 /** 開始からこの時間でタイムアウト（docs/game.md）。仮の値で、遊んで直す */
 export const TIMEOUT_MS = 120_000;
-/** 物理の 1 コマ。細かく刻むほど、強いモーターでも振動しにくい */
+/** 物理の 1 ステップ。細かく刻むほど、強いモーターでも振動しにくい */
 export const STEP_S = 1 / 240;
 
 const GRAVITY = 9.81;
@@ -125,8 +125,8 @@ export class Sim {
   }
 
   /**
-   * 実時間 dtSec 秒ぶん進める。物理は固定の 1 コマ（STEP_S）ずつ進め、
-   * 余りは次に回すので、描画のコマ数が違っても物理は変わらない
+   * 実時間 dtSec 秒ぶん進める。物理は固定の 1 ステップ（STEP_S）ずつ進め、
+   * 余りは次に回すので、フレームレートが違っても物理は変わらない
    */
   advance(inputs: JointInputs, dtSec: number): void {
     if (this.status !== "running") return;
@@ -165,8 +165,8 @@ export class Sim {
   }
 
   /**
-   * 胴を起こす補助。強い補助をそのままかけると 1 コマの間に行き過ぎて振動するので、
-   * 1 コマ先の角度を見込んで力を弱める形（安定な PD 制御）にする
+   * 胴を起こす補助。強い補助をそのままかけると 1 ステップの間に行き過ぎて振動するので、
+   * 1 ステップ先の角度を見込んで力を弱める形（安定な PD 制御）にする
    */
   private assistTorso(): void {
     const torso = this.bodies.torso;
