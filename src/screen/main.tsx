@@ -1,22 +1,16 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { createRoom } from "../net/api.ts";
-import { isMockOutcome, ResultScreen } from "./ui/ResultScreen.tsx";
-import { ScreenApp, type CreateRoomResult } from "./ui/ScreenApp.tsx";
+import { ScreenApp } from "./ui/ScreenApp.tsx";
+import { ScreenSession } from "./ui/session.ts";
 
-const mockOutcome = new URLSearchParams(location.search).get("outcome");
-
-// モック表示のときはルームを作らない。通常画面では StrictMode の再描画でも1つだけ作る
-const room = isMockOutcome(mockOutcome)
-  ? undefined
-  : createRoom().then(
-      (roomCode): CreateRoomResult => ({ ok: true, roomCode }),
-      (error: unknown): CreateRoomResult => ({
-        ok: false,
-        message: error instanceof Error ? error.message : String(error),
-      }),
-    );
+// ゲームの Canvas は #stage に React の外で置く。ルーム・通信・ゲームは、ページに1つのセッションが持つ
+const session = new ScreenSession(document.getElementById("stage")!);
+session.open();
+// 開発中にこのファイルが差し替わったら、前のセッションの接続とキー入力を片付ける
+import.meta.hot?.dispose(() => session.dispose());
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>{room ? <ScreenApp room={room} /> : <ResultScreen />}</StrictMode>,
+  <StrictMode>
+    <ScreenApp session={session} />
+  </StrictMode>,
 );
