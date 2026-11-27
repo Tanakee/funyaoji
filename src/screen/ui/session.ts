@@ -287,7 +287,13 @@ export class ScreenSession {
   };
 
   private send(message: ScreenSent): boolean {
-    return this.connection?.send(message) ?? false;
+    const sent = this.connection?.send(message) ?? false;
+    // スマホは phase を受け取ると入力の色を消す。1秒待たせず、すぐに status を送り直す
+    if (sent && message.type === "phase") {
+      this.lastStatus = { key: "", at: -Infinity };
+      this.checkActive();
+    }
+    return sent;
   }
 
   private updateRoom(patch: Partial<Extract<RoomState, { status: "ready" }>>): void {

@@ -83,6 +83,16 @@ describe("ScreenSession", () => {
     });
   });
 
+  it("phase を送ったら、続けて status を送る", async () => {
+    await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    await vi.advanceTimersByTimeAsync(2000);
+    sent.length = 0;
+    press("Space");
+
+    expect(sent.map((m) => m.type)).toEqual(["phase", "status"]);
+  });
+
   it("キーボードで動かしている関節の入力を、room が届いても戻さない", async () => {
     await open();
     room(["rightHip"]);
