@@ -23,7 +23,7 @@ uv sync
 uv run python -m funyaoji_rl.pipeline --steps 20000000 --name free
 ```
 
-1. PPO で学習する。経過と重みが MLflow に残る。`runs/<名前>/` にも同じものができる
+1. PPO で学習する。経過と重みが MLflow に残る。`runs/<名前>/<run の ID>/` にも同じものができる（同じ名前の学習を並べても、上書きし合わない）
 2. 重みを評価する。そのままの重みで1回と、重みをほんの少しずらして 16 回走らせ、タイムの中央値を出す
 3. そのままの重みで 10m に着いて不自然な動き（`lab/run.ts` の `sanity()`）が無く、ずらした 16 回のうち 15 回以上（`cleanRate >= 0.9`）もそうなら、MLflow のモデルのレジストリに登録する
 4. 中央値が今の champion（`/prototype` で使う重み）より速ければ、champion を入れ替え、`src/screen/game/prototype/policy-b.json` に書き出す
@@ -43,7 +43,7 @@ uv run python -m funyaoji_rl.registry export
 uv run python -m funyaoji_rl.registry submit <run の ID>
 ```
 
-学習の間、更新のたびに1行ずつ出る。`goal_rate` は 10m に着いた割合、`best_time` は着いた中の最速、`best_clean` は不自然な動きに引っかからなかった中の最速。学習の間は行動に乱数を足しているので、乱数なしのタイムは評価（`eval_time`）で見る。
+学習の間、更新のたびに1行ずつ出る。`goal_rate` は 10m に着いた割合、`best_time` は着いた中の最速、`best_clean` は不自然な動きに引っかからなかった中の最速。学習の間は行動に乱数を足しているので、乱数なしのタイムは評価で見る（そのままの重みの1回が `eval_exact_time`、重みをずらした 16 回の中央値が `eval_time`）。
 
 評価で重みをずらすのは、1回のタイムがたまたまの値だから。同じ学習の重みでも、小数6桁に丸めただけで 8.67 秒が 13.54 秒になった（途中で1回つまずくかどうかが変わる）。16 回の中央値は 8.88 秒で、丸め方を変えてもほぼ動かない。`/prototype` で再生したときのタイムは、そのままの重みの1回（`eval_exact_time`）のほうになる。
 
@@ -64,18 +64,20 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 | 成果物 | 重み（`policy.json`）、経過（`history.json`）、学習に使った体の設定（`body-b.json`） |
 | レジストリ | モデル `funyaoji-walker`。評価を通った重みが version として並ぶ。`champion` の別名が付いたものを `/prototype` で使う |
 
-- 体の設定の指紋は、学習に使った体の値（`--config` の `params`、無ければ `body-b.json`）と、物理と評価のコード（`sim.ts`・`policy.ts`・`lab/run.ts`・`lab/rl/play.ts`）から作る。指紋が違う重みどうしは、タイムを比べない。体を変えたあとの最初の登録は、速さにかかわらず champion になる
-- `registry submit` は、run の指紋が今の指紋（今の `body-b.json` とコード）と違えば止める。評価は run に上げた `policy.json` で行う
+- 体の設定の指紋は、学習に使った体の値（`--config` の `params`、無ければ `body-b.json`。キーの順や数の書き方（`780` と `780.0`）には左右されない）と、物理と評価のコード（`sim.ts`・`policy.ts`・`lab/run.ts`・`lab/rl/play.ts`）から作る。指紋が違う重みどうしは、タイムを比べない。体を変えたあとの最初の登録は、速さにかかわらず champion になる
+- `registry submit` は、run の指紋が今の指紋（今の `body-b.json` とコード）と違えば止める。評価は run に上げた `policy.json` で行う。`pipeline` は、`--config` の `params` が今の体と違えば、学習の前に止める
+- 同じ run を `registry submit` し直しても、version は増えない（前に登録したものの結果を書き直す）
+- `registry submit`（と `pipeline`）は、同時に2つ流さない。champion を読んでから付け替えるまでのあいだに、遅いほうが champion になることがある
 - 別のマシンの MLflow に記録するときは、環境変数 `MLFLOW_TRACKING_URI` にその URL を入れる
 
 ## 再生
 
 ```sh
 # リポジトリのルートで。Node で1回走らせ、タイムを出す
-node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json
+node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/<run の ID>/policy.json
 
 # 重みを少しずらして 16 回走らせ、中央値も出す（評価と同じ測り方）
-node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json --trials 16
+node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/<run の ID>/policy.json --trials 16
 
 # ブラウザで見る：/prototype の「AI」を押す（policy-b.json の重みで動く）
 ```

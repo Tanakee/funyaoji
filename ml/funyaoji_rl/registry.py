@@ -11,6 +11,8 @@
 登録の条件：そのままの重みで 10m に着き、不自然な動き（lab/run.ts の sanity()）が無い。ずらした走りも 9割以上がそうなる。
 champion（/prototype で使う重み）にする条件：中央値（小数3桁）が今の champion より速い。体の設定が変わっていたら、速さにかかわらず入れ替える。
 run の体の設定の指紋（タグ body）が今の指紋と違えば、評価せずに止める（別の体で学習した重みを、今の体で測って登録しない）。
+同じ run を submit し直したときは、version を増やさず、前に登録したものの結果を書き直す。
+submit は同時に2つ流さない（champion を読んでから付け替えるまでのあいだに、遅いほうが勝つことがある）。
 """
 
 from __future__ import annotations
@@ -109,12 +111,17 @@ def submit(run_id: str) -> dict[str, Any]:
         )
     except MlflowException:
         pass  # もうある
-    version = client.create_model_version(
-        MODEL_NAME,
-        source=f"runs:/{run_id}/policy.json",
-        run_id=run_id,
-        tags={"body": body, "time": f"{time:.3f}", "exact_time": f"{result['time']:.3f}"},
-    )
+    tags = {"body": body, "time": f"{time:.3f}", "exact_time": f"{result['time']:.3f}"}
+    # 同じ run を submit し直したときは、version を増やさず、前に登録したものを使う
+    same = client.search_model_versions(f"name='{MODEL_NAME}' and run_id='{run_id}'")
+    if same:
+        version = same[0]
+        for k, v in tags.items():
+            client.set_model_version_tag(MODEL_NAME, version.version, k, v)
+    else:
+        version = client.create_model_version(
+            MODEL_NAME, source=f"runs:/{run_id}/policy.json", run_id=run_id, tags=tags
+        )
     summary["version"] = version.version
     now = champion(client)
     better = (
@@ -143,7 +150,16 @@ def export(dst: Path = EXPORT_TO) -> dict[str, Any]:
             run_id=now.run_id, artifact_path="policy.json", dst_path=tmp
         )
         shutil.copyfile(src, dst)
-    subprocess.run(f'npx vp fmt "{dst}"', cwd=ROOT, shell=True, check=True, capture_output=True)
+    fmt = subprocess.run(
+        f'npx vp fmt "{dst}"',
+        cwd=ROOT,
+        shell=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if fmt.returncode != 0:
+        raise SystemExit(f"vp fmt が失敗した（{dst} は書き出したが、整形していない）\n{fmt.stderr}")
     return {"version": now.version, "time": now.tags["time"], "run_id": now.run_id, "to": str(dst)}
 
 
