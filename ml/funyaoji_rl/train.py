@@ -153,10 +153,15 @@ def train(args: argparse.Namespace) -> tuple[str, Path]:
     # ここで1回だけ読み、Node に渡す値と MLflow に残す値（指紋・body-b.json）を同じにする
     body = json.loads(BODY_B.read_text(encoding="utf-8"))
     params = config.get("params", body["params"])
+    if "base" in config:
+        # --config の base には、探索したときの体が入っていないので、学習に使う体と照合できない
+        raise SystemExit(
+            "土台の歩き方は --config の base ではなく --base-gait（候補の JSON）で渡す。体と照合するため"
+        )
     if args.base_gait:
         cand = json.loads(args.base_gait.read_text(encoding="utf-8"))
         # 土台の歩き方は、探索したときの体でしか意味がない。体を変えたら openloop.ts で作り直す
-        if json.dumps(cand["params"], sort_keys=True) != json.dumps(params, sort_keys=True):
+        if tracking.canonical_params(cand["params"]) != tracking.canonical_params(params):
             raise SystemExit(
                 f"{args.base_gait} の params が、学習に使う体と違う。今の体で openloop.ts を流し直す"
             )
