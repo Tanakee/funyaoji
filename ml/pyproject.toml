@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "ふにゃおじの強化学習（docs/ml.md）"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+  "cma>=3.3",
   "gymnasium>=1.0",
   "imageio>=2.34",
   "imageio-ffmpeg>=0.5",

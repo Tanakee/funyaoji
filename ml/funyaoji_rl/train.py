@@ -169,6 +169,13 @@ def main() -> None:
     ap.add_argument("--snapshot-every", type=int, default=500_000)
     ap.add_argument("--trials", type=int, default=16, help="最後の評価で、ずらして走らせる回数")
     ap.add_argument("--perturb", type=float, default=0.01, help="ずらす大きさ（出力の層の bias）")
+    ap.add_argument(
+        "--base-gait",
+        type=Path,
+        default=None,
+        help="土台の歩き方（openloop.py の record_best.json）。入れると、AI はこの歩き方に補正を足す（③）",
+    )
+    ap.add_argument("--residual-scale", type=float, default=0.3, help="補正の大きさの上限（入力の目盛り）")
     ap.add_argument("--name", type=str, default=None)
     args = ap.parse_args()
 
@@ -177,7 +184,10 @@ def main() -> None:
     name = args.name or f"ppo-{args.reward}-g{args.gamma}-s{args.seed}-{time.strftime('%m%d%H%M')}"
     out = Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
-    env_config = {"reward": args.reward, "goal": args.goal, "k": args.k, "gamma": args.gamma}
+    env_config: dict[str, Any] = {"reward": args.reward, "goal": args.goal, "k": args.k, "gamma": args.gamma}
+    if args.base_gait:
+        gait = json.loads(args.base_gait.read_text(encoding="utf-8"))["gait"]
+        env_config["base"] = {"gait": gait, "scale": args.residual_scale}
 
     venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, env_config)
     env = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=args.gamma)
@@ -205,14 +215,15 @@ def main() -> None:
         mlflow.set_tags(
             {
                 **tracking.git_info(),
-                "method": "ppo",
+                "method": "ppo-residual" if args.base_gait else "ppo",
                 "physics_fingerprint": venv.fingerprint,
                 "rapier": venv.rapier,
             }
         )
         mlflow.log_params(
             {
-                **{k: v for k, v in vars(args).items() if k != "name"},
+                **{k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items() if k != "name"},
+                "base_gait_values": json.dumps(env_config.get("base", {}).get("gait")),
                 "net_arch": "64x64",
                 "asymmetric_critic": True,
                 "actor_obs": venv.actor_obs,

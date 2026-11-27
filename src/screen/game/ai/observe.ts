@@ -13,6 +13,8 @@ export const INPUT_STEPS = 1000;
 export const GOAL_VIEW_M = 1.5;
 /** actor の観測の数 */
 export const ACTOR_OBS = 22;
+/** 決まった歩き方を土台にするとき、actor の観測に足す数（歩き方の位相の sin・cos） */
+export const PHASE_OBS = 2;
 /** critic だけが追加で見る数（上限を切らないゴールまでの残り） */
 export const CRITIC_EXTRA_OBS = 1;
 
@@ -33,9 +35,10 @@ export function toJointInputs(values: readonly number[]): JointInputs {
 
 /**
  * 観測。actor は先頭の ACTOR_OBS 個を、critic は全部を見る。
- * prev は前に物理に渡した入力（1/1000 にそろえたあと、JOINTS の順）
+ * prev は前に物理に渡した入力（1/1000 にそろえたあと、JOINTS の順）。
+ * phase（rad）を渡すと、決まった歩き方の位相として、actor の観測の最後に sin・cos を足す
  */
-export function observe(r: SimReadout, prev: readonly number[]): number[] {
+export function observe(r: SimReadout, prev: readonly number[], phase?: number): number[] {
   const t = r.parts.torso;
   const out = [t.y - STAND_TORSO_Y, Math.sin(t.rot), Math.cos(t.rot), t.vx, t.vy, t.w];
   for (const j of JOINTS) {
@@ -48,6 +51,7 @@ export function observe(r: SimReadout, prev: readonly number[]): number[] {
   out.push(Math.min(1, r.sittingMs / SIT_MS));
   const remaining = Math.max(0, GOAL_M - r.distanceM);
   out.push(Math.min(remaining, GOAL_VIEW_M) / GOAL_VIEW_M);
+  if (phase !== undefined) out.push(Math.sin(phase), Math.cos(phase));
   // ここから critic だけ
   out.push(remaining / GOAL_M);
   return out;

@@ -6,7 +6,15 @@ import RAPIER from "@dimforge/rapier2d-compat";
 import { JOINTS } from "../../src/shared/messages.ts";
 import { NEUTRAL_INPUTS } from "../../src/screen/game/body.ts";
 import { demoGait } from "../../src/screen/game/demo.ts";
-import { ACTION_HZ, observe, quantize, toJointInputs } from "../../src/screen/game/ai/observe.ts";
+import { gaitInputs, type Gait } from "../../src/screen/game/ai/gait.ts";
+import {
+  ACTION_HZ,
+  ACTOR_OBS,
+  PHASE_OBS,
+  observe,
+  quantize,
+  toJointInputs,
+} from "../../src/screen/game/ai/observe.ts";
 import { replay, type InputRecord } from "../../src/screen/game/ai/record.ts";
 import { Sim } from "../../src/screen/game/sim.ts";
 
@@ -25,6 +33,16 @@ export interface EnvConfig {
   record: boolean;
   /** 物理の1ステップ（秒）。省くとゲームと同じ */
   stepS?: number;
+  /**
+   * 土台の歩き方（③）。入れると、関節の入力は「土台の入力 ＋ 行動 × scale」になり、
+   * 観測に歩き方の位相が増える
+   */
+  base?: { gait: Gait; scale: number };
+}
+
+/** actor の観測の数 */
+export function actorObs(cfg: EnvConfig): number {
+  return ACTOR_OBS + (cfg.base ? PHASE_OBS : 0);
 }
 
 export const DEFAULT_CONFIG: EnvConfig = {
@@ -58,6 +76,8 @@ export class Env {
   private sim!: Sim;
   private prev: number[] = NEUTRAL;
   private inputs: number[][] = [];
+  /** 行動を進めた回数 */
+  private count = 0;
   private readonly cfg: EnvConfig;
 
   constructor(cfg: EnvConfig) {
@@ -71,17 +91,24 @@ export class Env {
     this.sim.start();
     this.prev = NEUTRAL;
     this.inputs = [];
+    this.count = 0;
     return this.obs();
   }
 
   obs(): number[] {
-    return observe(this.sim.readout(), this.prev);
+    const r = this.sim.readout();
+    const base = this.cfg.base;
+    const phase = base ? (this.count / ACTION_HZ / base.gait.T) * Math.PI * 2 : undefined;
+    return observe(r, this.prev, phase);
   }
 
   /** 行動（-1〜1 が4つ、JOINTS の順）で 1/30 秒進める */
   step(action: readonly number[]): { reward: number; info?: EpisodeInfo } {
-    const u = JOINTS.map((_, i) => quantize(((action[i] ?? 0) + 1) / 2));
-    return this.stepInputs(u);
+    const base = this.cfg.base;
+    if (!base) return this.stepInputs(JOINTS.map((_, i) => ((action[i] ?? 0) + 1) / 2));
+    // 土台の入力は、毎秒30回の何回目かから出す（記録の再生と同じ時刻）
+    const g = gaitInputs(base.gait, this.count / ACTION_HZ);
+    return this.stepInputs(g.map((u, i) => u + (action[i] ?? 0) * base.scale));
   }
 
   /** 関節の入力（0〜1、JOINTS の順）で 1/30 秒進める */
@@ -91,6 +118,7 @@ export class Env {
     const before = this.sim.readout();
     this.sim.advance(toJointInputs(u), 1 / ACTION_HZ);
     this.prev = u;
+    this.count++;
     if (cfg.record) this.inputs.push(u);
     const state = this.sim.state();
     const x0 = before.distanceM;

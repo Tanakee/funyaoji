@@ -4,6 +4,7 @@ import { NEUTRAL_INPUTS } from "../body.ts";
 import { demoGait } from "../demo.ts";
 import { Sim, initPhysics } from "../sim.ts";
 import { ACTION_HZ, ACTOR_OBS, CRITIC_EXTRA_OBS, observe, quantize } from "./observe.ts";
+import { DEMO_GAIT, gaitInputs, gaitRecord } from "./gait.ts";
 import { replay, type InputRecord } from "./record.ts";
 
 beforeAll(initPhysics);
@@ -17,6 +18,16 @@ function demoRecord(seconds: number): InputRecord {
   }
   return { hz: ACTION_HZ, joints: JOINTS, inputs };
 }
+
+describe("gait", () => {
+  test("お手本の値の歩き方は、お手本（demo.ts）と同じ入力になる", () => {
+    for (const t of [0, 0.4, 1.3, 2.9]) {
+      const g = demoGait(t);
+      expect(gaitInputs(DEMO_GAIT, t)).toEqual(JOINTS.map((j) => g[j]));
+    }
+    expect(gaitRecord(DEMO_GAIT, 40)).toEqual(demoRecord(40));
+  });
+});
 
 describe("quantize", () => {
   test("0〜1 に収め、1/1000 にそろえる", () => {
