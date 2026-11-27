@@ -24,7 +24,6 @@ const REJECT_NOTICES: Record<RejectReason, { title: string; detail: string }> = 
 const OUTCOME_LABELS: Record<PlayResult["outcome"], string> = {
   goal: "ゴール！",
   fell: "転倒",
-  timeout: "タイムアウト",
   disconnected: "切断",
 };
 
