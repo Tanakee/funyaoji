@@ -10,12 +10,15 @@ import { createInterface } from "node:readline";
 import { Sim, JOINTS, GOAL_M, footContact, sanity, standingTorsoY, type Params } from "../run.ts";
 import { toParams, type Candidate } from "../candidate.ts";
 import { neutralInput, type JointName } from "../../sim.ts";
-import { observe, OBS_DIM, ACTION_HZ } from "../../policy.ts";
+import { observe, OBS_DIM, ACTION_HZ, actionSteps, playableActionHz } from "../../policy.ts";
 
 export interface EnvConfig {
   /** 体と操作の設定。DEFAULT_PARAMS との差分 */
   params: Candidate["params"];
-  /** 行動を変える頻度（1秒あたり）。スマホの tilt と同じ 30 が標準。重みの JSON にも書き、再生で同じ頻度にする */
+  /**
+   * 行動を変える頻度（1秒あたり）。スマホの tilt と同じ 30 が標準。重みの JSON にも書き、再生で同じ頻度にする。
+   * 物理の 240 ステップを割った間隔が 4 の倍数になる値だけ（60・30・20・15・12・10 など）。play.ts で同じ間隔で再生できないため
+   */
   actionHz: number;
   /** 打ち切る時間（秒） */
   maxTime: number;
@@ -84,7 +87,7 @@ class Env {
   constructor(cfg: EnvConfig) {
     this.cfg = cfg;
     this.params = toParams(cfg.params);
-    this.sub = Math.round(240 / cfg.actionHz);
+    this.sub = actionSteps(cfg.actionHz);
     this.stand = standingTorsoY(this.params);
     this.reset();
   }
@@ -117,8 +120,9 @@ class Env {
     JOINTS.forEach((j, i) => (input[j] = u[i]!));
     let airSteps = 0;
     let jumped = false;
+    let k = 0;
     // 跳んだらそこで止める。同じ区間で 10m に着いても、ゴールにしない
-    for (let k = 0; k < this.sub && !s.ended && !jumped; k++) {
+    for (; k < this.sub && !s.ended && !jumped; k++) {
       s.step(input);
       this.steps++;
       this.peakSpeed = Math.max(this.peakSpeed, Math.abs(s.torso.linvel().x));
@@ -130,7 +134,8 @@ class Env {
         airSteps++;
       }
     }
-    const dt = this.sub / 240;
+    // 途中で終わったときは、実際に進めたステップの分だけ数える
+    const dt = k / 240;
     let dx = s.distance - this.lastX;
     this.lastX = s.distance;
     if (cfg.speedCap > 0) dx = Math.min(dx, cfg.speedCap * dt);
@@ -138,7 +143,10 @@ class Env {
     for (let i = 0; i < 4; i++) smooth += Math.abs(u[i]! - this.prev[i]!);
     this.prev = u;
     let rew =
-      cfg.wForward * dx + cfg.wTime * dt + cfg.wSmooth * smooth + cfg.wAir * (airSteps / this.sub);
+      cfg.wForward * dx +
+      cfg.wTime * dt +
+      cfg.wSmooth * smooth +
+      cfg.wAir * (airSteps / Math.max(1, k));
 
     let ended: Ended | undefined;
     if (jumped || s.ended === "fell") {
@@ -185,6 +193,10 @@ let envs: Env[] = [];
 function handle(msg: { cmd: string; n?: number; config?: Partial<EnvConfig>; a?: number[][] }) {
   if (msg.cmd === "init") {
     const cfg = { ...DEFAULT_CONFIG, ...msg.config };
+    if (!playableActionHz(cfg.actionHz))
+      throw new Error(
+        `actionHz ${cfg.actionHz} は使えない。行動を変える間隔（240 / actionHz を丸めたステップ数）が 4 の倍数になる値にする（60・30・20・15・12・10 など）`,
+      );
     envs = Array.from({ length: msg.n ?? 1 }, () => new Env(cfg));
     return { obs: envs.map((e) => e.obs()), obsDim: OBS_DIM };
   }

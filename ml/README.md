@@ -91,6 +91,8 @@ node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json --trials 
 node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/game/prototype/lab/rl/body-b-fastest.json
 ```
 
+`--out` のファイルがすでにあれば、その歩き方を今の体で測り直し、探した歩き方がそれより速いときだけ書く（`--force` で必ず書く）。書いたファイルは `vp fmt` の形にそろえるので、そのままコミットできる。
+
 `/prototype` の「設定」で「お手本を、探索で出した最速の歩き方にする」を入れると、この歩き方をお手本として再生できる。
 
 `body-b-fastest.json` は体 B の値の写しを持つ。体（`body-b.json` と `main.ts` の `BODIES`）を変えたら、上のコマンドで作り直す。
@@ -110,7 +112,7 @@ node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/gam
 | `ml/funyaoji_rl/pipeline.py` | 学習・評価・登録・書き出しを続けて行う |
 | `ml/funyaoji_rl/tracking.py` | MLflow の置き場所、コミット、体の設定の指紋 |
 
-- 行動は4つの関節の入力（0〜1）。毎秒30回（スマホの `tilt` と同じ）変える。`--config` の `actionHz` で変えたときは、その値を重みの JSON（`actionHz`）に書き、再生も同じ頻度にする
+- 行動は4つの関節の入力（0〜1）。毎秒30回（スマホの `tilt` と同じ）変える。`--config` の `actionHz` で変えたときは、その値を重みの JSON（`actionHz`）に書き、再生も同じ頻度にする。行動を変える間隔は、学習も再生も `round(240 / actionHz)` ステップ。`play.ts` は 1/60 秒（4ステップ）ごとにしか AI を呼ばないので、間隔が 4 の倍数になる値（60・30・20・15・12・10 など）だけを使える。ほかの値は学習の始めに止まる
 - 観測は20個の数（胴の高さ・傾き・速度、関節の角度と回る速さ、足の接地、前の行動）。前後の位置は入れない
 - ニューラルネットは 64 個のユニットが2層。ブラウザでは `policy.ts` が計算するので、推論のサーバーは要らない
 

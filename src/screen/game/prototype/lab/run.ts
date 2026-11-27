@@ -90,7 +90,7 @@ export function run(
     }
   }
   onFrame?.(sim, input);
-  return {
+  const result: RunResult = {
     ended: sim.ended ?? (stuck ? "stuck" : "timeout"),
     time: sim.time,
     distance: sim.distance,
@@ -98,6 +98,9 @@ export function run(
     maxTorsoY,
     airFrac: air / Math.max(1, steps),
   };
+  // World（WebAssembly のメモリ）を返す。返さないと、探索などで何千回も呼ぶあいだにメモリが増え続ける
+  sim.free();
+  return result;
 }
 
 /** 右足・左足が地面に着いているか（足の下の角が地面から 3cm 以内） */
