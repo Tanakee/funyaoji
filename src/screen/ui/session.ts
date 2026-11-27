@@ -15,7 +15,7 @@ import {
   type PhaseMessage,
   type RejectedMessage,
 } from "../../shared/messages.ts";
-import { attachKeyboard, createGame, NEUTRAL_INPUTS } from "../game/index.ts";
+import { attachKeyboard, createGame, demoGait, NEUTRAL_INPUTS } from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
 import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
 
@@ -41,6 +41,15 @@ export type RoomState =
 
 export type GameState = "loading" | "ready" | "failed";
 
+/**
+ * 1人で確かめるためのデバッグ操作の状態（docs/game.md の「操作」）。
+ * enabled は URL に ?debug があるとき。autoplay はお手本の歩き方で、スマホのいない関節を動かす
+ */
+export interface DebugState {
+  enabled: boolean;
+  autoplay: boolean;
+}
+
 /** 画面に出す値。変わったときだけ新しいオブジェクトにする */
 export interface ScreenView {
   room: RoomState;
@@ -50,6 +59,14 @@ export interface ScreenView {
   /** 直近 0.5 秒に tilt が届いた関節 */
   active: readonly Joint[];
   game: GameState;
+  debug: DebugState;
+}
+
+/** ゲームの用意ができていて、サーバーにつながっているときだけ、開始・やり直しを受け付ける */
+export function canOperate(view: ScreenView): boolean {
+  return (
+    view.game === "ready" && view.room.status === "ready" && view.room.connection.status === "open"
+  );
 }
 
 /** 確かめるための情報。tilt のたびに書き換える。React の state ではないので、読む側が間引いて読む */
@@ -68,6 +85,7 @@ export class ScreenSession {
     joints: [],
     active: [],
     game: "loading",
+    debug: { enabled: false, autoplay: false },
   };
   private readonly listeners = new Set<() => void>();
   private game: Game | undefined;
@@ -79,11 +97,22 @@ export class ScreenSession {
   private lastStatus = { key: "", at: -Infinity };
   private detachKeyboard: (() => void) | undefined;
   private disposed = false;
+  /** お手本の今の値。デバッグのときだけ、毎フレーム更新する */
+  private demo: JointInputs = { ...NEUTRAL_INPUTS };
+  /** プレイが始まった時刻（performance.now()）。お手本の時間はここから数える */
+  private playStartedAt = 0;
+  /** 指やマウスでつかまれている関節。お手本より、つかんでいる手を優先する */
+  private readonly grabbed = new Set<Joint>();
+  private frame = 0;
 
   private readonly stage: HTMLElement;
 
-  constructor(stage: HTMLElement) {
+  constructor(
+    stage: HTMLElement,
+    debugEnabled = new URLSearchParams(location.search).has("debug"),
+  ) {
     this.stage = stage;
+    this.view = { ...this.view, debug: { enabled: debugEnabled, autoplay: false } };
   }
 
   // useSyncExternalStore に渡す
@@ -98,6 +127,11 @@ export class ScreenSession {
     this.detachKeyboard = attachKeyboard(this.inputs);
     window.addEventListener("keydown", this.onKeyDown);
     this.statusTimer = setInterval(this.checkActive, ACTIVE_CHECK_MS);
+    if (this.view.debug.enabled) {
+      // CSS が、ゲームの下にデバッグの操作の場所を空ける
+      document.documentElement.dataset.debug = "";
+      this.frame = requestAnimationFrame(this.onFrame);
+    }
     void this.openGame();
     void this.openRoom();
   }
@@ -108,6 +142,8 @@ export class ScreenSession {
     window.removeEventListener("keydown", this.onKeyDown);
     clearInterval(this.statusTimer);
     clearTimeout(this.countdownTimer);
+    cancelAnimationFrame(this.frame);
+    if (this.view.debug.enabled) delete document.documentElement.dataset.debug;
     this.connection?.close();
     this.game?.destroy();
   }
@@ -207,7 +243,7 @@ export class ScreenSession {
     if (wasLobby) this.send({ type: "phase", phase: "lobby" });
   }
 
-  // 操作。スペースで開始・やり直し、Enter でデバッグの開始、R でやり直し
+  // 操作。スペースで開始・やり直し、Enter でデバッグの開始、R でやり直し。画面のボタンも同じメソッドを呼ぶ
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) {
@@ -216,21 +252,79 @@ export class ScreenSession {
     const { flow } = this.view;
     if (event.code === "Space") {
       event.preventDefault();
-      if (flow.kind === "lobby")
-        this.operate({ type: "start", joints: this.view.joints, debug: false });
-      else if (flow.kind === "result") this.operate({ type: "restart" });
+      if (flow.kind === "lobby") this.start();
+      else if (flow.kind === "result") this.restart();
     } else if (event.code === "Enter" && flow.kind === "lobby") {
-      this.operate({ type: "start", joints: this.view.joints, debug: true });
+      this.startDebug();
     } else if (event.code === "KeyR" && flow.kind === "result") {
-      this.operate({ type: "restart" });
+      this.restart();
     }
   };
 
-  /** ゲームの用意ができていて、サーバーにつながっているときだけ、開始・やり直しを受け付ける */
+  /** 4人そろっているときの開始 */
+  start(): void {
+    this.operate({ type: "start", joints: this.view.joints, debug: false });
+  }
+
+  /** いるスマホだけで始める。いない関節は、キーボードか画面のつまみで動かす */
+  startDebug(): void {
+    this.operate({ type: "start", joints: this.view.joints, debug: true });
+  }
+
+  /** 結果の画面から、同じ担当でもう一度 */
+  restart(): void {
+    this.operate({ type: "restart" });
+  }
+
+  /** お手本の自動操作を入れる・切る。スマホのいない関節だけが動く */
+  setAutoplay(autoplay: boolean): void {
+    this.update({ debug: { ...this.view.debug, autoplay } });
+  }
+
+  /** 画面のつまみで、スマホのいない関節を動かす。スマホのいる関節は受け付けない */
+  setInput(joint: Joint, value: number): void {
+    if (!this.isDebugControlled(joint)) return;
+    this.inputs[joint] = Math.min(1, Math.max(0, value));
+  }
+
+  /** つまみをつかんだ・離した。つかんでいる間は、お手本が値を上書きしない */
+  grab(joint: Joint, grabbed: boolean): void {
+    if (grabbed) this.grabbed.add(joint);
+    else this.grabbed.delete(joint);
+  }
+
+  /** 画面のつまみが毎フレーム読む、関節の今の入力 */
+  readInput(joint: Joint): number {
+    return this.inputs[joint];
+  }
+
+  /** 画面のつまみが毎フレーム読む、お手本の今の値 */
+  readDemo(joint: Joint): number {
+    return this.demo[joint];
+  }
+
+  /** つまみで動かせる関節か。スマホがいる関節は動かせない */
+  private isDebugControlled(joint: Joint): boolean {
+    const { flow } = this.view;
+    return flow.kind !== "lobby" && !flow.players.includes(joint);
+  }
+
+  // デバッグのときだけ回す。お手本の値を計算し、入れているなら、プレイ中の関節に書く
+  private readonly onFrame = (now: number): void => {
+    this.frame = requestAnimationFrame(this.onFrame);
+    const { flow, debug } = this.view;
+    const playing = flow.kind === "playing";
+    this.demo = demoGait(playing ? Math.max(0, now - this.playStartedAt) / 1000 : 0);
+    if (!playing || !debug.autoplay) return;
+    for (const joint of JOINTS) {
+      if (!flow.players.includes(joint) && !this.grabbed.has(joint)) {
+        this.inputs[joint] = this.demo[joint];
+      }
+    }
+  };
+
   private operate(event: FlowEvent): void {
-    const { room } = this.view;
-    if (this.game === undefined) return;
-    if (room.status !== "ready" || room.connection.status !== "open") return;
+    if (this.game === undefined || !canOperate(this.view)) return;
     this.dispatch(event);
   }
 
@@ -256,6 +350,7 @@ export class ScreenSession {
         this.countdownTimer = setTimeout(() => this.dispatch({ type: "tick" }), COUNT_MS);
         break;
       case "playing":
+        this.playStartedAt = performance.now();
         this.game?.start();
         break;
       case "result":

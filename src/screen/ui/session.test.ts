@@ -21,8 +21,10 @@ vi.mock("../../net/client.ts", () => ({
 }));
 vi.mock("../game/index.ts", async () => {
   const { NEUTRAL_INPUTS } = await import("../game/body.ts");
+  const { demoGait } = await import("../game/demo.ts");
   return {
     NEUTRAL_INPUTS,
+    demoGait,
     attachKeyboard: () => () => {},
     createGame: async (options: GameOptions) => {
       game = options;
