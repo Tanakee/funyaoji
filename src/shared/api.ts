@@ -82,3 +82,12 @@ export const SubmitRankingResponse = v.object({
   rankings: v.array(RankingEntry),
 });
 export type SubmitRankingResponse = v.InferOutput<typeof SubmitRankingResponse>;
+
+/**
+ * POST /api/rooms で断ったときのレスポンス（429）。
+ * too-many-requests は同じ IP からの連打、daily-limit はその日に作れる数を使い切ったとき
+ */
+export const CreateRoomRejected = v.object({
+  reason: v.picklist(["too-many-requests", "daily-limit"]),
+});
+export type CreateRoomRejected = v.InferOutput<typeof CreateRoomRejected>;

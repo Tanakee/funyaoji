@@ -52,7 +52,11 @@ class Inbox<T> {
 }
 
 async function createRoom(): Promise<string> {
-  const response = await fetch(new URL("/api/rooms", serverUrl), { method: "POST" });
+  // IP ごとの回数の上限（1分に10回）に当たらないように、呼ぶたびに別の IP にする
+  const response = await fetch(new URL("/api/rooms", serverUrl), {
+    method: "POST",
+    headers: { "cf-connecting-ip": crypto.randomUUID() },
+  });
   expect(response.status).toBe(200);
   const { roomCode } = (await response.json()) as CreateRoomResponse;
   return roomCode;
