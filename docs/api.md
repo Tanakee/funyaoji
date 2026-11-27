@@ -200,7 +200,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 ```
 
 - スクリーンは、`active` が変わったときに送る。変わらなくても、1秒に1回送る
-- `phase` を送った直後にも送る。スマホは `phase` を受け取ると、入力の状態を消すため
+- `phase`（`result` 以外）を送った直後にも送る。スマホは `phase` を受け取ると、入力の状態を消すため
 - 結果（`result`）のあいだは送らない
 
 ### ping、pong
