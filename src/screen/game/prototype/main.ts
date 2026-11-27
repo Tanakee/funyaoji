@@ -296,8 +296,10 @@ function buildUi(): void {
   };
   $<HTMLInputElement>("fastest").onchange = (e) => {
     fastestOn = (e.target as HTMLInputElement).checked;
+    const prev = DEMO;
     DEMO = pickDemo();
-    if (demo) $("demo").click();
+    // お手本が変わったときだけ、最初から再生し直す（体 A では変わらない）
+    if (demo && DEMO !== prev) $("demo").click();
   };
   $<HTMLInputElement>("guide").onchange = (e) => {
     guideOn = (e.target as HTMLInputElement).checked;

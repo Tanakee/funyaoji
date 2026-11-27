@@ -46,6 +46,8 @@ node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json
 node src/screen/game/prototype/lab/rl/openloop.ts --seeds 6 --out src/screen/game/prototype/lab/rl/body-b-fastest.json
 ```
 
+`--out` のファイルがすでにあれば、その歩き方を今の体で測り直し、探した歩き方がそれより速いときだけ書く（`--force` で必ず書く）。書いたファイルは `vp fmt` の形にそろえるので、そのままコミットできる。
+
 `/prototype` の「設定」で「お手本を、探索で出した最速の歩き方にする」を入れると、この歩き方をお手本として再生できる。
 
 `body-b-fastest.json` は体 B の値の写しを持つ。体（`body-b.json` と `main.ts` の `BODIES`）を変えたら、上のコマンドで作り直す。
