@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "vite-plus/test";
 import { JOINTS } from "../../shared/messages.ts";
 import { NEUTRAL_INPUTS } from "./body.ts";
-import { STALL_MS, Sim, initPhysics } from "./sim.ts";
+import { SIT_MS, Sim, initPhysics } from "./sim.ts";
 import type { JointInputs } from "./types.ts";
 
 const NEUTRAL: JointInputs = { ...NEUTRAL_INPUTS };
@@ -104,12 +104,20 @@ describe("Sim", () => {
     sim.free();
   });
 
-  test("立ったまま進まないと、STALL_MS で転倒と同じに終わる", () => {
+  test("立ったまま止まっていても、終わらない", () => {
     const sim = new Sim();
-    const s = run(sim, () => NEUTRAL, STALL_MS / 1000 + 5);
+    const s = run(sim, () => NEUTRAL, 20);
+    expect(s.result).toBeUndefined();
+    sim.free();
+  });
+
+  test("ひざを曲げて座り込むと、SIT_MS のあとに転倒と同じに終わる", () => {
+    const sim = new Sim();
+    const s = run(sim, () => ({ ...NEUTRAL, rightKnee: 1, leftKnee: 1 }), 20);
     expect(s.result?.outcome).toBe("fell");
-    expect(s.elapsedMs).toBeGreaterThanOrEqual(STALL_MS);
-    expect(s.elapsedMs).toBeLessThan(STALL_MS + 100);
+    // 座り込むまでに1秒ほどかかり、そこから SIT_MS 待つ
+    expect(s.elapsedMs).toBeGreaterThanOrEqual(SIT_MS);
+    expect(s.elapsedMs).toBeLessThan(SIT_MS + 3_000);
     sim.free();
   });
 

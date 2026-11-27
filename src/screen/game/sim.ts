@@ -22,11 +22,11 @@ export const GOAL_M = 10;
 /** 開始からこの時間でタイムアウト（docs/game.md）。仮の値で、遊んで直す */
 export const TIMEOUT_MS = 120_000;
 /**
- * この時間のうちに STALL_MIN_PROGRESS_M 以上進まないと、座り込んだとみなし、転倒と同じに終える（docs/game.md）。
- * 体がほとんど倒れないので、胴が地面に触れる転倒だけでは、座り込んだまま120秒待つことになる
+ * 胴の中心がこの高さ（m）より低い状態が SIT_MS 続いたら、座り込んだとみなし、転倒と同じに終える（docs/game.md）。
+ * 立っていると約1.3m、歩いていても1.2m より下がらない。ひざを深く曲げて座り込むと0.9m 以下になり、そこからは立ち上がれない
  */
-export const STALL_MS = 10_000;
-export const STALL_MIN_PROGRESS_M = 0.3;
+export const SIT_HEIGHT_M = 1.0;
+export const SIT_MS = 3_000;
 
 const GRAVITY = 9.81;
 // 体は地面とだけ当たる。左右の脚は互いにすり抜ける
@@ -78,8 +78,8 @@ export class Sim {
   private result: GameResult | undefined;
 
   private readonly timeoutMs: number;
-  /** 最後に STALL_MIN_PROGRESS_M 以上進んだときの距離と時刻。後ろに進んでも更新しない */
-  private progress = { distanceM: 0, atMs: 0 };
+  /** 胴が SIT_HEIGHT_M より低くなった時刻。低くなければ undefined */
+  private sittingSinceMs: number | undefined;
 
   constructor(timeoutMs: number = TIMEOUT_MS) {
     this.timeoutMs = timeoutMs;
@@ -162,12 +162,12 @@ export class Sim {
     this.steps++;
 
     const { poses, distanceM, elapsedMs } = this.readPose();
-    if (distanceM >= this.progress.distanceM + STALL_MIN_PROGRESS_M) {
-      this.progress = { distanceM, atMs: elapsedMs };
-    }
+    if (poses.torso.y >= SIT_HEIGHT_M) this.sittingSinceMs = undefined;
+    else this.sittingSinceMs ??= elapsedMs;
+    const sat = this.sittingSinceMs !== undefined && elapsedMs - this.sittingSinceMs >= SIT_MS;
     if (distanceM >= GOAL_M) {
       this.end({ outcome: "goal", distanceM, timeMs: Math.round(elapsedMs) });
-    } else if (touchesGround(poses.torso) || elapsedMs - this.progress.atMs >= STALL_MS) {
+    } else if (touchesGround(poses.torso) || sat) {
       this.end({ outcome: "fell", distanceM });
     } else if (elapsedMs >= this.timeoutMs) {
       this.end({ outcome: "timeout", distanceM });
