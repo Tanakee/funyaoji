@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { neutralInput } from "../../sim.ts";
-import { PolicyDriver, type Policy } from "../../policy.ts";
+import { ACTION_HZ, PolicyDriver, playableActionHz, type Policy } from "../../policy.ts";
 import { toParams, type Candidate } from "../candidate.ts";
 import { record, save } from "../record.ts";
 import type { Controller } from "../run.ts";
@@ -26,6 +26,13 @@ if (!policyPath) {
   process.exit(1);
 }
 const policy = JSON.parse(readFileSync(policyPath, "utf8")) as Policy;
+// run() は 1/60 秒ごとにしか AI を呼ばないので、学習と同じ間隔で行動を変えられない頻度は再生しない
+if (!playableActionHz(policy.actionHz ?? ACTION_HZ)) {
+  console.error(
+    `actionHz ${policy.actionHz} の重みは、この再生（1/60 秒ごと）では学習と同じ間隔にならない`,
+  );
+  process.exit(1);
+}
 const body = JSON.parse(readFileSync(bodyPath, "utf8")) as Candidate;
 const params = toParams(body.params);
 
