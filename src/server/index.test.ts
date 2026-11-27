@@ -98,8 +98,16 @@ class Client {
 /** これまでに作ったルームのコード */
 const createdRoomCodes = new Set<string>();
 
+/** POST /api/rooms を呼ぶ。ip を省くと、IP ごとの回数の上限に当たらないように、呼ぶたびに別の IP にする */
+function postRooms(ip: string = crypto.randomUUID()): Promise<Response> {
+  return fetch(new URL("/api/rooms", serverUrl), {
+    method: "POST",
+    headers: { "cf-connecting-ip": ip },
+  });
+}
+
 async function createRoom(): Promise<string> {
-  const response = await fetch(new URL("/api/rooms", serverUrl), { method: "POST" });
+  const response = await postRooms();
   expect(response.status).toBe(200);
   const { roomCode } = (await response.json()) as CreateRoomResponse;
   createdRoomCodes.add(roomCode);
@@ -140,6 +148,14 @@ describe("POST /api/rooms", () => {
   test("作るたびに別のルームコードを返す", async () => {
     const codes = await Promise.all([createRoom(), createRoom(), createRoom()]);
     expect(new Set(codes).size).toBe(codes.length);
+  });
+
+  test("同じ IP から1分に10回を超えると、429（too-many-requests）で断る", async () => {
+    const ip = crypto.randomUUID();
+    for (let i = 0; i < 10; i++) expect((await postRooms(ip)).status).toBe(200);
+    const response = await postRooms(ip);
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ reason: "too-many-requests" });
   });
 });
 
