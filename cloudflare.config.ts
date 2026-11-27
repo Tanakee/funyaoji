@@ -9,6 +9,7 @@ export default defineConfig({
     assets: { runWorkerFirst: ["/api/*"] },
     exports: {
       Room: exports.durableObject({ storage: "sqlite" }),
+      Ranking: exports.durableObject({ storage: "sqlite" }),
       RoomGate: exports.durableObject({ storage: "sqlite" }),
     },
     env: {
