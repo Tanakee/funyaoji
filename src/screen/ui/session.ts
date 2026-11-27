@@ -142,7 +142,7 @@ export class ScreenSession {
 
   /** ルームを作ってつなぎ、ゲームを作る。ページに1回だけ呼ぶ */
   open(): void {
-    this.detachKeyboard = attachKeyboard(this.inputs);
+    this.detachKeyboard = attachKeyboard(this.inputs, this.isKeyboardControlled);
     window.addEventListener("keydown", this.onKeyDown);
     this.statusTimer = setInterval(this.checkActive, ACTIVE_CHECK_MS);
     if (this.view.debug.enabled) {
@@ -330,6 +330,20 @@ export class ScreenSession {
     const { flow } = this.view;
     return flow.kind !== "lobby" && !flow.players.includes(joint);
   }
+
+  /**
+   * キーボードで動かしてよい関節か。カウントダウンとプレイ中の、スマホのいない関節だけ。
+   * つまみでつかんでいる関節と、お手本を入れている間は、そちらに任せる
+   */
+  private readonly isKeyboardControlled = (joint: Joint): boolean => {
+    const { flow, debug } = this.view;
+    return (
+      (flow.kind === "countdown" || flow.kind === "playing") &&
+      !flow.players.includes(joint) &&
+      !this.grabbed.has(joint) &&
+      !debug.autoplay
+    );
+  };
 
   // デバッグのときだけ回す。お手本の値を計算し、入れているなら、プレイ中の関節に書く
   private readonly onFrame = (now: number): void => {

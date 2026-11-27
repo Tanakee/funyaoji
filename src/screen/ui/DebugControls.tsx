@@ -124,7 +124,7 @@ function Strip({
   refs: React.RefObject<Refs>;
 }) {
   const slot = refs.current[joint];
-  const { up, down } = KEYBOARD_KEYS[joint];
+  const key = KEYBOARD_KEYS[joint];
   // 指の高さ（0 が下端、1 が上端）をそのまま入力にする。1人で何本も触るので、押した場所に飛ぶ
   const setFrom = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -164,7 +164,7 @@ function Strip({
             ? `切断中 あと${absentSec}秒`
             : phone
               ? "スマホ"
-              : `${up.label}/${down.label}`}
+              : `${key.label}キー`}
         </small>
       </div>
       <div

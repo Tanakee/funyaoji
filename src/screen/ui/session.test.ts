@@ -10,6 +10,7 @@ let game: GameOptions;
 const calls: string[] = [];
 let stopDistance = 3.2;
 const keydown: { listener?: (e: Partial<KeyboardEvent>) => void } = {};
+let keyboardControls: (joint: Joint) => boolean = () => false;
 
 vi.mock("../../net/api.ts", () => ({ createRoom: async () => "ABCD" }));
 vi.mock("../../net/client.ts", () => ({
@@ -27,7 +28,10 @@ vi.mock("../game/index.ts", async () => {
   return {
     NEUTRAL_INPUTS,
     demoGait,
-    attachKeyboard: () => () => {},
+    attachKeyboard: (_inputs: JointInputs, controls: (joint: Joint) => boolean) => {
+      keyboardControls = controls;
+      return () => {};
+    },
     createGame: async (options: GameOptions) => {
       game = options;
       return {
@@ -115,6 +119,23 @@ describe("ScreenSession", () => {
     room(["rightHip"]);
 
     expect(inputs().leftHip).toBe(0.9);
+  });
+
+  it("キーボードが動かすのは、カウントダウンとプレイ中の、スマホのいない関節だけ", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    expect(keyboardControls("leftHip")).toBe(false); // ロビー
+    press("Enter");
+    expect(keyboardControls("leftHip")).toBe(true); // カウントダウン
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(keyboardControls("rightHip")).toBe(false);
+    expect(keyboardControls("leftHip")).toBe(true);
+    // つまみでつかんでいる関節と、お手本の間は、そちらに任せる
+    session.grab("leftHip", true);
+    expect(keyboardControls("leftHip")).toBe(false);
+    session.grab("leftHip", false);
+    session.setAutoplay(true);
+    expect(keyboardControls("leftHip")).toBe(false);
   });
 
   it("やり直すと、前の走りのキーボードの入力を持ち越さない", async () => {
