@@ -8,10 +8,11 @@ import {
 // src/server/test-server.ts が立てた開発サーバーに、HTTP でつないで確かめる
 const serverUrl = inject("serverUrl");
 
-function submit(body: unknown): Promise<Response> {
+/** POST /api/rankings を呼ぶ。ip を省くと、IP ごとの回数の上限に当たらないように、呼ぶたびに別の IP にする */
+function submit(body: unknown, ip: string = crypto.randomUUID()): Promise<Response> {
   return fetch(new URL("/api/rankings", serverUrl), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "cf-connecting-ip": ip },
     body: JSON.stringify(body),
   });
 }
@@ -60,5 +61,18 @@ describe("/api/rankings", () => {
     }
     const response = await fetch(new URL("/api/rankings", serverUrl));
     expect(response.status).toBe(400);
+  });
+
+  // ローカルの Rate Limiting は時計の分の区切りで数え直すので、区切りをまたいでも断られるまで呼ぶ
+  test("同じ IP から続けて保存すると、429（too-many-requests）で断る", async () => {
+    const ip = crypto.randomUUID();
+    let response: Response | undefined;
+    for (let i = 0; i < 11; i++) {
+      response = await submit({ mode: "10m", teamName: "連打", timeMs: RANKING_MAX_TIME_MS }, ip);
+      if (response.status === 429) break;
+    }
+    expect(response?.status).toBe(429);
+    expect(response?.headers.get("Retry-After")).toBe("60");
+    expect(await response?.json()).toEqual({ reason: "too-many-requests" });
   });
 });

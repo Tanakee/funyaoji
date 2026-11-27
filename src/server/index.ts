@@ -7,6 +7,7 @@ import {
   type PingResponse,
   type RankingsResponse,
   type SubmitRankingResponse,
+  type TooManyRequests,
 } from "../shared/api.ts";
 import { Mode, type RejectedMessage } from "../shared/messages.ts";
 import {
@@ -91,13 +92,15 @@ app.get("/api/rankings", async (c) => {
   return c.json<RankingsResponse>({ mode: mode.output, rankings });
 });
 
-// 乱用対策（Issue #66）を掛けるときは、この前にミドルウェアを足す。検査で断るものは Durable Object を呼ばない
+// 値の検査と IP ごとの回数で断るものは、Durable Object を呼ばない（設計の「ランキング」）
 app.post("/api/rankings", async (c) => {
   const body: unknown = await c.req.json().catch(() => undefined);
   const parsed = v.safeParse(SubmitRankingRequest, body);
   if (!parsed.success) {
     return c.text(`ランキングに保存できない値です：${parsed.issues[0].message}`, 400);
   }
+  const rejected = await rejectTooManyRequests(c, c.env.RANKING_RATE_LIMIT);
+  if (rejected) return rejected;
   const result = await c.executionCtx.exports.Ranking.getByName(RANKING_OBJECT_NAME).submit(
     parsed.output,
   );
@@ -129,13 +132,8 @@ function generateRoomCode(): string {
  * 先に IP ごとの連打を調べ（Durable Object を使わない）、通ったものだけ門番で1日の数を調べる
  */
 async function rejectRoomCreation(c: Context<{ Bindings: Env }>): Promise<Response | undefined> {
-  const ip = c.req.header("cf-connecting-ip") ?? "unknown";
-  if (!(await c.env.ROOM_RATE_LIMIT.limit({ key: ip })).success) {
-    console.log({ event: "rejected", reason: "too-many-requests" });
-    return c.json<CreateRoomRejected>({ reason: "too-many-requests" }, 429, {
-      "Retry-After": "60",
-    });
-  }
+  const tooMany = await rejectTooManyRequests(c, c.env.ROOM_RATE_LIMIT);
+  if (tooMany) return tooMany;
   let resetsAt = roomGateClosedUntil;
   // 断られた応答が届くまでに日付が変わっていたら、新しい日の分を聞き直す（1回で足りる）
   for (let attempt = 0; Date.now() >= resetsAt && attempt < 2; attempt++) {
@@ -149,6 +147,20 @@ async function rejectRoomCreation(c: Context<{ Bindings: Env }>): Promise<Respon
   return c.json<CreateRoomRejected>({ reason: "daily-limit" }, 429, {
     "Retry-After": String(retryAfter),
   });
+}
+
+/**
+ * 同じ IP（cf-connecting-ip）から、limiter の回数を超えて呼ばれたら、429 のレスポンスを返す。超えていなければ undefined。
+ * Rate Limiting の期間は 60 秒なので、Retry-After は 60
+ */
+async function rejectTooManyRequests(
+  c: Context<{ Bindings: Env }>,
+  limiter: RateLimit,
+): Promise<Response | undefined> {
+  const ip = c.req.header("cf-connecting-ip") ?? "unknown";
+  if ((await limiter.limit({ key: ip })).success) return undefined;
+  console.log({ event: "rejected", reason: "too-many-requests", path: c.req.path });
+  return c.json<TooManyRequests>({ reason: "too-many-requests" }, 429, { "Retry-After": "60" });
 }
 
 function rejectNoRoom(): Response {

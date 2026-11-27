@@ -4,6 +4,7 @@ import {
   CreateRoomResponse,
   RankingsResponse,
   SubmitRankingResponse,
+  TooManyRequests,
   type RankingEntry,
   type SubmitRankingInput,
 } from "../shared/api.ts";
@@ -42,6 +43,16 @@ export async function submitRanking(input: SubmitRankingInput): Promise<SubmitRa
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
+  if (response.status === 429) {
+    const body: unknown = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    const rejected = v.safeParse(TooManyRequests, body);
+    if (rejected.success) {
+      throw new Error("保存する回数が多すぎます。1分ほど待ってから、もう一度送ってください");
+    }
+  }
   if (!response.ok) {
     throw new Error(`/api/rankings が ${response.status} を返しました：${await response.text()}`);
   }
