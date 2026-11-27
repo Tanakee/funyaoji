@@ -91,3 +91,7 @@ export const CreateRoomRejected = v.object({
   reason: v.picklist(["too-many-requests", "daily-limit"]),
 });
 export type CreateRoomRejected = v.InferOutput<typeof CreateRoomRejected>;
+
+/** IP ごとの回数を超えたときのレスポンス（429）。POST /api/rankings が断るのはこれだけ */
+export const TooManyRequests = v.object({ reason: v.literal("too-many-requests") });
+export type TooManyRequests = v.InferOutput<typeof TooManyRequests>;
