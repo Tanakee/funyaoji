@@ -31,7 +31,7 @@ export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 export const PlayResult = v.variant("outcome", [
   v.object({ outcome: v.literal("goal"), distanceM: FiniteNumber, timeMs: FiniteNumber }),
   v.object({
-    outcome: v.picklist(["fell", "timeout", "disconnected"]),
+    outcome: v.picklist(["fell", "disconnected"]),
     distanceM: FiniteNumber,
   }),
 ]);

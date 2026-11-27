@@ -4,7 +4,7 @@ import "./screen.css";
 
 type Outcome = PlayResult["outcome"];
 
-const outcomes: Outcome[] = ["goal", "fell", "timeout", "disconnected"];
+const outcomes: Outcome[] = ["goal", "fell", "disconnected"];
 
 export function isMockOutcome(value: string | null): value is Outcome {
   return outcomes.some((outcome) => outcome === value);
@@ -13,14 +13,12 @@ export function isMockOutcome(value: string | null): value is Outcome {
 const mockResults = {
   goal: { outcome: "goal", distanceM: 10, timeMs: 18_420 },
   fell: { outcome: "fell", distanceM: 6.35 },
-  timeout: { outcome: "timeout", distanceM: -1.25 },
   disconnected: { outcome: "disconnected", distanceM: 3.8 },
 } satisfies Record<Outcome, PlayResult>;
 
 const resultCopy: Record<Outcome, { label: string; title: string; note: string }> = {
   goal: { label: "GOAL", title: "ゴール！", note: "10m を走りきった！" },
   fell: { label: "FELL", title: "転倒", note: "おじさんが転んでしまった" },
-  timeout: { label: "TIME UP", title: "タイムアウト", note: "制限時間になりました" },
   disconnected: { label: "DISCONNECTED", title: "切断", note: "参加者との接続が切れました" },
 };
 
