@@ -82,34 +82,18 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
         </Center>
       );
     case "permission-denied":
-      // 2回続けて断られたら、許可の画面が出ていない（iOS が前の「許可しない」を覚えている）とみなす
-      if (state.denials >= 2) {
-        return (
-          <Notice
-            tone="danger"
-            title="許可の画面が出ません"
-            detail="iPhone は、一度「許可しない」を選ぶと、Safari を開いているあいだ覚えています。次の手順で開き直してください。"
-          >
-            <ol className="steps">
-              <li>画面の下から上にスワイプして、少し止める</li>
-              <li>Safari を上にスワイプして終了する</li>
-              <li>QR コードを読み取り直し、「参加」→「許可」を押す</li>
-            </ol>
-            <button className="big-button" type="button" onClick={onJoin}>
-              もう一度参加
-            </button>
-          </Notice>
-        );
-      }
+      // iOS は Safari を開き直すまで許可の画面を出さないので、やり直しのボタンは置かない
       return (
         <Notice
           tone="danger"
           title="傾きの読み取りが許可されていません"
-          detail="もう一度「参加」を押して「許可」を選んでください。"
+          detail="Safari を開き直すと、もう一度許可を選べます。"
         >
-          <button className="big-button" type="button" onClick={onJoin}>
-            もう一度参加
-          </button>
+          <ol className="steps">
+            <li>画面の下から上にスワイプして、少し止める</li>
+            <li>Safari を上にスワイプして終了する</li>
+            <li>QR コードを読み取り直し、「参加」→「許可」を押す</li>
+          </ol>
         </Notice>
       );
     case "connecting":
