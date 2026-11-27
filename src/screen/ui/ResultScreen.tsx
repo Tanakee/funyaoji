@@ -76,7 +76,7 @@ export function ResultScreen({ result }: { result: PlayResult }) {
       </div>
 
       <p className="result-hint">
-        <kbd>Space</kbd> か <kbd>R</kbd> でもう一度（同じ人で始めます）
+        <kbd>Space</kbd> か <kbd>R</kbd> でもう一度（同じ4人・同じ担当）
       </p>
     </main>
   );

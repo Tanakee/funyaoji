@@ -5,7 +5,7 @@ import type { ScreenView } from "./session.ts";
 type JointStatus = "active" | "idle" | "keyboard";
 
 /**
- * 4つの関節の入力の状態。スマホが傾いている（active）・スマホはいるが動いていない（idle）・
+ * 4つの関節の入力の状態。直近0.5秒に tilt が届いている（active）・スマホはいるが届いていない（idle）・
  * スマホがいなくてキーボード（keyboard）。active の集合が変わったときだけ描き直す
  */
 export function Hud({ view }: { view: ScreenView }) {
@@ -27,6 +27,6 @@ export function Hud({ view }: { view: ScreenView }) {
 
 const STATUS_TEXT: Record<JointStatus, string> = {
   active: "入力中",
-  idle: "待機",
+  idle: "入力なし",
   keyboard: "キーボード",
 };

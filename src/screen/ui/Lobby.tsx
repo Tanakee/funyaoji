@@ -39,7 +39,7 @@ export function Lobby({ view }: { view: ScreenView }) {
               return (
                 <li key={joint} className={`slot ${filled ? "slot--filled" : "slot--empty"}`}>
                   <span className="slot-joint">{JOINT_LABELS[joint]}</span>
-                  <span className="slot-state">{filled ? "参加中" : "待っています"}</span>
+                  <span className="slot-state">{filled ? "参加中" : "空き"}</span>
                 </li>
               );
             })}
@@ -48,11 +48,11 @@ export function Lobby({ view }: { view: ScreenView }) {
           <div className="lobby-start">
             <p className={full ? "start-row start-row--ready" : "start-row"}>
               <kbd>Space</kbd>
-              <span>{full ? "4人そろいました。押すと開始" : "4人そろったら、押して開始"}</span>
+              <span>{full ? "押して開始" : "4人そろったら、押して開始"}</span>
             </p>
             <p className="start-row start-row--debug">
               <kbd>Enter</kbd>
-              <span>デバッグ開始（いる人だけ。いない関節はキーボード）</span>
+              <span>デバッグ開始（空きの関節はキーボード操作）</span>
             </p>
           </div>
         </section>
@@ -98,6 +98,13 @@ function noticeText(view: ScreenView): string | undefined {
   return undefined;
 }
 
+/** 断られた理由（docs/api.md の rejected）を、画面に出す言葉にする */
+const REJECT_TEXT: Record<string, string> = {
+  full: "満員です",
+  playing: "プレイ中です",
+  "no-room": "ルームがありません",
+};
+
 function connectionNotice(
   state: ConnectionState,
   rejected: string | undefined,
@@ -110,6 +117,6 @@ function connectionNotice(
     case "reconnecting":
       return `サーバーとの接続が切れたので、つなぎ直しています（${state.attempt}回目）`;
     case "closed":
-      return `サーバーとの接続が切れました（${rejected ?? `close コード ${state.code}`}）。ページを読み込み直してください`;
+      return `サーバーとの接続が切れました（${rejected ? (REJECT_TEXT[rejected] ?? rejected) : `close コード ${state.code}`}）。ページを読み込み直してください`;
   }
 }

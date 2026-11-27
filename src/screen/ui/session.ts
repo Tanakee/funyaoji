@@ -144,7 +144,7 @@ export class ScreenSession {
       roomCode,
       {
         onStateChange: (connection) =>
-          // つながり直したら、前に断られた理由は消す
+          // つなぎ直したら、前に断られた理由は消す
           this.updateRoom(
             connection.status === "open" ? { connection, rejected: undefined } : { connection },
           ),

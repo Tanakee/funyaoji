@@ -41,7 +41,7 @@ function DebugBody({ session, view }: { session: ScreenSession; view: ScreenView
             <th>関節</th>
             <th>スマホ</th>
             <th>角度</th>
-            <th>番号</th>
+            <th>シーケンス番号</th>
             <th>遅延（最新 / 中央値）</th>
           </tr>
         </thead>
@@ -71,12 +71,12 @@ function latencyText(latency: Latency | undefined): string {
 function connectionText(state: ConnectionState): string {
   switch (state.status) {
     case "connecting":
-      return "つないでいます";
+      return "接続中";
     case "open":
-      return "つながっている";
+      return "接続済み";
     case "reconnecting":
-      return `つなぎ直し中（${state.attempt}回目）`;
+      return `再接続中（${state.attempt}回目）`;
     case "closed":
-      return `切れた（close コード ${state.code}）`;
+      return `切断（close コード ${state.code}）`;
   }
 }
