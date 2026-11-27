@@ -44,7 +44,11 @@ export async function submitRanking(input: SubmitRankingInput): Promise<SubmitRa
     body: JSON.stringify(input),
   });
   if (response.status === 429) {
-    const rejected = v.safeParse(TooManyRequests, await response.json().catch(() => null));
+    const body: unknown = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    const rejected = v.safeParse(TooManyRequests, body);
     if (rejected.success) {
       throw new Error("保存する回数が多すぎます。1分ほど待ってから、もう一度送ってください");
     }
