@@ -30,6 +30,22 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
         <ResultScreen session={session} view={view} result={flow.result} />
       )}
       <DebugPanel session={session} view={view} />
+      <div
+        className={`audio-controls${flow.kind === "lobby" || flow.kind === "result" ? " audio-controls--full" : ""}`}
+      >
+        <button type="button" aria-pressed={view.audio.muted} onClick={() => session.toggleMute()}>
+          {view.audio.muted ? "音を出す" : "ミュート"}（M）
+        </button>
+        <span role="status">
+          {view.audio.unavailable
+            ? "音を利用できません"
+            : view.audio.muted
+              ? "ミュート中"
+              : view.audio.ready
+                ? "音 ON"
+                : "キーかクリックで音を有効にする"}
+        </span>
+      </div>
     </>
   );
 }
