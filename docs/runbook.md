@@ -48,15 +48,18 @@ TODO：会場の Wi-Fi の名前と、スマホをどの回線につなぐかを
 
 リハーサルが終わったら、発表の前に1回だけ、ランキングを空にする。リハーサルや開発中の記録を、発表で出さないため（[設計](design.md) の「ランキング」）。
 
-1. `src/server/index.ts` の `RANKING_SEASON` を、前と違う値（発表の日付の `"2026-11-28"` など）に変える PR を出し、マージする
-2. 本番のデプロイが終わったら（`npx cf workers deployments list --worker funyaoji` で、先頭がそのあとのもの）、ランキングが空なのを確かめる
+1. `src/server/index.ts` の `RANKING_SEASON` を、本番でまだ使っていない値（発表の日付の `"2026-11-28"` など）に変える PR を出し、マージする。前に使った値（`dev` など）に戻すと、そのときの記録がまた見える
+2. そのコミットの `main` の CI と本番のデプロイが通ったことを確かめる（`gh run list --branch main --limit 4` で、CI と Deploy の両方が success）
+3. 今動いているバージョンが、そのデプロイのものかを確かめ、そのバージョンの ID を控える（`npx cf workers deployments list --worker funyaoji` の先頭）。これより前のバージョンには戻さない（下の「バージョンを戻す」）
+4. 会場の回線から、ランキングが空なのを確かめる
 
 ```sh
-curl https://funyaoji.team-sweater.workers.dev/api/rankings?mode=10m
+curl --fail --show-error 'https://funyaoji.team-sweater.workers.dev/api/rankings?mode=10m'
 # {"mode":"10m","rankings":[]} なら空
 ```
 
 - 前のシーズンの記録は消えずに、前の名前の Durable Object に残る。値を戻せば、また見える
+- シーズンを入れた PR（#97）のマージで、名前が `rankings` から `rankings-dev` に変わる。それまでの記録は表示から外れる（消えてはいない）
 - マージを止めている時間（上の「前日まで」の TODO）でも、この PR だけは入れる。デプロイの時間を見込んで、発表の前に余裕を持って行う
 
 ## 発表の最中
@@ -128,5 +131,6 @@ npx cf workers deployments create --worker funyaoji --strategy percentage \
 ```
 
 - Durable Objects のクラスを足した・消したバージョンをまたいでは、前のバージョンに戻せない
+- ランキングを空にしたあとは、そのデプロイ（上の「ランキングを空にする」で控えた ID）以降のバージョンにだけ戻す。それより前に戻すと、リハーサルの記録のシーズンに戻り、発表で保存した記録が見えなくなる
 - 戻すと、本番の内容が `main` とずれる。直した変更を `main` に入れると、また最新の `main` がデプロイされる
 - GitHub Actions が使えないときだけ、ローカルからデプロイする（`npx cf deploy`）。コミットしていない変更も本番に出るので、`main` と同じ状態で行う
