@@ -25,7 +25,7 @@ npm run dev
 
 | URL | ページ |
 |---|---|
-| `/screen` | スクリーンのページ。開くとルームを作って WebSocket で接続し、スマホ用の URL と、関節ごとに最後に受信した `tilt` を表示する。切れたら、つなぎ直さずに close コードを表示する |
+| `/screen` | スクリーンのページ。開くとルームを作って WebSocket で接続し、スマホ用の URL と、関節ごとに最後に受信した `tilt` を表示する。切れたら、同じルームに自動でつなぎ直す（[API](api.md) の「つなぎ直し」） |
 | `/screen?outcome=goal` | 結果画面のモック。トップページの「結果画面のモック」からも開ける。画面下のボタンでゴール・転倒・タイムアウト・切断を切り替える。ルームは作らない |
 | `/play` | スマホのページ |
 
@@ -37,7 +37,7 @@ npm run dev
 
 ローカルの Durable Objects のデータは、Local Explorer（`http://localhost:5173/cdn-cgi/local/explorer`）で見られる。
 
-スマホのページが無くても、スクリプトをスマホの代わりにつなげる。`/screen` に表示されたルームコードを渡すと、`role=phone` で接続し、`tilt` を毎秒30回送り続ける。`ping` には `pong` を返す。受信したメッセージを表示し、Ctrl+C ですべての台を閉じてから止まる。どれかの台が断られた（`rejected`）か、一度もつながらなかったときは、終了コード 1 で終わる。
+スマホのページが無くても、スクリプトをスマホの代わりにつなげる。`/screen` に表示されたルームコードを渡すと、`role=phone` で接続し、`tilt` を毎秒30回送り続ける。`ping` には、共通のクライアントが `pong` を返す。`ping`・`pong` とハートビート以外の受信したメッセージを表示し、Ctrl+C ですべての台を閉じてから止まる。台ごとにランダムな ID（`client`）を付けてつなぎ、切れたらスマホのページと同じようにつなぎ直す。どれかの台が、つなぎ直しても入れない理由で断られた（`rejected` の `no-room`・`full`）か、一度もつながらなかったときは、終了コード 1 で終わる。
 
 ```sh
 node scripts/fake-phone.ts <ルームコード>
@@ -68,7 +68,7 @@ Worker の名前と Durable Objects は `cloudflare.config.ts` に書く。CLI �
 | 環境 | URL | 更新のきっかけ |
 |---|---|---|
 | ローカル | `http://localhost:5173/` | `npm run dev` |
-| プレビュー | `https://<ブランチ名>-funyaoji.team-sweater.workers.dev/` | PR を出す・更新する |
+| プレビュー | `https://<ブランチ名>-funyaoji.team-sweater.workers.dev/` | PR を出す・更新する。PR を閉じると消える |
 | 本番 | `https://funyaoji.team-sweater.workers.dev/` | `main` にマージする |
 
 プレビューの URL は、PR のコメントに表示される。ブランチ名の `/` は `-` に置き換わる。デプロイの決まりと上限は [Cloudflare の注意点](cloudflare.md) にある。

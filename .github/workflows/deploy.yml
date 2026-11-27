@@ -2,6 +2,8 @@ name: Deploy
 
 on:
   pull_request:
+    # closed は、閉じた PR のプレビューを消すため
+    types: [opened, synchronize, reopened, closed]
   # 本番へのデプロイは、main の CI が通ってから行う
   workflow_run:
     workflows: [CI]
@@ -12,15 +14,17 @@ permissions:
   contents: read
   pull-requests: write
 
+# 同じブランチのデプロイと片付けは、同じグループで順に動かす。プレビューの名前はブランチ名で決まるため
+# （github.ref は、マージで閉じたときに base ブランチになるので使わない）
 concurrency:
-  group: deploy-${{ github.event_name == 'workflow_run' && 'production' || github.ref }}
+  group: deploy-${{ github.event_name == 'workflow_run' && 'production' || github.head_ref }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     # フォークからの PR には Secrets が渡らないので、何もしない。本番は、main への push の CI が成功したときだけ
     if: >-
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -57,3 +61,55 @@ jobs:
       - name: 本番にデプロイする
         if: github.event_name == 'workflow_run'
         run: npx cf deploy
+
+  cleanup:
+    runs-on: ubuntu-latest
+    # 閉じた（マージした）PR のプレビューを消す。そのプレビューの Durable Objects のデータも消える
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_SEND_TELEMETRY: "false"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 片付けは PR のコードを使わない。閉じた PR のマージ用のコミットは、古いか無いことがある
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: プレビューを消す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # cf previews deploy は、ブランチ名（GITHUB_HEAD_REF）をプレビューの名前にする
+          PREVIEW_NAME: ${{ github.head_ref }}
+        run: |
+          # 同じブランチの PR がまだ開いているなら、そのプレビューを使っているので消さない（閉じた run を開き直した後に再実行したときも）
+          open_prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$PREVIEW_NAME" --state open --json number -q length)
+          if [ "$open_prs" -gt 0 ]; then
+            echo "ブランチ $PREVIEW_NAME の PR がまだ開いているので、プレビューは消さない"
+            exit 0
+          fi
+
+          # 名前の URL エンコードは cf がする
+          if ! npx cf previews delete "$PREVIEW_NAME" --worker funyaoji --force 2> error.log; then
+            cat error.log >&2
+            # プレビューが無い（一度もデプロイされていない）ときは失敗にしない。cf は API のエラーコードを [10025] の形で出す。
+            # 404 だけで見ると、Worker が無いときも成功になってしまう
+            if ! grep -q '\[10025\]' error.log; then
+              exit 1
+            fi
+            echo "プレビュー $PREVIEW_NAME が無いので、消すものは無い"
+          fi
+
+          # プレビューの URL のコメントがあれば書き換える。無いときは何もしない
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --edit-last --body "プレビューは、PR を閉じたので消した" || true

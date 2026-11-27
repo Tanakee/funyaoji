@@ -4,6 +4,7 @@ import {
   connectPhone,
   connectScreen,
   type Connection,
+  type Latency,
   type PhoneReceived,
   type ScreenReceived,
 } from "./client.ts";
@@ -107,4 +108,26 @@ test("スマホが抜けた関節に次のスマホが入ると、シーケン�
   expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: ["rightHip"] });
   second.send({ type: "tilt", seq: 0, angle: 20 });
   expect(await screenInbox.next()).toEqual({ type: "tilt", seq: 0, angle: 20, joint: "rightHip" });
+});
+
+test("スクリーンが ping を送り、スマホが自動で返した pong から関節ごとの遅延を出す", async () => {
+  const roomCode = await createRoom();
+  const screenInbox = new Inbox<ScreenReceived>();
+  const latencyInbox = new Inbox<Partial<Record<string, Latency>>>();
+  const screen = connectScreen(
+    roomCode,
+    { onMessage: screenInbox.push, onLatency: latencyInbox.push },
+    { baseUrl: serverUrl },
+  );
+  openConnections.add(screen);
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: [] });
+
+  const phone = connectPhone(roomCode, { onMessage: () => {} }, { baseUrl: serverUrl });
+  openConnections.add(phone);
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: ["rightHip"] });
+
+  // 1秒ごとに届く。最初は ping を送る前なので空
+  let latency = await latencyInbox.next();
+  while (latency.rightHip === undefined) latency = await latencyInbox.next();
+  expect(latency.rightHip.latest).toBeGreaterThanOrEqual(0);
 });

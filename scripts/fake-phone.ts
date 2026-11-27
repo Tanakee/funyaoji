@@ -1,8 +1,11 @@
 // スマホの代わりにルームにつなぎ、tilt を送り続ける。スマホのページが無くても、スクリーンを確かめられる。
 // 使い方：node scripts/fake-phone.ts <ルームコード> [--url http://localhost:5173] [--phones 4]
-// どれかの台が断られた（rejected）か、一度もつながらなかったときは、終了コード 1 で終わる
+// 切れたら、スマホのページと同じように、同じ ID でつなぎ直す。
+// どれかの台が、つなぎ直しても入れない理由で断られた（rejected の no-room・full）か、一度もつながらなかったときは、終了コード 1 で終わる
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { connectPhone } from "../src/net/client.ts";
+import { createTiltSeq } from "../src/net/phone.ts";
 
 /** tilt を送る間隔（毎秒30回。docs/api.md の設計方針） */
 const TILT_INTERVAL_MS = 1000 / 30;
@@ -39,7 +42,9 @@ function exitAfterAllClosed(): void {
 
 for (let i = 0; i < phones; i++) {
   const name = `スマホ${i + 1}`;
-  let seq = 0;
+  // スマホのページは sessionStorage に ID を覚えるが、ここでは台ごとに作る
+  const clientId = randomUUID();
+  const nextSeq = createTiltSeq();
   let timer: NodeJS.Timeout | undefined;
   let opened = false;
   let rejected = false;
@@ -50,27 +55,30 @@ for (let i = 0; i < phones; i++) {
     {
       onMessage(message) {
         console.log(name, JSON.stringify(message));
-        if (message.type === "rejected") rejected = true;
+        if (message.type === "rejected" && message.reason !== "playing") rejected = true;
         if (message.type === "joined") {
+          // つなぎ直すと、もう一度 joined が届く
+          clearInterval(timer);
           timer = setInterval(() => {
             const t = ((Date.now() + offset) % SWING_PERIOD_MS) / SWING_PERIOD_MS;
             const angle = Math.round(45 - 45 * Math.cos(2 * Math.PI * t));
-            connection.send({ type: "tilt", seq: seq++, angle });
+            connection.send({ type: "tilt", seq: nextSeq(), angle });
           }, TILT_INTERVAL_MS);
         }
-        if (message.type === "ping") connection.send({ type: "pong", id: message.id });
       },
       onStateChange(state) {
         console.log(name, JSON.stringify(state));
         if (state.status === "open") opened = true;
+        // 一度もつながらないまま、つなぎ直しに入ったら、URL かサーバーが違う。試し続けずに終わる
+        if (state.status === "reconnecting" && !opened) connection.close();
+        if (state.status !== "open") clearInterval(timer);
         if (state.status !== "closed") return;
-        clearInterval(timer);
         if (rejected || !opened) failed = true;
         open--;
         if (open === 0) exitAfterAllClosed();
       },
     },
-    { baseUrl: values.url },
+    { baseUrl: values.url, clientId },
   );
   connections.push(connection);
 }

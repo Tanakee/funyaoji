@@ -26,10 +26,11 @@ class Client {
   /** つながったか。開く前に error になるか閉じたら false */
   readonly opened: Promise<boolean>;
 
-  /** role を省くと、クエリに role を付けない */
-  constructor(roomCode: string, role?: string) {
+  /** role を省くと、クエリに role を付けない。clientId を渡すと、クエリの client に付ける */
+  constructor(roomCode: string, role?: string, clientId?: string) {
     const url = new URL(`/api/rooms/${roomCode}/ws`, serverUrl);
     if (role !== undefined) url.searchParams.set("role", role);
+    if (clientId !== undefined) url.searchParams.set("client", clientId);
     url.protocol = "ws:";
     this.ws = new WebSocket(url);
     openClients.add(this);
@@ -105,13 +106,19 @@ async function createRoom(): Promise<string> {
   return roomCode;
 }
 
-/** スクリーンと、関節がすべて埋まるまでのスマホ4台をつなぐ */
-async function fillRoom(roomCode: string): Promise<{ screen: Client; phones: Client[] }> {
+/**
+ * スクリーンと、関節がすべて埋まるまでのスマホ4台をつなぐ。
+ * clientIds を渡すと、i 台目のスマホは clientIds[i] を client に付ける
+ */
+async function fillRoom(
+  roomCode: string,
+  clientIds: (string | undefined)[] = [],
+): Promise<{ screen: Client; phones: Client[] }> {
   const screen = new Client(roomCode, "screen");
   await screen.next();
   const phones: Client[] = [];
   for (let i = 0; i < 4; i++) {
-    const phone = new Client(roomCode, "phone");
+    const phone = new Client(roomCode, "phone", clientIds[i]);
     await phone.next(); // joined
     await screen.next(); // room
     phones.push(phone);
@@ -288,7 +295,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     // 古い接続に遅れて届かないことを確かめるため、少し待つ
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(screen.pending).toBe(0);
-    // 古い接続は、開発サーバーでは閉じたことが届かない（下の skip を参照）ので、閉じ終わるのを待たない
+    // 古い接続は、開発サーバーでは閉じたことが届かないので、閉じ終わるのを待たない
     void screen.close();
     await closeAll([screen2, ...phones]);
   });
@@ -303,5 +310,88 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     await screen2.next();
     expect(await screen.closed).toBe(4000);
     await screen2.close();
+  });
+
+  describe("スマホの ID（client）と関節の予約", () => {
+    const allJoints = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
+
+    test("予約している関節は、ほかのスマホに渡さない", async () => {
+      const roomCode = await createRoom();
+      const screen = new Client(roomCode, "screen");
+      await screen.next();
+      const a = new Client(roomCode, "phone", "a");
+      expect(await a.next()).toEqual({ type: "joined", joint: "rightHip" });
+      await screen.next();
+      await a.close();
+      expect(await screen.next()).toEqual({ type: "room", roomCode, joints: [] });
+
+      // ID の無いスマホも、別の ID のスマホも、予約されている rightHip には入らない
+      const noId = new Client(roomCode, "phone");
+      expect(await noId.next()).toEqual({ type: "joined", joint: "leftHip" });
+      const other = new Client(roomCode, "phone", "other");
+      expect(await other.next()).toEqual({ type: "joined", joint: "rightKnee" });
+      const fourth = new Client(roomCode, "phone");
+      expect(await fourth.next()).toEqual({ type: "joined", joint: "leftKnee" });
+      // 関節が予約で埋まっていれば、満員として断る
+      const fifth = new Client(roomCode, "phone");
+      expect(await fifth.next()).toEqual({ type: "rejected", reason: "full" });
+      expect(await fifth.closed).toBe(4001);
+      // 予約した本人は戻れる
+      const again = new Client(roomCode, "phone", "a");
+      expect(await again.next()).toEqual({ type: "joined", joint: "rightHip" });
+      await closeAll([screen, noId, other, fourth, again]);
+    });
+
+    test("同じ ID の接続がまだ開いているうちにつなぎ直すと、新しい接続に置き換え、関節は room から抜けない", async () => {
+      const roomCode = await createRoom();
+      const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
+      const again = new Client(roomCode, "phone", "c");
+      expect(await again.next()).toEqual({ type: "joined", joint: "rightKnee" });
+      expect(await again.next()).toEqual({ type: "room", roomCode, joints: allJoints });
+      expect(await screen.next()).toEqual({ type: "room", roomCode, joints: allJoints });
+      // 新しい接続の tilt は rightKnee として届く
+      await again.send(JSON.stringify({ type: "tilt", seq: 1, angle: 0 }));
+      expect(await screen.next()).toEqual({ type: "tilt", seq: 1, angle: 0, joint: "rightKnee" });
+      // 古い接続が閉じても、関節の抜けた room は届かない
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(screen.pending).toBe(0);
+      // 古い接続は、開発サーバーでは閉じたことが届かないので、閉じ終わるのを待たない
+      void phones[2]!.close();
+      await closeAll([screen, phones[0]!, phones[1]!, phones[3]!, again]);
+    });
+
+    test("プレイ中でも、予約か開いた接続のある ID のスマホは断らない。ほかのスマホは playing で断る", async () => {
+      const roomCode = await createRoom();
+      const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
+      const playing = { type: "phase", phase: "playing", mode: "10m" };
+      await screen.send(JSON.stringify(playing));
+      for (const phone of phones) {
+        // fillRoom のあとに届いた room を読み飛ばす
+        let message = await phone.next();
+        while ((message as { type: string }).type === "room") message = await phone.next();
+        expect(message).toEqual(playing);
+      }
+
+      // 予約のある ID
+      await phones[0]!.close();
+      await screen.next();
+      const returned = new Client(roomCode, "phone", "a");
+      expect(await returned.next()).toEqual({ type: "joined", joint: "rightHip" });
+      expect(await returned.next()).toEqual(playing);
+
+      // 接続がまだ開いている ID
+      const replaced = new Client(roomCode, "phone", "b");
+      expect(await replaced.next()).toEqual({ type: "joined", joint: "leftHip" });
+      expect(await replaced.next()).toEqual(playing);
+
+      // ID の無いスマホと、知らない ID のスマホ
+      for (const clientId of [undefined, "stranger"]) {
+        const stranger = new Client(roomCode, "phone", clientId);
+        expect(await stranger.next()).toEqual({ type: "rejected", reason: "playing" });
+        expect(await stranger.closed).toBe(4001);
+      }
+      void phones[1]!.close();
+      await closeAll([screen, phones[2]!, phones[3]!, returned, replaced]);
+    });
   });
 });
