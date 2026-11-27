@@ -1,4 +1,5 @@
 import { JOINTS, type Joint } from "../../shared/messages.ts";
+import { KEYBOARD_KEYS } from "../game/index.ts";
 import { JOINT_LABELS } from "./labels.ts";
 import type { ScreenView } from "./session.ts";
 
@@ -18,10 +19,25 @@ export function Hud({ view }: { view: ScreenView }) {
       {JOINTS.map((joint) => (
         <li key={joint} className={`hud-joint hud-joint--${status(joint)}`}>
           <span className="hud-joint-name">{JOINT_LABELS[joint]}</span>
-          <span className="hud-joint-state">{STATUS_TEXT[status(joint)]}</span>
+          {status(joint) === "keyboard" ? (
+            <KeyHint joint={joint} />
+          ) : (
+            <span className="hud-joint-state">{STATUS_TEXT[status(joint)]}</span>
+          )}
         </li>
       ))}
     </ul>
+  );
+}
+
+/** キーボードで動かす関節に、どのキーで何が起きるかを出す。覚えていなくても操作できるように */
+function KeyHint({ joint }: { joint: Joint }) {
+  const { up, down } = KEYBOARD_KEYS[joint];
+  const [upText, downText] = joint.endsWith("Hip") ? ["前", "後ろ"] : ["曲げる", "伸ばす"];
+  return (
+    <span className="hud-joint-keys">
+      <kbd>{up.label}</kbd> {upText} <kbd>{down.label}</kbd> {downText}
+    </span>
   );
 }
 

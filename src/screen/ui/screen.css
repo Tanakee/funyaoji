@@ -272,6 +272,23 @@ kbd {
   font-size: clamp(13px, 1.2vw, 18px);
   font-weight: 700;
 }
+.hud-joint-keys {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: clamp(14px, 1.3vw, 20px);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.hud-joint-keys kbd {
+  min-width: 1.8em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-keyboard);
+  font-size: 1.1em;
+  text-align: center;
+}
 
 /* 確かめるための折りたたみ。すみに小さく置く */
 .debug {
