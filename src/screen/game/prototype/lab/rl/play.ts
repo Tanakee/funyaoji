@@ -4,6 +4,7 @@
 // 使い方：node src/screen/game/prototype/lab/rl/play.ts <policy.json> [--out <記録.json>] [--label <名前>] [--body <候補.json>]
 //   記録は lab/render.ts で動画にできる
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { neutralInput } from "../../sim.ts";
 import { PolicyDriver, type Policy } from "../../policy.ts";
 import { toParams, type Candidate } from "../candidate.ts";
@@ -14,7 +15,7 @@ const args = process.argv.slice(2);
 const policyPath = args[0];
 let out: string | undefined;
 let label = "AI";
-let bodyPath = new URL("./body-b.json", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+let bodyPath = fileURLToPath(new URL("./body-b.json", import.meta.url));
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--out") out = args[++i];
   else if (args[i] === "--label") label = args[++i]!;
@@ -25,7 +26,7 @@ if (!policyPath) {
   process.exit(1);
 }
 const policy = JSON.parse(readFileSync(policyPath, "utf8")) as Policy;
-const body = JSON.parse(readFileSync(decodeURIComponent(bodyPath), "utf8")) as Candidate;
+const body = JSON.parse(readFileSync(bodyPath, "utf8")) as Candidate;
 const params = toParams(body.params);
 
 let driver: PolicyDriver | undefined;

@@ -48,6 +48,6 @@ node src/screen/game/prototype/lab/rl/play.ts ml/runs/free/policy.json
 | `ml/funyaoji_rl/vec_env.py` | Node のプロセスを並べて、Stable-Baselines3 の環境にする |
 | `ml/funyaoji_rl/train.py` | PPO で学習し、重みを JSON に書き出す |
 
-- 行動は4つの関節の入力（0〜1）。毎秒30回（スマホの `tilt` と同じ）変える
+- 行動は4つの関節の入力（0〜1）。毎秒30回（スマホの `tilt` と同じ）変える。`--config` の `actionHz` で変えたときは、その値を重みの JSON（`actionHz`）に書き、再生も同じ頻度にする
 - 観測は20個の数（胴の高さ・傾き・速度、関節の角度と回る速さ、足の接地、前の行動）。前後の位置は入れない
 - ニューラルネットは 64 個のユニットが2層。ブラウザでは `policy.ts` が計算するので、推論のサーバーは要らない

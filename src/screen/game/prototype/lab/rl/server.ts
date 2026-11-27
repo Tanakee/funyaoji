@@ -15,7 +15,7 @@ import { observe, OBS_DIM, ACTION_HZ } from "../../policy.ts";
 export interface EnvConfig {
   /** 体と操作の設定。DEFAULT_PARAMS との差分 */
   params: Candidate["params"];
-  /** 行動を変える頻度（1秒あたり）。スマホの tilt と同じ 30 が標準 */
+  /** 行動を変える頻度（1秒あたり）。スマホの tilt と同じ 30 が標準。重みの JSON にも書き、再生で同じ頻度にする */
   actionHz: number;
   /** 打ち切る時間（秒） */
   maxTime: number;
@@ -32,7 +32,7 @@ export interface EnvConfig {
   wSmooth: number;
   /** 報酬：両足が浮いているステップ（負の値で、跳ねなくなる） */
   wAir: number;
-  /** 胴がこの高さ（立った姿勢より上、m）を超えたら、転倒と同じ扱いで終わる。0 で無し */
+  /** 胴がこの高さ（立った姿勢より上、m）を超えたら、転倒と同じ扱いで終わる（ゴールより先に見る）。0 で無し */
   maxJump: number;
   /** 前に進む報酬を数える速さの上限（m/s）。0 で無し */
   speedCap: number;
@@ -90,6 +90,8 @@ class Env {
   }
 
   reset(): number[] {
+    // 古い Sim の World を返さないと、1話ごとに WebAssembly のメモリが残る
+    this.sim?.free();
     this.sim = new Sim(this.params);
     const n = neutralInput(this.params.mode);
     this.prev = JOINTS.map((j) => n[j]);
@@ -115,7 +117,8 @@ class Env {
     JOINTS.forEach((j, i) => (input[j] = u[i]!));
     let airSteps = 0;
     let jumped = false;
-    for (let k = 0; k < this.sub && !s.ended; k++) {
+    // 跳んだらそこで止める。同じ区間で 10m に着いても、ゴールにしない
+    for (let k = 0; k < this.sub && !s.ended && !jumped; k++) {
       s.step(input);
       this.steps++;
       this.peakSpeed = Math.max(this.peakSpeed, Math.abs(s.torso.linvel().x));
@@ -138,12 +141,12 @@ class Env {
       cfg.wForward * dx + cfg.wTime * dt + cfg.wSmooth * smooth + cfg.wAir * (airSteps / this.sub);
 
     let ended: Ended | undefined;
-    if (s.ended === "goal") {
-      ended = "goal";
-      rew += cfg.goalBonus;
-    } else if (s.ended === "fell" || jumped) {
+    if (jumped || s.ended === "fell") {
       ended = jumped ? "jump" : "fell";
       rew += cfg.fallPenalty;
+    } else if (s.ended === "goal") {
+      ended = "goal";
+      rew += cfg.goalBonus;
     } else if (s.time >= cfg.maxTime) {
       ended = "timeout";
     } else if (s.distance > this.progressX + 0.3) {
