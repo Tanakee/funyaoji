@@ -29,7 +29,7 @@ export type PhoneState =
       /** 接続中のスマホの数 */
       count: number;
       phase: RoomPhase;
-      /** 自分の関節に、スクリーンへの入力が届いている（プレイ中だけ意味がある） */
+      /** 自分の関節の入力がスクリーンに届いている（プレイ中だけ意味がある） */
       active: boolean;
       /** reconnecting のあいだも、関節などの表示は残す */
       link: "open" | "reconnecting";

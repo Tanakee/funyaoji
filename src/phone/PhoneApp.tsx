@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, type ReactNode } from "react";
-import type { PlayResult } from "../shared/messages.ts";
+import { JOINTS, type PlayResult } from "../shared/messages.ts";
 import { Gauge } from "./Gauge.tsx";
 import { JOINT_LABELS } from "./joints.ts";
 import { initialState, reduce, type PhoneState, type RejectReason } from "./model.ts";
@@ -7,7 +7,7 @@ import { startSession } from "./session.ts";
 import { requestTiltPermission } from "./tilt.ts";
 
 /** 全員そろう人数 */
-const PLAYERS = 4;
+const PLAYERS = JOINTS.length;
 
 const REJECT_NOTICES: Record<RejectReason, { title: string; detail: string }> = {
   full: { title: "満員です", detail: "このルームは4人そろっています。" },
@@ -16,15 +16,15 @@ const REJECT_NOTICES: Record<RejectReason, { title: string; detail: string }> = 
     detail: "いまのプレイが終わるまで待ってください。終わると自動で参加します。",
   },
   "no-room": {
-    title: "ルームが無い",
-    detail: "スクリーンのQRコードをもう一度読み取ってください。",
+    title: "ルームがありません",
+    detail: "スクリーンの QR コードをもう一度読み取ってください。",
   },
 };
 
 const OUTCOME_LABELS: Record<PlayResult["outcome"], string> = {
   goal: "ゴール！",
   fell: "転倒",
-  timeout: "時間切れ",
+  timeout: "タイムアウト",
   disconnected: "切断",
 };
 
@@ -86,8 +86,8 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
       return (
         <Notice
           tone="danger"
-          title="傾きの読み取りが許可されていない"
-          detail="もう一度「参加」を押して、「許可」を選んでください。許可の画面が出ないときは、設定の Safari → 「モーションと画面の向きへのアクセス」をオンにして、このページを読み込み直してください。"
+          title="傾きの読み取りが許可されていません"
+          detail="もう一度「参加」を押して「許可」を選んでください。許可の画面が出ないときは、Safari を終了して開き直し、QR コードを読み取り直してください。"
         >
           <button className="big-button" type="button" onClick={onJoin}>
             もう一度参加
@@ -112,7 +112,7 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
       return (
         <Notice
           tone="danger"
-          title={state.replaced ? "別のタブで開かれました" : "つながりが切れました"}
+          title={state.replaced ? "別のタブで開かれました" : "接続が切れました"}
           detail={
             state.replaced
               ? "このタブは使えません。続けるには、読み込み直してください。"
@@ -139,7 +139,7 @@ function Joined({ state }: { state: Extract<PhoneState, { kind: "joined" }> }) {
         <p className="caption">あなたの担当</p>
         <h1 className="joint-name">{label.name}</h1>
         <p className="joint-hint">
-          立てる＝{label.upright} ／ 寝かせる＝{label.flat}
+          寝かせる＝{label.flat} ／ 立てる＝{label.upright}
         </p>
       </section>
       <Gauge />

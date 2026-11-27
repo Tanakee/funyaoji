@@ -4,14 +4,14 @@ import type { Joint } from "../shared/messages.ts";
 export interface JointLabel {
   /** 関節の名前 */
   name: string;
-  /** 傾きを立てたとき（90度）の動き */
+  /** スマホを立てたとき（90度）の動き */
   upright: string;
-  /** 傾きを寝かせたとき（0度）の動き */
+  /** スマホを寝かせたとき（0度）の動き */
   flat: string;
 }
 
 const HIP = { upright: "前へ", flat: "後ろへ" } as const;
-const KNEE = { upright: "曲げる", flat: "まっすぐ" } as const;
+const KNEE = { upright: "曲げる", flat: "伸ばす" } as const;
 
 export const JOINT_LABELS: Record<Joint, JointLabel> = {
   rightHip: { name: "右もも", ...HIP },
