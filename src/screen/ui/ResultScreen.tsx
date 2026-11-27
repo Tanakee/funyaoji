@@ -1,20 +1,7 @@
-import { useState } from "react";
 import type { PlayResult } from "../../shared/messages.ts";
-import "./screen.css";
+import type { ScreenSession, ScreenView } from "./session.ts";
 
 type Outcome = PlayResult["outcome"];
-
-const outcomes: Outcome[] = ["goal", "fell", "disconnected"];
-
-export function isMockOutcome(value: string | null): value is Outcome {
-  return outcomes.some((outcome) => outcome === value);
-}
-
-const mockResults = {
-  goal: { outcome: "goal", distanceM: 10, timeMs: 18_420 },
-  fell: { outcome: "fell", distanceM: 6.35 },
-  disconnected: { outcome: "disconnected", distanceM: 3.8 },
-} satisfies Record<Outcome, PlayResult>;
 
 const resultCopy: Record<Outcome, { label: string; title: string; note: string }> = {
   goal: { label: "GOAL", title: "ゴール！", note: "10m を走りきった！" },
@@ -22,26 +9,21 @@ const resultCopy: Record<Outcome, { label: string; title: string; note: string }
   disconnected: { label: "DISCONNECTED", title: "切断", note: "参加者との接続が切れました" },
 };
 
-function initialOutcome(): Outcome {
-  const requested = new URLSearchParams(window.location.search).get("outcome");
-  return outcomes.find((outcome) => outcome === requested) ?? "goal";
-}
-
-export function ResultScreen() {
-  const [outcome, setOutcome] = useState<Outcome>(initialOutcome);
-  const result = mockResults[outcome];
+export function ResultScreen({
+  session,
+  view,
+  result,
+}: {
+  session: ScreenSession;
+  view: ScreenView;
+  result: PlayResult;
+}) {
+  const { outcome } = result;
   const copy = resultCopy[outcome];
 
-  function selectOutcome(next: Outcome) {
-    setOutcome(next);
-    const url = new URL(window.location.href);
-    url.searchParams.set("outcome", next);
-    window.history.replaceState(null, "", url);
-  }
-
   return (
-    <main className={`result-screen result-screen--${outcome}`}>
-      <header className="result-header">
+    <main className={`overlay result-screen result-screen--${outcome}`}>
+      <header className="screen-header">
         <div className="brand-mark" aria-hidden="true">
           ふ
         </div>
@@ -101,19 +83,18 @@ export function ResultScreen() {
         </section>
       </div>
 
-      <nav className="mock-controls" aria-label="モック結果の切り替え">
-        <span className="mock-controls-label">表示確認</span>
-        {outcomes.map((item) => (
-          <button
-            key={item}
-            type="button"
-            aria-pressed={outcome === item}
-            onClick={() => selectOutcome(item)}
-          >
-            {resultCopy[item].title}
-          </button>
-        ))}
-      </nav>
+      <p className="result-hint">
+        <kbd>Space</kbd> か <kbd>R</kbd> でもう一度（同じ4人・同じ担当）
+      </p>
+      {view.debug.enabled && (
+        <button
+          type="button"
+          className="debug-button debug-button--start"
+          onClick={() => session.restart()}
+        >
+          もう一度
+        </button>
+      )}
     </main>
   );
 }
