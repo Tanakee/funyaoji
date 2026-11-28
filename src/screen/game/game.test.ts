@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { NEUTRAL_INPUTS } from "./body.ts";
 import { createGame } from "./game.ts";
 import type { SimOptions } from "./sim.ts";
+import type { View } from "./view.ts";
 
 // 作った Sim に渡したオプションを、作った順に残す
 const created = vi.hoisted(() => [] as (SimOptions | undefined)[]);
@@ -17,20 +18,32 @@ vi.mock("./sim.ts", async (importOriginal) => {
   return { ...original, Sim: RecordedSim };
 });
 
-// 描画（PixiJS）は使わない。フレームはテストが進める
+// 描画（PixiJS）は使わない。フレームはテストが進める。
+// 本物の View の形で作るので、View にメソッドが増えたら、ここが型エラーになる
 let frame: ((dtSec: number) => void) | undefined;
-vi.mock("./view.ts", () => ({
-  createView: async () => ({
-    setScene() {},
-    onFrame(callback: (dtSec: number) => void) {
-      frame = callback;
-    },
-    setSeats() {},
-    setExpression() {},
-    render() {},
-    destroy() {},
-  }),
-}));
+vi.mock("./view.ts", () => {
+  const createView: typeof import("./view.ts").createView = async () => {
+    let speech: string | undefined;
+    const view: View = {
+      setScene() {},
+      onFrame(callback) {
+        frame = callback;
+      },
+      setSeats() {},
+      setExpression() {},
+      say(text) {
+        speech = text;
+      },
+      get speech() {
+        return speech;
+      },
+      render() {},
+      destroy() {},
+    };
+    return view;
+  };
+  return { createView };
+});
 
 beforeEach(() => {
   created.length = 0;
