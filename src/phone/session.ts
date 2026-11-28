@@ -33,6 +33,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
         stopSending = undefined;
         joined = false;
         if (state.status === "closed") {
+          stopReading();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         }
