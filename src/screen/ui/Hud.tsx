@@ -1,6 +1,6 @@
+import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { KEYBOARD_KEYS } from "../game/index.ts";
-import { JOINT_LABELS } from "./labels.ts";
 import { keyboardDrives, type ScreenView } from "./session.ts";
 
 type JointStatus = "active" | "idle" | "keyboard" | "absent";
@@ -27,7 +27,7 @@ export function Hud({ view }: { view: ScreenView }) {
     <ul className="hud" aria-label="入力の状態">
       {JOINTS.map((joint) => (
         <li key={joint} className={`hud-joint hud-joint--${status(joint)}`}>
-          <span className="hud-joint-name">{JOINT_LABELS[joint]}</span>
+          <span className="hud-joint-name">{JOINT_DISPLAY[joint].name}</span>
           {/* キーの案内は、キーボードが効いているときだけ（結果の画面では出さない） */}
           {keyboardDrives(view, joint) ? (
             <KeyHint joint={joint} />
