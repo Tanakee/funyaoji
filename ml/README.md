@@ -139,11 +139,27 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 スマホ向けの難しさの調整などで物理（`sim.ts`・`body.ts`・Rapier）が変わると、理論値の記録（`theory.json`）は同じタイムを出さなくなり、`theory.test.ts` が落ちる。
 
-1. PR で物理に関わるファイルが変わると、ワークフロー「理論値の記録の作り直し」が、物理の指紋を `theory.json` のものと比べる（`node scripts/rl/fingerprint.ts`）
-2. 違っていれば、`pipeline.py` を流す（GitHub のマシンで数時間）。学習の記録と動画は、ワークフローの成果物（Artifacts）に 30 日残る
-3. 新しい `theory.json` を入れた PR（ブランチ `chore/retrain-<PR の番号>`）が、元の PR のブランチに向けて出る
-4. 動画で走りを見てから、その PR をマージする。元の PR の `theory.test.ts` が通るようになる
+1. PR で物理に関わるファイルが変わると、ワークフロー「理論値の記録の作り直し」が、マージした結果の物理で `theory.json` を確かめる（`node scripts/rl/fingerprint.ts`）。物理の指紋が違うか、再生して記録したタイムでゴールしなければ、「変わった」とする
+2. 変わっていれば、同じマージした結果で `pipeline.py` を流す（GitHub のマシンで数時間）。このジョブは読むだけの権限で動く。終わったら、新しい記録で `theory.test.ts` と `fingerprint.ts` が通ることを確かめる
+3. 新しい `theory.json` を入れた PR（ブランチ `chore/retrain-<PR の番号>`。元の PR のブランチから切る）が、元の PR のブランチに向けて出る。PR を出すジョブは、PR のコードを動かさない
+4. 成果物 `theory-<実行の番号>` の動画（`ml/runs/theory-export/theory.gif`・`theory.mp4`。書き出した記録だけを再生したもの）で走りを見てから、その PR をマージする。元の PR の `theory.test.ts` が通るようになる
 
 - 新しい物理では前の記録と比べないので、前より遅くても差し替える
+- 元の PR を直しても、物理が同じなら学習はやり直さない。同じ物理の学習が進んでいればそれに任せ、前に出した PR の記録が今の物理で使えれば、その PR をマージすればよい。物理が変わったときだけ、進んでいる学習を止めて始め直す
+- 同じ PR でもう一度流すと、前に出した PR を更新する（本文のタイムと成果物のリンクも新しくなる）
+- 物理が同じでも学習し直したいときは、Actions の画面から手で流し、`force` を付ける
+- フォークからの PR では流れない
 - ワークフローが出した PR では、GitHub の決まりで CI が自動では流れない。必要なら閉じて開き直す
+- ワークフローに PR を作らせるには、リポジトリの設定（Settings → Actions → General）の「Allow GitHub Actions to create and approve pull requests」が要る。切ってあると、ブランチを push したところで止まり、手で PR を作るリンクをエラーに出す
 - 手元で流してもよい：`uv run python -m funyaoji_rl.pipeline` のあと、`theory.json` をコミットする
+
+### 成果物の見方
+
+ワークフローの成果物は 30 日残る。
+
+| 成果物 | 中身 |
+|---|---|
+| `theory-<実行の番号>` | 新しい `theory.json` と、それだけを再生した動画（`ml/runs/theory-export/`） |
+| `ml-retrain-<実行の番号>` | 学習の記録（`ml/mlflow.db`・`ml/mlartifacts/`）と、`ml/runs/` の記録・動画 |
+
+- `mlflow.db` を手元の `mlflow ui` で開くと、パラメータとメトリクスは見える。ただし成果物の場所が CI のマシンのパスになっているので、MLflow の画面からは動画や記録を開けない。動画と記録は、展開した成果物の `ml/runs/<run の名前>/` を直接見る
