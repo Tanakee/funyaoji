@@ -74,12 +74,14 @@ def issue_embed:
 
 def workflow_run_embed:
   .workflow_run as $w
+  # run の name は run-name の値になる（Deploy はコミットを入れている）ので、ワークフローはファイルで見分ける
+  | ($w.path | ltrimstr(".github/workflows/")) as $file
   | if .action != "completed" or $w.head_branch != "main" then empty
     # 本番へのデプロイは main の CI のあとに workflow_run で動く。main への push の CI と、その Deploy だけを知らせる
-    elif $w.event != (if $w.name == "Deploy" then "workflow_run" else "push" end) then empty
-    elif $w.name == "CI" and ($w.conclusion | failed) then ["main の CI が落ちた", red]
-    elif $w.name == "Deploy" and $w.conclusion == "success" then ["本番にデプロイした", green]
-    elif $w.name == "Deploy" and ($w.conclusion | failed) then ["本番へのデプロイが落ちた", red]
+    elif $w.event != (if $file == "deploy.yml" then "workflow_run" else "push" end) then empty
+    elif $file == "ci.yml" and ($w.conclusion | failed) then ["main の CI が落ちた", red]
+    elif $file == "deploy.yml" and $w.conclusion == "success" then ["本番にデプロイした", green]
+    elif $file == "deploy.yml" and ($w.conclusion | failed) then ["本番へのデプロイが落ちた", red]
     else empty end
   # Deploy の head_sha は、動き出したときの main の最新で、デプロイしたコミットと違うことがある。
   # Deploy は run の名前を「<コミットの1行目> (<SHA>)」にしているので、そこから読む
