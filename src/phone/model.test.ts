@@ -242,8 +242,16 @@ describe("reduce", () => {
       connection({ status: "open" }),
       message({ type: "rejected", reason: "playing" }),
     ]);
-    expect(state).toEqual({ kind: "waiting" });
+    expect(state).toEqual({ kind: "waiting", reason: "playing" });
   });
+  it("順番待ちのあいだに断られた理由が変わったら、reason を置き換える", () => {
+    const waiting = run([...grantedEvents, message({ type: "rejected", reason: "playing" })]);
+    expect(reduce(waiting, message({ type: "rejected", reason: "full" }))).toEqual({
+      kind: "waiting",
+      reason: "full",
+    });
+  });
+
   it("ルームコードが無ければ invalid-room", () => {
     expect(initialState(undefined)).toEqual({ kind: "invalid-room" });
   });
@@ -292,7 +300,7 @@ describe("reduce", () => {
         rejection,
         connection({ status: "reconnecting", attempt: 1 }),
       ]);
-      expect(waiting).toEqual({ kind: "waiting" });
+      expect(waiting).toEqual({ kind: "waiting", reason });
       expect(reduce(waiting, rejection)).toBe(waiting);
       const joined = reduce(waiting, message({ type: "joined", joint: "rightHip" }));
       expect(joined).toMatchObject({ kind: "joined", joint: "rightHip", phase: { kind: "lobby" } });
