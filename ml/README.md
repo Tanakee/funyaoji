@@ -143,7 +143,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 スマホ向けの難しさの調整などで物理（`sim.ts`・`body.ts`・Rapier）が変わると、理論値の記録（`src/screen/game/ai/theory/<モード>.json`）は同じタイムを出さなくなり、`theory.test.ts` が落ちる。モードの一覧（`src/screen/game/modes.ts`）にモードを足したときも、そのモードの記録が無いので、同じ流れで記録ができる。
 
 1. PR で物理に関わるファイルが変わると、ワークフロー「理論値の記録の作り直し」が、マージした結果の物理で、一覧のモードごとに記録を確かめる（`node scripts/rl/fingerprint.ts`）。記録が無いか、物理の指紋が違うか、再生して記録したタイムでゴールしなければ、そのモードは「変わった」とする
-2. 変わったモードがあれば、同じマージした結果で、そのモードごとに別のマシンで並べて `pipeline.py --mode <モード>` を流す（GitHub のマシンで数時間）。このジョブは読むだけの権限で動く。終わったら、新しい記録で、そのモードの `theory.test.ts` と `fingerprint.ts` が通ることを確かめる
+2. 変わったモードがあれば、同じマージした結果で、そのモードごとに別のマシンで並べて `pipeline.py --mode <モード>` を流す（GitHub のマシンで数時間）。リポジトリの変数 `ML_TRAIN_RUNNER` があれば、このジョブだけをチームのマシンの self-hosted runner（[runner/README.md](runner/README.md)。1モード約 35 分）で流す（docs/ml.md の「どこで学習を流すか」）。このジョブは読むだけの権限で動く。終わったら、新しい記録で、そのモードの `theory.test.ts` と `fingerprint.ts` が通ることを確かめる
 3. 全部のモードの学習が終わると、その時点の PR のマージした結果で記録を確かめ直し、今の物理で使える記録（この実行のものと、前に出した PR のもの）だけを1つのコミットに入れた PR（ブランチ `chore/retrain-<PR の番号>`。元の PR のブランチから切る）が、元の PR のブランチに向けて出る。PR を出すジョブは、PR のコードを動かさない。どれかのモードの学習が落ちたら PR は出ないので、落ちたジョブだけを「Re-run failed jobs」で流し直す
 4. 成果物 `theory-<実行の番号>-<モード>` の動画（`ml/runs/theory-export/<モード>/theory.gif`・`theory.mp4`。書き出した記録だけを再生したもの）で走りを見てから、その PR をマージする。元の PR の `theory.test.ts` が通るようになる
 
