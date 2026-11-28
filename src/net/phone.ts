@@ -1,14 +1,15 @@
 // スマホのページが使う、つなぎ直しのための小さな道具（docs/api.md の「つなぎ直し」）
 
-/** sessionStorage に ID を覚えておくキー */
+/** localStorage に ID を覚えておくキー */
 const CLIENT_ID_KEY = "funyaoji.clientId";
 
 /**
  * スマホの ID。connectPhone の clientId に渡す。
- * タブごとに sessionStorage に覚えるので、同じタブで読み込み直しても同じ ID になり、同じ関節に戻れる。
- * sessionStorage が使えない（プライベートブラウズなど）ときも、このページを開いているあいだは同じ ID を返す
+ * ブラウザごとに localStorage に覚えるので、読み込み直しても、QR コードを読み直して別のタブで開いても同じ ID になる。
+ * 同じ ID のあとからつないだタブが前のタブを置き換える（4000）ので、1台のスマホで2つの関節を持てない。
+ * localStorage が使えない（プライベートブラウズなど）ときも、このページを開いているあいだは同じ ID を返す
  */
-export function phoneClientId(storage: KeyValueStorage | undefined = session()): string {
+export function phoneClientId(storage: KeyValueStorage | undefined = local()): string {
   if (clientId !== undefined) return clientId;
   try {
     const saved = storage?.getItem(CLIENT_ID_KEY);
@@ -28,17 +29,17 @@ export function phoneClientId(storage: KeyValueStorage | undefined = session()):
 /** このページで一度決めた ID */
 let clientId: string | undefined;
 
-/** sessionStorage のうち、使うところだけ。Node.js には無い */
+/** localStorage のうち、使うところだけ。Node.js には無い */
 interface KeyValueStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
 
-function session(): KeyValueStorage | undefined {
+function local(): KeyValueStorage | undefined {
   try {
-    return (globalThis as { sessionStorage?: KeyValueStorage }).sessionStorage;
+    return (globalThis as { localStorage?: KeyValueStorage }).localStorage;
   } catch {
-    // ブラウザによっては、sessionStorage を読んだだけで例外を投げる
+    // ブラウザによっては、localStorage を読んだだけで例外を投げる
     return undefined;
   }
 }
