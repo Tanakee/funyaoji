@@ -150,18 +150,68 @@ describe("reduce", () => {
     expect(reduce(checking, { type: "tilt-check", supported: true }).kind).toBe("connecting");
   });
 
-  it("つなぎ直しの残り秒数は、最初に切れた時刻から数え、joined を受け取ったら消す", () => {
+  it("つなぎ直しの残り秒数は、最初に切れた時刻から数え、joined のあとの room で消す", () => {
     const reconnecting = run([
       ...joinedEvents,
       connection({ status: "reconnecting", attempt: 1 }, 1_000),
       connection({ status: "reconnecting", attempt: 2 }, 3_000),
     ]);
     expect(reconnecting).toMatchObject({ link: "reconnecting", reconnectingSince: 1_000 });
-    const rejoined = reduce(reconnecting, message({ type: "joined", joint: "leftKnee" }));
-    expect(rejoined).toMatchObject({ link: "open", reconnectingSince: undefined });
+    const rejoining = reduce(reconnecting, message({ type: "joined", joint: "leftKnee" }));
+    expect(rejoining).toMatchObject({ link: "rejoining", reconnectingSince: 1_000 });
+    const rejoined = reduce(
+      rejoining,
+      message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] }),
+    );
+    expect(rejoined).toMatchObject({ link: "open", reconnectingSince: undefined, count: 1 });
     // 参加し直したあとにまた切れたら、その時刻から数え直す
     const again = reduce(rejoined, connection({ status: "reconnecting", attempt: 1 }, 9_000));
     expect(again).toMatchObject({ link: "reconnecting", reconnectingSince: 9_000 });
+  });
+
+  it("つなぎ直して joined のあとに届いた phase を、つなぎ直しの画面を閉じる前に反映する", () => {
+    const state = run([
+      ...joinedEvents,
+      connection({ status: "reconnecting", attempt: 1 }, 1_000),
+      message({ type: "joined", joint: "leftKnee" }),
+      message({ type: "phase", phase: "playing", mode: "10m" }),
+    ]);
+    expect(state).toMatchObject({ link: "rejoining", phase: { kind: "playing" } });
+    expect(
+      reduce(state, message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] })),
+    ).toMatchObject({
+      link: "open",
+      phase: { kind: "playing" },
+    });
+  });
+
+  it("phase を受け取っていないルームでは、joined のあとの room で、ロビーのまま閉じる", () => {
+    const state = run([
+      ...joinedEvents,
+      message({ type: "phase", phase: "playing", mode: "10m" }),
+      connection({ status: "reconnecting", attempt: 1 }, 1_000),
+      message({ type: "joined", joint: "leftKnee" }),
+      message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] }),
+    ]);
+    expect(state).toMatchObject({ link: "open", phase: { kind: "lobby" } });
+  });
+
+  it("joined のあと、room の前にまた切れたら、その時刻から数え直す", () => {
+    const state = run([
+      ...joinedEvents,
+      connection({ status: "reconnecting", attempt: 1 }, 1_000),
+      message({ type: "joined", joint: "leftKnee" }),
+      connection({ status: "reconnecting", attempt: 1 }, 8_000),
+    ]);
+    expect(state).toMatchObject({ link: "reconnecting", reconnectingSince: 8_000 });
+  });
+
+  it("参加中に room が届いても、つなぎ直していなければ link は変わらない", () => {
+    const state = run([
+      ...joinedEvents,
+      message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] }),
+    ]);
+    expect(state).toMatchObject({ link: "open", reconnectingSince: undefined });
   });
 
   it("トランスポートが開いただけでは、つなぎ直しを終えず、切れた時刻も数え直さない", () => {

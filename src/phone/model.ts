@@ -41,10 +41,12 @@ export type PhoneState =
       /**
        * 切れてから、つなぎ直して joined を受け取るまでは reconnecting。
        * トランスポートが開いただけでは、まだ参加できていない（断られることもある）ので open にしない。
-       * reconnecting のあいだも、関節などの表示は残す
+       * joined のあと、room を受け取るまでは rejoining。サーバーは joined → phase（あれば）→ room の順に送るので、
+       * room が届けばルームの状態はそろっている。phase だけを待つと、phase を一度も受け取っていないルームでは届かない。
+       * reconnecting と rejoining のあいだも、関節などの表示は残す
        */
-      link: "open" | "reconnecting";
-      /** link が reconnecting になった時刻（ミリ秒）。open のあいだは undefined */
+      link: "open" | "reconnecting" | "rejoining";
+      /** つなぎ直しの残り秒数を数え始めた時刻（ミリ秒）。open のあいだは undefined */
       reconnectingSince: number | undefined;
     }
   /** 断られた。playing のときだけ、自動でつなぎ直している */
@@ -107,7 +109,8 @@ function onConnection(state: PhoneState, connection: ConnectionState, at: number
       // 参加し直せたかは joined で分かる
       return state;
     case "reconnecting":
-      // joined を受け取るまでに何回切れても、最初に切れた時刻を残す
+      // joined を受け取るまでに何回切れても、最初に切れた時刻を残す。
+      // joined のあとに切れたら数え直す。サーバーは joined で予約を使い、次に切れたときに新しく予約する
       return state.kind === "joined" && state.link !== "reconnecting"
         ? { ...state, link: "reconnecting", reconnectingSince: at }
         : state;
@@ -125,14 +128,14 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
   switch (message.type) {
     case "joined":
       if (state.kind === "joined") {
-        // つなぎ直したとき。phase はこのあと届くので、届かなければロビーに戻す
+        // つなぎ直したとき。phase はこのあと届くので、届かなければロビーに戻す。
+        // つなぎ直しの画面は、room が届いてから閉じる
         return {
           ...state,
           joint: message.joint,
           phase: { kind: "lobby" },
           active: false,
-          link: "open",
-          reconnectingSince: undefined,
+          link: state.link === "open" ? "open" : "rejoining",
         };
       }
       if (state.kind === "connecting" || state.kind === "rejected") {
@@ -153,7 +156,10 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
         ? { kind: "rejected", reason: message.reason }
         : state;
     case "room":
-      return state.kind === "joined" ? { ...state, count: message.joints.length } : state;
+      if (state.kind !== "joined") return state;
+      return state.link === "rejoining"
+        ? { ...state, count: message.joints.length, link: "open", reconnectingSince: undefined }
+        : { ...state, count: message.joints.length };
     case "phase":
       return state.kind === "joined"
         ? { ...state, phase: toRoomPhase(message), active: false }
