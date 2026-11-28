@@ -64,11 +64,13 @@ jobs:
       fingerprints: ${{ steps.fp.outputs.fingerprints }}
       # 学習し直すモード（["normal"]）。学習し直さないときは []
       retrain: ${{ steps.decide.outputs.retrain }}
-      # 学習し直すモードと指紋を「（モード・指紋）」で並べたもの。verify と publish のジョブの名前に入れる
+      # 学習し直すモードと指紋と割り当て先を「（モード・指紋・割り当て先）」で並べたもの。verify と publish のジョブの名前に入れる
       labels: ${{ steps.decide.outputs.labels }}
       run: ${{ steps.decide.outputs.run }}
       # 学習のジョブの runs-on（JSON。"ubuntu-latest" か、確かめたラベルの配列）と、並べる Node のプロセスの数・1プロセスあたりの体の数
       runs_on: ${{ steps.machine.outputs.runs_on }}
+      # 割り当て先の印（ubuntu-latest か、ラベルを + でつないだもの）。ジョブの名前の「（モード・指紋・割り当て先）」に入れる
+      where: ${{ steps.machine.outputs.where }}
       workers: ${{ steps.machine.outputs.workers }}
       per: ${{ steps.machine.outputs.per }}
     steps:
@@ -86,13 +88,16 @@ jobs:
           workers=4
           if [ -z "$RUNNER_VAR" ]; then
             runs_on='"ubuntu-latest"'
+            where=ubuntu-latest
           else
-            # 文字列の配列で、空でなく、ラベルの形をしていて、funyaoji-ml を含むものだけを許す。小文字にそろえ、重なりを除く
-            if ! runs_on=$(jq -ce '
-                if type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))
-                then (map(ascii_downcase) | reduce .[] as $l ([]; if index([$l]) then . else . + [$l] end))
-                     | if index(["funyaoji-ml"]) then . else false end
-                else false end' <<<"$RUNNER_VAR" 2>/dev/null); then
+            # JSON の値が1つだけで、それが文字列の配列で、空でなく、ラベルの形をしていて、funyaoji-ml を含むものだけを許す。
+            # ラベルは文字列の全体を見る（\A と \z。改行を含むものは通さない）。小文字にそろえ、重なりを除き、詰めた JSON の値を1つにする
+            if ! runs_on=$(jq -cse '
+                if length == 1 then .[0] else false end
+                | if type == "array" and length > 0 and all(.[]; type == "string" and test("\\A[A-Za-z0-9._-]+\\z"))
+                  then (map(ascii_downcase) | reduce .[] as $l ([]; if index([$l]) then . else . + [$l] end))
+                       | if index(["funyaoji-ml"]) then . else false end
+                  else false end' <<<"$RUNNER_VAR" 2>/dev/null) || [ "$(wc -l <<<"$runs_on")" != 1 ]; then
               echo "::error::リポジトリの変数 ML_TRAIN_RUNNER（$RUNNER_VAR）は、funyaoji-ml を含むラベルの JSON の配列にする（[\"self-hosted\",\"linux\",\"x64\",\"funyaoji-ml\"]）"
               exit 1
             fi
@@ -105,12 +110,15 @@ jobs:
                   ;;
               esac
             fi
+            # 割り当て先の印。学習のジョブの名前に入れ、fingerprint の「同じ物理の学習が進んでいるか」で照らし合わせる
+            where=$(jq -r 'join("+")' <<<"$runs_on")
             msg="学習は self-hosted（funyaoji-ml、ラベル $runs_on）で、Node のプロセス $workers 個 × $((envs / workers)) 体で流れる。始まらなければ ml/runner/README.md の「困ったとき」"
             echo "::notice::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
           fi
           {
             echo "runs_on=$runs_on"
+            echo "where=$where"
             echo "workers=$workers"
             echo "per=$((envs / workers))"
           } >> "$GITHUB_OUTPUT"
@@ -140,6 +148,8 @@ jobs:
           # pull_request では inputs が空なので false になる
           FORCE: ${{ inputs.force == true }}
           REF: ${{ github.head_ref || github.ref_name }}
+          # 学習の割り当て先の印（上の「学習を流すマシンを決める」）
+          WHERE: ${{ steps.machine.outputs.where }}
         run: |
           # 指紋の出力の形を確かめる（形が違えば、黙って「変わっていない」にせず止める）
           if ! jq -e 'type == "array"' <<<"$MODES" > /dev/null || ! jq -e 'type == "array"' <<<"$CHANGED" > /dev/null \
@@ -155,13 +165,16 @@ jobs:
           fi
           run=false
           if [ "$(jq 'length' <<<"$retrain")" -gt 0 ]; then run=true; fi
-          # ジョブの名前に入れる「（モード・指紋）」。下の「同じ物理の学習が進んでいるか」は、これを見る
-          labels=$(jq -r --argjson fp "$FPS" '.[] | "（\(.)・\($fp[.])）"' <<<"$retrain")
+          # ジョブの名前に入れる「（モード・指紋・割り当て先）」。下の「同じ物理の学習が進んでいるか」は、これを見る
+          labels=$(jq -r --argjson fp "$FPS" --arg w "$WHERE" '.[] | "（\(.)・\($fp[.])・\($w)）"' <<<"$retrain")
           if [ "$run" = true ] && [ "$FORCE" != "true" ]; then
-            # 同じキー（同じ PR）の、終わっていない別の実行のうち、学習し直すモードの全部を同じ物理で受け持っているものがあれば、それに任せる。
-            # 1つでも違えば、全部を学習し直す（前の実行の学習は、下の retrain の concurrency が止める）。
-            # 受け持っているとみなすのは、そのモードの学習・確かめ直し・PR を出すジョブが進んでいるか、
-            # 学習が成功して終わり、その記録が成果物に残っているとき。
+            # 同じキー（同じ PR）の、終わっていない別の実行のうち、学習し直すモードの全部を、同じ物理・同じ割り当て先で受け持っているものがあれば、それに任せる。
+            # 受け持っているかは、モードごとに次のどれかで見る（状態は、肯定の条件だけで数える。知らない状態は「進んでいる」に数えない）。
+            # - 始まっている：そのモードの学習・確かめ直し・PR を出すジョブのどれかが in_progress か、学習が success で終わり、その記録が成果物にある
+            # - 待っている：そのモードの学習のジョブが、ランナーを待ってキューにいる（queued・waiting・pending・requested）
+            # 全部のモードが「始まっている」か「待っている」で、1つ以上が「始まっている」なら任せる（ランナーが1台で、A を学習中・B が待っている、など）。
+            # 全部のモードが「待っている」だけ（ランナーが止まっているなど）か、1つでも受け持っていないモードがあれば、全部を学習し直す
+            # （前の実行の学習は、下の retrain の concurrency が止める）。
             # 失敗・取り消しで終わったジョブがある実行は、PR まで進まないので任せない
             while IFS=$'\t' read -r id title; do
               [ -n "$id" ] || continue
@@ -175,24 +188,24 @@ jobs:
               artifacts=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" -f per_page=100 \
                 --jq '.artifacts[] | select(.expired | not) | .name')
               all=true
+              started=0
               for mode in $(jq -r '.[]' <<<"$retrain"); do
-                label="（${mode}・$(jq -r --arg m "$mode" '.[$m]' <<<"$FPS")）"
-                # そのモードの学習が、ランナーを待ってキューにいる（まだ始まっていない）なら、受け持っているとみなさない。
-                # self-hosted のランナーが止まっているときに、変数を消して流し直すと、この実行が学習し、古い実行の学習は concurrency が止める
-                if awk -F'\t' -v n="学習し直す$label" '$3 == n && ($1 == "queued" || $1 == "waiting" || $1 == "pending" || $1 == "requested") { found = 1 } END { exit !found }' <<<"$jobs"; then
-                  all=false
-                  continue
-                fi
-                if awk -F'\t' -v l="$label" '$1 != "completed" && index($3, l) { found = 1 } END { exit !found }' <<<"$jobs"; then
+                label="（${mode}・$(jq -r --arg m "$mode" '.[$m]' <<<"$FPS")・${WHERE}）"
+                if awk -F'\t' -v l="$label" '$1 == "in_progress" && index($3, l) { found = 1 } END { exit !found }' <<<"$jobs"; then
+                  started=$((started + 1))
                   continue
                 fi
                 if awk -F'\t' -v n="学習し直す$label" '$1 == "completed" && $2 == "success" && $3 == n { found = 1 } END { exit !found }' <<<"$jobs" \
                     && grep -qxF "theory-$id-$mode" <<<"$artifacts"; then
+                  started=$((started + 1))
+                  continue
+                fi
+                if awk -F'\t' -v n="学習し直す$label" '$3 == n && ($1 == "queued" || $1 == "waiting" || $1 == "pending" || $1 == "requested") { found = 1 } END { exit !found }' <<<"$jobs"; then
                   continue
                 fi
                 all=false
               done
-              if [ "$all" = true ]; then
+              if [ "$all" = true ] && [ "$started" -gt 0 ]; then
                 echo "::notice::同じ物理（$(tr -d '\n' <<<"$labels")）の学習を、別の実行（$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id）が受け持っているので、そちらに任せる"
                 run=false
               fi
@@ -235,8 +248,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   retrain:
-    # 名前にモードと物理の指紋を入れる。fingerprint の「同じ物理の学習が進んでいるか」は、これを見る
-    name: 学習し直す（${{ matrix.mode }}・${{ fromJSON(needs.fingerprint.outputs.fingerprints || '{}')[matrix.mode] }}）
+    # 名前にモードと物理の指紋と割り当て先を入れる。fingerprint の「同じ物理の学習が進んでいるか」は、これを見る
+    name: 学習し直す（${{ matrix.mode }}・${{ fromJSON(needs.fingerprint.outputs.fingerprints || '{}')[matrix.mode] }}・${{ needs.fingerprint.outputs.where }}）
     needs: fingerprint
     # フォークからの PR では流さない（fingerprint と同じ条件。fingerprint が飛ばされればこのジョブも飛ぶが、念のため書く）。
     # self-hosted のマシンでは、このジョブだけが PR のコードを動かす
