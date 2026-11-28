@@ -44,7 +44,8 @@ const UNSUPPORTED: NoticeText = {
 };
 
 const CLOSED: Record<"replaced" | "lost", NoticeText> = {
-  replaced: { title: "別のタブで開いています", reason: "元のタブに戻ってください。" },
+  // 置き換えられて閉じるのは、前から開いていたタブ。遊べるのは、あとから開いたタブ
+  replaced: { title: "別のタブで開いています", reason: "あとから開いたタブで遊んでください。" },
   lost: {
     title: "接続が切れました",
     reason: "もう一度遊ぶときは、スクリーンのQRを読み取ってください。",
