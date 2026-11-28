@@ -16,7 +16,7 @@ from pathlib import Path
 import cma
 import numpy as np
 
-from . import tracking
+from . import registry, tracking
 from .render import render
 from .tracking import mlflow
 from .vec_env import NodeProcess
@@ -85,7 +85,7 @@ def main() -> None:
     )
     best: tuple[float, dict] = (float("inf"), {})
     t0 = time.time()
-    with mlflow.start_run(run_name=name):
+    with mlflow.start_run(run_name=name) as run:
         mlflow.set_tags(
             {
                 **tracking.git_info(),
@@ -129,6 +129,7 @@ def main() -> None:
             mlflow.log_artifact(str(gif), "video")
             mlflow.log_artifact(str(mp4), "video")
             pool.close()
+    registry.submit([run.info.run_id])
     print(json.dumps({"best": best}), flush=True)
 
 

@@ -22,7 +22,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import KVWriter, Logger
 from stable_baselines3.common.vec_env import VecNormalize
 
-from . import tracking
+from . import registry, tracking
 from .policy import AsymmetricPolicy
 from .render import render
 from .tracking import mlflow
@@ -212,7 +212,7 @@ def main() -> None:
     model.set_logger(Logger(folder=None, output_formats=[MlflowWriter()]))
     progress = Progress(eval_env, out, args.snapshot_every)
 
-    with mlflow.start_run(run_name=name):
+    with mlflow.start_run(run_name=name) as run:
         mlflow.set_tags(
             {
                 **tracking.git_info(),
@@ -278,6 +278,8 @@ def main() -> None:
         mlflow.log_artifact(str(gif), "video")
         mlflow.log_artifact(str(mp4), "video")
         eval_venv.close()
+    # 評価して登録し、速ければ別名を移す（registry.py）
+    registry.submit([run.info.run_id])
     print(f"done: {out}")
 
 

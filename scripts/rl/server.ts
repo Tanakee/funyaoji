@@ -5,6 +5,7 @@
 //   {"cmd":"init","n":8,"config":{...}}   → {"obs":[[...], ...], "obsDim":23, "actorObs":22, "fingerprint":"...", "rapier":"0.21.0", "shapes":{...}}
 //   {"cmd":"step","a":[[a,a,a,a], ...]}   → {"obs":..., "rew":[...], "done":[...], "info":[...]}
 //   {"cmd":"replay","inputs":[[u,u,u,u], ...]} → {"frames":[{poses}...], "result":{...}, "elapsedMs":...}
+//   {"cmd":"check","inputs":[[u,u,u,u], ...]} → {"jointOvershoot", "penetration", "jump", "peakSpeed", ...}（物理の不具合の量）
 //   {"cmd":"gait","gaits":[{T,h0,A,K,kp}, ...]} → {"results":[{"outcome","timeMs","distanceM"}, ...]}（決まった歩き方を走らせる）
 //   行動 a は AI の出力（-1〜1 が4つ、JOINTS の順）。終わったおじさんは、その場で最初からやり直す。
 //   obs はやり直したあとの観測で、終わる直前の観測は info.final に入る
@@ -13,6 +14,7 @@ import { JOINTS } from "../../src/shared/messages.ts";
 import { PART_SHAPES } from "../../src/screen/game/body.ts";
 import { ACTION_HZ, CRITIC_EXTRA_OBS } from "../../src/screen/game/ai/observe.ts";
 import { gaitRecord, type Gait } from "../../src/screen/game/ai/gait.ts";
+import { measure } from "./anomaly.ts";
 import { replay } from "../../src/screen/game/ai/record.ts";
 import { initPhysics } from "../../src/screen/game/sim.ts";
 import {
@@ -99,6 +101,10 @@ function handle(msg: Message): unknown {
       };
     });
     return { results };
+  }
+  if (msg.cmd === "check") {
+    // 記録を物理の1ステップずつ再生し、不具合の量を測る（anomaly.ts）
+    return measure({ hz: ACTION_HZ, joints: JOINTS, inputs: msg.inputs ?? [] });
   }
   throw new Error(`知らない cmd: ${msg.cmd}`);
 }
