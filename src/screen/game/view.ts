@@ -22,6 +22,8 @@ import {
   type ShapeSpec,
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
+import { CAMERA, Camera, type Scene } from "./camera.ts";
+import { SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
 import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
 import type { JointInputs, Seats, SeatState } from "./types.ts";
@@ -64,16 +66,10 @@ const PART_ART_SLOTS: Record<PartName, Exclude<ArtSlot, "head">> = {
 };
 
 const LAYOUT = {
-  /** 地面の位置（画面の高さに対する割合） */
-  groundY: 0.78,
-  /** 胴を置く横の位置（画面の幅に対する割合）。ゴールが見えるよう、少し左に寄せる */
-  cameraX: 0.4,
   /** 画面の幅に入れたい長さ（m）。高さが足りないときは縮む */
   visibleWidthM: 9,
   /** 地面から画面の上までに入れたい高さ（m） */
   visibleHeightM: 3.6,
-  /** 1280 x 720 を 1 としたときの、文字や線の大きさの下限・上限 */
-  uiScale: [0.6, 2.2],
   fontFamily: "system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif",
 };
 
@@ -92,6 +88,8 @@ function installHudFont(): void {
 }
 
 export interface View {
+  /** 画面に合わせて、カメラと、距離・タイムを出すかを変える */
+  setScene(scene: Scene): void;
   /** 描画のたびに呼ばれる。dtSec は前のフレームからの実時間 */
   onFrame(callback: (dtSec: number) => void): void;
   setSeats(seats: Seats): void;
@@ -397,16 +395,22 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     });
   }
 
+  const camera = new Camera();
+  function setScene(scene: Scene): void {
+    hud.visible = scene === "playing";
+    camera.setScene(scene, performance.now());
+  }
+  setScene("lobby");
+
   function render(state: SimState, inputs: JointInputs, dtSec: number): void {
     const { width: w, height: h } = app.screen;
-    const groundY = h * LAYOUT.groundY;
+    const ui = screenScale(w, h);
+    const groundY = h - SCREEN_LAYOUT.bandHeight * ui;
     const pxPerM = Math.min(w / LAYOUT.visibleWidthM, groundY / LAYOUT.visibleHeightM);
-    const ui = Math.min(
-      LAYOUT.uiScale[1],
-      Math.max(LAYOUT.uiScale[0], Math.min(w / 1280, h / 720)),
-    );
-    const originX = w * LAYOUT.cameraX;
-    const camX = state.poses.torso.x;
+    // 一時的に描画領域が潰れたときは、目盛りの範囲を計算できない
+    if (pxPerM <= 0) return;
+    const originX = w * CAMERA.followX;
+    const camX = camera.centerM(state.poses.torso.x, w, pxPerM, performance.now());
     const screenX = (m: number) => originX + (m - camX) * pxPerM;
 
     world.position.set(originX - camX * pxPerM, groundY);
@@ -519,12 +523,13 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       .stroke({ width: 3 * ui, color: COLORS.goal });
 
     hud.scale.set(ui);
-    hud.position.set(24 * ui, 16 * ui);
+    hud.position.set(SCREEN_LAYOUT.safeX * ui, SCREEN_LAYOUT.safeY * ui);
     distanceText.text = `${formatDistance(state.distanceM)} m`;
     timeText.text = `${formatTime(state.elapsedMs)} 秒`;
   }
 
   return {
+    setScene,
     onFrame(callback) {
       app.ticker.add((ticker) => callback(ticker.deltaMS / 1000));
     },

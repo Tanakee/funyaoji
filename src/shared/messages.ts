@@ -1,5 +1,6 @@
 // メッセージの仕様は docs/api.md
 import * as v from "valibot";
+import { COUNTDOWN_KINDS } from "./countdown.ts";
 
 // 参加順に割り当てる順番
 export const JOINTS = ["rightHip", "leftHip", "rightKnee", "leftKnee"] as const;
@@ -25,6 +26,7 @@ export const RoomMessage = v.object({
   type: v.literal("room"),
   roomCode: v.string(),
   joints: v.array(Joint),
+  vacated: v.optional(Joint),
 });
 export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 
@@ -41,12 +43,31 @@ export const PlayResult = v.variant("outcome", [
 ]);
 export type PlayResult = v.InferOutput<typeof PlayResult>;
 
+const CountdownTime = v.pipe(FiniteNumber, v.minValue(0), v.maxValue(10_000));
+const Countdown = v.object({
+  kind: v.picklist(COUNTDOWN_KINDS),
+  durationMs: CountdownTime,
+  remainingMs: CountdownTime,
+  delayMs: v.record(Joint, v.pipe(FiniteNumber, v.integer(), v.minValue(0))),
+});
+
 export const PhaseMessage = v.variant("phase", [
   v.object({ type: v.literal("phase"), phase: v.literal("lobby") }),
-  v.object({ type: v.literal("phase"), phase: v.literal("playing"), mode: Mode }),
+  v.object({
+    type: v.literal("phase"),
+    phase: v.literal("playing"),
+    mode: Mode,
+    countdown: v.optional(Countdown),
+  }),
   v.object({ type: v.literal("phase"), phase: v.literal("result"), result: PlayResult }),
 ]);
 export type PhaseMessage = v.InferOutput<typeof PhaseMessage>;
+
+export const HowtoMessage = v.object({
+  type: v.literal("howto"),
+  ready: v.array(Joint),
+});
+export type HowtoMessage = v.InferOutput<typeof HowtoMessage>;
 
 export const StatusMessage = v.object({
   type: v.literal("status"),
@@ -82,6 +103,24 @@ export type PongMessage = v.InferOutput<typeof PongMessage>;
 export const RelayedPongMessage = v.object({ ...PongMessage.entries, joint: Joint });
 export type RelayedPongMessage = v.InferOutput<typeof RelayedPongMessage>;
 
+export const StartMessage = v.object({ type: v.literal("start") });
+export type StartMessage = v.InferOutput<typeof StartMessage>;
+
+export const RetryMessage = v.object({ type: v.literal("retry") });
+export type RetryMessage = v.InferOutput<typeof RetryMessage>;
+
+export const RelayedStartMessage = v.object({ ...StartMessage.entries, joint: Joint });
+export type RelayedStartMessage = v.InferOutput<typeof RelayedStartMessage>;
+
+export const RelayedRetryMessage = v.object({ ...RetryMessage.entries, joint: Joint });
+export type RelayedRetryMessage = v.InferOutput<typeof RelayedRetryMessage>;
+
+export const ReadyMessage = v.object({ type: v.literal("ready") });
+export type ReadyMessage = v.InferOutput<typeof ReadyMessage>;
+
+export const RelayedReadyMessage = v.object({ ...ReadyMessage.entries, joint: Joint });
+export type RelayedReadyMessage = v.InferOutput<typeof RelayedReadyMessage>;
+
 // 接続が生きていることを知らせる。サーバーは中継せず、同じ文字列をそのまま返す
 export const HeartbeatMessage = v.object({ type: v.literal("heartbeat") });
 export type HeartbeatMessage = v.InferOutput<typeof HeartbeatMessage>;
@@ -91,34 +130,67 @@ export const HEARTBEAT = JSON.stringify({ type: "heartbeat" } satisfies Heartbea
 /** スマホとスクリーンがハートビートを送る間隔 */
 export const HEARTBEAT_INTERVAL_MS = 5_000;
 
+/** 運営がルームを閉じる。room-closed は終了の通知と、スクリーンへの受け付けの返事。 */
+export const CloseRoomMessage = v.object({ type: v.literal("close-room") });
+export const RoomClosedMessage = v.object({ type: v.literal("room-closed") });
+/** このコードでも終了が分かるようにし、通知を受け取れなくても再接続しない。 */
+export const ROOM_CLOSED_CODE = 4003;
+/** 「抜ける」を受け付けて閉じたときの close コード。left が届かなくても、つなぎ直さない */
+export const LEFT_CODE = 4004;
+
+/** スマホの「抜ける」。left はサーバーの受け付けの返事 */
+export const LeaveMessage = v.object({ type: v.literal("leave") });
+export type LeaveMessage = v.InferOutput<typeof LeaveMessage>;
+
+export const LeftMessage = v.object({ type: v.literal("left") });
+export type LeftMessage = v.InferOutput<typeof LeftMessage>;
+
 export const ServerToPhoneMessage = v.variant("type", [
   JoinedMessage,
+  RoomClosedMessage,
   RejectedMessage,
   RoomMessage,
   PhaseMessage,
+  HowtoMessage,
   StatusMessage,
   PingMessage,
   HeartbeatMessage,
+  LeftMessage,
 ]);
 export type ServerToPhoneMessage = v.InferOutput<typeof ServerToPhoneMessage>;
 
 // スクリーンも、ルームが無いときは rejected（no-room）を受け取る。
 // 接続したときは、サーバーが保持している最後の phase を受け取る
 export const ServerToScreenMessage = v.variant("type", [
+  RoomClosedMessage,
   RejectedMessage,
   RoomMessage,
   PhaseMessage,
   RelayedTiltMessage,
   RelayedPongMessage,
+  RelayedStartMessage,
+  RelayedRetryMessage,
+  RelayedReadyMessage,
+  HowtoMessage,
   HeartbeatMessage,
 ]);
 export type ServerToScreenMessage = v.InferOutput<typeof ServerToScreenMessage>;
 
-export const PhoneToServerMessage = v.variant("type", [TiltMessage, PongMessage, HeartbeatMessage]);
+export const PhoneToServerMessage = v.variant("type", [
+  TiltMessage,
+  PongMessage,
+  StartMessage,
+  RetryMessage,
+  ReadyMessage,
+  HeartbeatMessage,
+  LeaveMessage,
+]);
 export type PhoneToServerMessage = v.InferOutput<typeof PhoneToServerMessage>;
 
 export const ScreenToServerMessage = v.variant("type", [
+  CloseRoomMessage,
   PhaseMessage,
+  HowtoMessage,
   StatusMessage,
   PingMessage,
   HeartbeatMessage,

@@ -1,6 +1,8 @@
 import type * as v from "valibot";
 import {
   HEARTBEAT,
+  ROOM_CLOSED_CODE,
+  LEFT_CODE,
   HEARTBEAT_INTERVAL_MS,
   type HeartbeatMessage,
   type RejectedMessage,
@@ -27,6 +29,11 @@ export interface Connection<Send> {
   send(message: Send): boolean;
   /** 閉じる。もうつなぎ直さない */
   close(): void;
+  /**
+   * つなぎ直すのを待っているなら、shouldReconnect を聞き直し、false なら閉じる。
+   * トランスポートを開いている途中なら、その結果を待つ（切れたら、つなぎ直す前に聞く）
+   */
+  checkReconnect(): void;
   readonly state: ConnectionState;
 }
 
@@ -38,6 +45,11 @@ export interface ConnectOptions<Receive extends { type: string }> {
   /** 検証したメッセージ。ハートビートの返事は渡さない */
   onMessage: (message: Exclude<Receive, HeartbeatMessage>) => void;
   onStateChange?: (state: ConnectionState) => void;
+  /**
+   * 切れてつなぎ直すときと、トランスポートを開く前に聞く。false なら開かずに閉じる（code は 1000）。
+   * 省くと諦めない。初めの接続では聞かない
+   */
+  shouldReconnect?: () => boolean;
 }
 
 /** こちらから閉じたときの close コード */
@@ -45,7 +57,7 @@ const NORMAL_CLOSURE = 1000;
 /** サーバーが、新しいスクリーンに置き換えて閉じたときの close コード */
 const REPLACED = 4000;
 /** これで断られたら、つなぎ直しても入れない */
-const FINAL_REJECTIONS: readonly RejectedMessage["reason"][] = ["no-room", "full"];
+const FINAL_REJECTIONS: readonly RejectedMessage["reason"][] = ["no-room"];
 
 /** ブラウザの document のうち、使うところだけ。Node.js（scripts/fake-phone.ts）には無い */
 interface Page {
@@ -63,7 +75,7 @@ export const LIVENESS_TIMEOUT_MS = 10_000;
 /**
  * トランスポートを開き、受信したメッセージを検証して渡す。
  * 開いているあいだ、5秒ごとにハートビートを送る（docs/api.md の heartbeat）。
- * 思いがけず切れたときと、10秒何も届かないときは、つなぎ直す
+ * 思いがけず切れたとき、10秒何も届かないとき、full・playing で断られたときは、つなぎ直す
  */
 export function connect<Receive extends { type: string }, Send>(
   options: ConnectOptions<Receive>,
@@ -111,7 +123,7 @@ export function connect<Receive extends { type: string }, Send>(
     setState({ status: "closed", code, reason });
   };
 
-  /** いまのトランスポートを捨てて、つなぎ直す。断られたあとに閉じられないまま黙ったときは、つなぎ直さない */
+  /** いまのトランスポートを捨てる。no-room で断られたかルームが終了したときは、つなぎ直さない */
   const dropAndReconnect = () => {
     generation++;
     clearInterval(heartbeat);
@@ -124,14 +136,23 @@ export function connect<Receive extends { type: string }, Send>(
   const scheduleReconnect = () => {
     clearTimeout(liveness);
     liveness = undefined;
+    if (options.shouldReconnect?.() === false) {
+      finish(NORMAL_CLOSURE, "");
+      return;
+    }
     attempt++;
     const delays = RECONNECT_DELAYS_MS;
     const delay = delays[Math.min(attempt, delays.length) - 1];
     retry = setTimeout(() => {
       retry = undefined;
-      open();
+      reopen();
     }, delay);
     setState({ status: "reconnecting", attempt });
+  };
+
+  const reopen = () => {
+    if (options.shouldReconnect?.() === false) finish(NORMAL_CLOSURE, "");
+    else open();
   };
 
   const open = () => {
@@ -157,8 +178,18 @@ export function connect<Receive extends { type: string }, Send>(
           if (FINAL_REJECTIONS.includes(reason)) finalRejection = true;
         } else {
           // 断られずに受け取れたら、次に切れたときは1秒から待ち直す。
-          // playing で断られ続けているあいだは、待つ時間を延ばしていく
+          // full・playing で断られ続けているあいだは、待つ時間を延ばしていく
           attempt = 0;
+        }
+        if (message.type === "room-closed" || message.type === "left") {
+          finalRejection = true;
+          // close フレームを待たず、通知だけでも再接続とタイマーを止める。
+          stopTimers();
+          generation++;
+          options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
+          transport.close();
+          finish(message.type === "left" ? LEFT_CODE : ROOM_CLOSED_CODE, message.type);
+          return;
         }
         if (message.type === "heartbeat") return;
         options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
@@ -168,8 +199,16 @@ export function connect<Receive extends { type: string }, Send>(
         clearInterval(heartbeat);
         heartbeat = undefined;
         if (state.status === "closed") return;
-        if (finalRejection || code === REPLACED) finish(code, reason);
-        else scheduleReconnect();
+        if (
+          finalRejection ||
+          code === REPLACED ||
+          code === ROOM_CLOSED_CODE ||
+          code === LEFT_CODE
+        ) {
+          finish(code, reason);
+        } else {
+          scheduleReconnect();
+        }
       },
     });
   };
@@ -181,7 +220,7 @@ export function connect<Receive extends { type: string }, Send>(
       clearTimeout(retry);
       retry = undefined;
       attempt = 0;
-      open();
+      reopen();
     } else if (liveness !== undefined) {
       watchLiveness();
     }
@@ -212,6 +251,10 @@ export function connect<Receive extends { type: string }, Send>(
       } finally {
         options.onStateChange?.(closed);
       }
+    },
+    checkReconnect() {
+      if (retry === undefined || options.shouldReconnect?.() !== false) return;
+      finish(NORMAL_CLOSURE, "");
     },
     get state() {
       return state;

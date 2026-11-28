@@ -1,7 +1,7 @@
 // スマホの代わりにルームにつなぎ、tilt を送り続ける。スマホのページが無くても、スクリーンを確かめられる。
 // 使い方：node scripts/fake-phone.ts <ルームコード> [--url http://localhost:5173] [--phones 4]
-// 切れたら、スマホのページと同じように、同じ ID でつなぎ直す。
-// どれかの台が、つなぎ直しても入れない理由で断られた（rejected の no-room・full）か、一度もつながらなかったときは、終了コード 1 で終わる
+// 切れたときと、満員かプレイ中で断られたときは、スマホのページと同じように、同じ ID でつなぎ直す。
+// どれかの台が、ルームが無くて断られた（rejected の no-room）か、一度もつながらなかったときは、終了コード 1 で終わる
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { connectPhone } from "../src/net/client.ts";
@@ -55,7 +55,7 @@ for (let i = 0; i < phones; i++) {
     {
       onMessage(message) {
         console.log(name, JSON.stringify(message));
-        if (message.type === "rejected" && message.reason !== "playing") rejected = true;
+        if (message.type === "rejected" && message.reason === "no-room") rejected = true;
         if (message.type === "joined") {
           // つなぎ直すと、もう一度 joined が届く
           clearInterval(timer);
