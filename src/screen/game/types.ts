@@ -1,6 +1,7 @@
 // スクリーンのゲーム（物理演算と描画）と、その外（React の UI・通信）のあいだの形（docs/design.md の「ディレクトリ構成」）
 import type { Joint, Mode, PlayResult } from "../../shared/messages.ts";
 import type { UncleArt } from "./art.ts";
+import type { BubbleStyle } from "./speech.ts";
 
 /**
  * 関節ごとの入力。0〜1 の目標の位置。
@@ -40,6 +41,8 @@ export interface GameOptions {
   onEnd: (result: GameResult) => void;
   /** おじさんの部位画像。省略時は UNCLE_ART を使う */
   art?: UncleArt;
+  /** デバッグで吹き出しの形を切り替える。省略時は SPEECH.defaultStyle */
+  bubbleStyle?: BubbleStyle;
 }
 
 export interface Game {

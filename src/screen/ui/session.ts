@@ -32,6 +32,7 @@ import {
   PLACEHOLDER_ART,
   type KeyboardHandle,
 } from "../game/index.ts";
+import { parseBubbleStyle } from "../game/speech.ts";
 import {
   tiltToInput,
   type Game,
@@ -336,14 +337,15 @@ export class ScreenSession {
 
   private async openGame(): Promise<void> {
     try {
-      const usePlaceholder =
-        this.view.debug.enabled &&
-        new URLSearchParams(location.search).get("art") === "placeholder";
+      const query = this.view.debug.enabled ? new URLSearchParams(location.search) : undefined;
+      const usePlaceholder = query?.get("art") === "placeholder";
+      const bubbleStyle = parseBubbleStyle(query?.get("bubble") ?? null);
       const game = await createGame({
         container: this.stage,
         inputs: this.inputs,
         onEnd: (result) => this.dispatch({ type: "ended", result }),
         ...(usePlaceholder ? { art: PLACEHOLDER_ART } : {}),
+        ...(bubbleStyle === undefined ? {} : { bubbleStyle }),
       });
       if (this.disposed) return game.destroy();
       this.game = game;
