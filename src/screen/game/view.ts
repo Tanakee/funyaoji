@@ -3,6 +3,7 @@ import {
   Application,
   BitmapFont,
   BitmapText,
+  CanvasTextMetrics,
   Container,
   Graphics,
   Sprite,
@@ -28,27 +29,27 @@ import { GOAL_M, type SimState } from "./sim.ts";
 import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
 import type { JointInputs, Seats, SeatState } from "./types.ts";
 
-/** 色はここに集める。見た目は、あとで人が決める。部位ごとの色は shared/joints.ts */
+/** 色の決まりは docs/screens.md の「色・フォント・刷り」。部位ごとの色は shared/joints.ts */
 const COLORS = {
   sky: 0xf6f1e7,
   ground: 0xd9cfbd,
   groundEdge: 0x8a7f68,
-  tick: 0x6b6252,
-  text: 0x2b2b2b,
-  outline: 0x2b2b2b,
-  start: 0x2e86ab,
-  goal: 0xc0392b,
-  goalCheckerLight: 0xffffff,
-  goalCheckerDark: 0x2b2b2b,
-  torso: 0xe9d8b4,
-  head: 0xf3e2c3,
-  foot: 0x3a3a3a,
-  face: 0x2b2b2b,
-  emptyLimb: 0xa6a6a1,
-  seatOutline: 0x2b2b28,
-  emptySeatOutline: 0x6b6b67,
-  seatPaper: 0xfafaf7,
-  seatText: 0x4a4a47,
+  tick: 0x1f3a68,
+  text: 0x1f3a68,
+  outline: 0x1f3a68,
+  start: 0x1f3a68,
+  goal: 0xa8282e,
+  goalCheckerLight: 0xfbf8f0,
+  goalCheckerDark: 0x1f3a68,
+  torso: 0xc2a682,
+  head: 0xf2cfae,
+  foot: 0xf4efe3,
+  face: 0x1f3a68,
+  emptyLimb: 0xa2a7ad,
+  seatOutline: 0x1f3a68,
+  emptySeatOutline: 0x3f5275,
+  seatPaper: 0xfbf8f0,
+  seatText: 0x3f5275,
 };
 
 const SEAT_OFFSETS = [-238, -174, -10, 54];
@@ -70,21 +71,44 @@ const LAYOUT = {
   visibleWidthM: 9,
   /** 地面から画面の上までに入れたい高さ（m） */
   visibleHeightM: 3.6,
-  fontFamily: "system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif",
+  fontFamily:
+    "'Zen Kaku Gothic New', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif",
 };
 
-const HUD_FONT = "funyaoji-hud";
-let hudFontInstalled = false;
-/** HUD の数字の字形を作る。画面が再作成されても残し、1 回だけ作る */
-function installHudFont(): void {
-  if (hudFontInstalled) return;
-  hudFontInstalled = true;
+const DISPLAY_FONT_FAMILY = "'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif";
+type FontState = "loaded" | "fallback";
+const HUD_FONT_NAME: Record<FontState, string> = {
+  loaded: "funyaoji-hud",
+  fallback: "funyaoji-hud-fallback",
+};
+const installedHudFonts = new Set<FontState>();
+
+function hudFontName(state: FontState): string {
+  const name = HUD_FONT_NAME[state];
+  if (installedHudFonts.has(state)) return name;
+  // 以前の画面で代替フォントを計測していても、新しい字形の幅を使う
+  if (state === "loaded") CanvasTextMetrics.clearMetrics();
   BitmapFont.install({
-    name: HUD_FONT,
+    name,
     chars: "0123456789.- m秒",
     resolution: Math.min(2, window.devicePixelRatio || 1),
-    style: { fontFamily: LAYOUT.fontFamily, fontSize: 64, fontWeight: "bold", fill: 0xffffff },
+    style: { fontFamily: DISPLAY_FONT_FAMILY, fontSize: 64, fontWeight: "900", fill: 0xffffff },
   });
+  installedHudFonts.add(state);
+  return name;
+}
+
+async function loadViewFonts(): Promise<boolean> {
+  try {
+    const faces = await Promise.all([
+      document.fonts.load('900 64px "Zen Old Mincho"', "0123456789.m秒"),
+      document.fonts.load('700 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
+      document.fonts.load('900 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
+    ]);
+    return faces.every((face) => face.length > 0);
+  } catch {
+    return false;
+  }
 }
 
 export interface View {
@@ -168,7 +192,7 @@ function label(text: string, size: number, color: ColorSource, bold = false): Te
     style: {
       fontFamily: LAYOUT.fontFamily,
       fontSize: size,
-      fontWeight: bold ? "bold" : "normal",
+      fontWeight: bold ? "900" : "700",
       fill: color,
     },
   });
@@ -253,7 +277,15 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     autoDensity: true,
     resolution: window.devicePixelRatio || 1,
   });
-  installHudFont();
+  // PixiJS の Text と BitmapFont は作った時点のフォントで字形を描き、あとでフォントが届いても描き直さない
+  const fontsLoaded = loadViewFonts();
+  let timeout = 0;
+  const loadTimeout = new Promise<"timeout">((resolve) => {
+    timeout = window.setTimeout(() => resolve("timeout"), 3000);
+  });
+  const fontState = await Promise.race([fontsLoaded, loadTimeout]);
+  window.clearTimeout(timeout);
+  const hudFont = hudFontName(fontState === true ? "loaded" : "fallback");
   app.canvas.style.display = "block";
   container.appendChild(app.canvas);
   // 要素の大きさだけが変わっても追従する（window の resize だけでは足りない）
@@ -295,11 +327,11 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   const hud = new Container();
   const distanceText = new BitmapText({
     text: "",
-    style: { fontFamily: HUD_FONT, fontSize: 64, fill: COLORS.text },
+    style: { fontFamily: hudFont, fontSize: 64, fill: COLORS.text },
   });
   const timeText = new BitmapText({
     text: "",
-    style: { fontFamily: HUD_FONT, fontSize: 40, fill: COLORS.text },
+    style: { fontFamily: hudFont, fontSize: 40, fill: COLORS.text },
   });
   timeText.y = 78;
   hud.addChild(distanceText, timeText);
@@ -310,6 +342,12 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   const tags = new Container();
   seatLayer.addChild(strings, markers, tags);
   const tiltGlow = new TiltGlow();
+  const seatCaption = (text: string) => {
+    const caption = label(text, 20, COLORS.seatText, true);
+    caption.anchor.set(0.5, 0);
+    caption.visible = false;
+    return caption;
+  };
   const seatGraphics = SEATS.map((joint) => {
     const { color: hexColor, name } = JOINT_DISPLAY[joint];
     const color = Number.parseInt(hexColor.slice(1), 16);
@@ -328,17 +366,13 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       .fill(COLORS.seatOutline)
       .circle(0, 0, 12)
       .fill(color)
-      .stroke({ width: 3, color: 0xffffff });
+      .stroke({ width: 3, color: COLORS.seatPaper });
     marker.visible = false;
     const tag = new Graphics();
     drawTag(tag);
     const captions = new Container();
-    const nameText = label(name, 20, COLORS.seatText, true);
-    const detail = label("", 20, COLORS.seatText, true);
-    for (const text of [nameText, detail]) {
-      text.anchor.set(0.5, 0);
-      text.visible = false;
-    }
+    const nameText = seatCaption(name);
+    const detail = seatCaption("");
     const keyBox = new Graphics()
       .roundRect(-15, -2, 30, LABEL_LINE, 5)
       .fill(COLORS.seatPaper)
@@ -366,7 +400,9 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
 
   app.stage.addChild(ruler, labelLayer, world, seatLayer, hud);
 
+  let currentSeats: Seats | undefined;
   function setSeats(seats: Seats): void {
+    currentSeats = seats;
     SEATS.forEach((joint, i) => {
       const { state, showName, key } = seats[joint];
       const graphics = seatGraphics[i];
@@ -392,6 +428,29 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       graphics.detail.y = showName ? 2 * LABEL_LINE : 0;
       graphics.keyBox.y = graphics.detail.y;
       graphics.keyBox.visible = key !== undefined;
+    });
+  }
+
+  function rebuildTextsWithLoadedFont(): void {
+    const loadedHudFont = hudFontName("loaded");
+    distanceText.style.fontFamily = loadedHudFont;
+    timeText.style.fontFamily = loadedHudFont;
+    for (const label of rulerLabels.values()) label.destroy();
+    rulerLabels.clear();
+    SEATS.forEach((joint, i) => {
+      const graphics = seatGraphics[i];
+      graphics.nameText.destroy();
+      graphics.detail.destroy();
+      graphics.nameText = seatCaption(JOINT_DISPLAY[joint].name);
+      graphics.detail = seatCaption("");
+      graphics.captions.addChildAt(graphics.nameText, 0);
+      graphics.captions.addChild(graphics.detail);
+    });
+    if (currentSeats) setSeats(currentSeats);
+  }
+  if (fontState === "timeout") {
+    void fontsLoaded.then((loaded) => {
+      if (loaded && !seatLayer.destroyed) rebuildTextsWithLoadedFont();
     });
   }
 
@@ -505,7 +564,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       }
     }
     ruler.rect(goalX - cell, 0, cell * 2, groundY).stroke({ width: 3 * ui, color: COLORS.goal });
-    const goalLabel = rulerLabel("goal", `ゴール ${GOAL_M}m`, 36, COLORS.goal, true);
+    const goalLabel = rulerLabel("goal", `ゴール ${GOAL_M}m`, 36, COLORS.text, true);
     goalLabel.visible = true;
     goalLabel.scale.set(ui);
     goalLabel.position.set(goalX, groundY - pxPerM * 2.6);
