@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { initialState, parseRoom, reduce, type PhoneEvent, type PhoneState } from "./model.ts";
+import {
+  initialState,
+  parseRoom,
+  reconnectRemainingSeconds,
+  reduce,
+  type PhoneEvent,
+  type PhoneState,
+} from "./model.ts";
 import { JumpFilter, toAngle } from "./tilt.ts";
 
 const run = (events: PhoneEvent[], from: PhoneState = initialState("K7Q2")) =>
@@ -9,9 +16,20 @@ const message = (m: Extract<PhoneEvent, { type: "message" }>["message"]): PhoneE
   message: m,
 });
 
-const joinedEvents: PhoneEvent[] = [
+const connection = (
+  state: Extract<PhoneEvent, { type: "connection" }>["state"],
+  at = 0,
+): PhoneEvent => ({ type: "connection", state, at });
+
+/** 「参加」を押し、許可され、傾きが届いた */
+const grantedEvents: PhoneEvent[] = [
   { type: "tap-join" },
   { type: "permission", granted: true },
+  { type: "tilt-check", supported: true },
+];
+
+const joinedEvents: PhoneEvent[] = [
+  ...grantedEvents,
   message({ type: "joined", joint: "leftKnee" }),
 ];
 
@@ -59,8 +77,8 @@ describe("reduce", () => {
     const state = run([
       ...joinedEvents,
       message({ type: "phase", phase: "playing", mode: "10m" }),
-      { type: "connection", state: { status: "reconnecting", attempt: 1 } },
-      { type: "connection", state: { status: "open" } },
+      connection({ status: "reconnecting", attempt: 1 }),
+      connection({ status: "open" }),
       message({ type: "rejected", reason: "playing" }),
     ]);
     expect(state).toEqual({ kind: "rejected", reason: "playing" });
@@ -106,34 +124,71 @@ describe("reduce", () => {
 
   it("playing で断られたあと、つなぎ直して joined になれる。閉じても断った理由を残す", () => {
     const rejected = run([
-      { type: "tap-join" },
-      { type: "permission", granted: true },
+      ...grantedEvents,
       message({ type: "rejected", reason: "playing" }),
-      { type: "connection", state: { status: "reconnecting", attempt: 1 } },
+      connection({ status: "reconnecting", attempt: 1 }),
     ]);
     expect(rejected).toEqual({ kind: "rejected", reason: "playing" });
     expect(reduce(rejected, message({ type: "joined", joint: "rightHip" })).kind).toBe("joined");
     const full = run([
-      { type: "tap-join" },
-      { type: "permission", granted: true },
+      ...grantedEvents,
       message({ type: "rejected", reason: "full" }),
-      { type: "connection", state: { status: "closed", code: 4001, reason: "" } },
+      connection({ status: "closed", code: 4001, reason: "" }),
     ]);
     expect(full).toEqual({ kind: "rejected", reason: "full" });
   });
 
   it("参加中に切れたら link が reconnecting になり、関節の表示は残る", () => {
-    const state = run([
-      ...joinedEvents,
-      { type: "connection", state: { status: "reconnecting", attempt: 1 } },
-    ]);
+    const state = run([...joinedEvents, connection({ status: "reconnecting", attempt: 1 })]);
     expect(state).toMatchObject({ kind: "joined", joint: "leftKnee", link: "reconnecting" });
+  });
+
+  it("許可のあと、傾きが届かなければ unsupported になり、つながない", () => {
+    const checking = run([{ type: "tap-join" }, { type: "permission", granted: true }]);
+    expect(checking.kind).toBe("checking-tilt");
+    expect(reduce(checking, { type: "tilt-check", supported: false }).kind).toBe("unsupported");
+    expect(reduce(checking, { type: "tilt-check", supported: true }).kind).toBe("connecting");
+  });
+
+  it("つなぎ直しの残り秒数は、最初に切れた時刻から数え、つながったら消す", () => {
+    const reconnecting = run([
+      ...joinedEvents,
+      connection({ status: "reconnecting", attempt: 1 }, 1_000),
+      connection({ status: "reconnecting", attempt: 2 }, 3_000),
+    ]);
+    expect(reconnecting).toMatchObject({ link: "reconnecting", reconnectingSince: 1_000 });
+    expect(reduce(reconnecting, message({ type: "joined", joint: "leftKnee" }))).toMatchObject({
+      link: "open",
+      reconnectingSince: undefined,
+    });
+    // つながったあとにまた切れたら、その時刻から数え直す
+    const again = run(
+      [
+        connection({ status: "open" }, 4_000),
+        connection({ status: "reconnecting", attempt: 1 }, 9_000),
+      ],
+      reconnecting,
+    );
+    expect(again).toMatchObject({ link: "reconnecting", reconnectingSince: 9_000 });
   });
 
   it("参加中に閉じたら closed。置き換えられたかは code で分かる", () => {
     const closed = (code: number) =>
-      run([...joinedEvents, { type: "connection", state: { status: "closed", code, reason: "" } }]);
+      run([...joinedEvents, connection({ status: "closed", code, reason: "" })]);
     expect(closed(4000)).toEqual({ kind: "closed", replaced: true });
     expect(closed(1006)).toEqual({ kind: "closed", replaced: false });
+  });
+});
+
+describe("reconnectRemainingSeconds", () => {
+  it("60秒から1秒ごとに減り、切り上げる", () => {
+    expect(reconnectRemainingSeconds(0, 0)).toBe(60);
+    expect(reconnectRemainingSeconds(0, 1)).toBe(60);
+    expect(reconnectRemainingSeconds(0, 1_000)).toBe(59);
+    expect(reconnectRemainingSeconds(0, 59_001)).toBe(1);
+  });
+  it("60秒を過ぎたら 0 のまま", () => {
+    expect(reconnectRemainingSeconds(0, 60_000)).toBe(0);
+    expect(reconnectRemainingSeconds(0, 90_000)).toBe(0);
   });
 });

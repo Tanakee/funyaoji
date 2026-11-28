@@ -40,7 +40,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
         if (state.status === "open") {
           stopSending = startSendingTilt(nextSeq, (message) => joined && connection.send(message));
         }
-        emit({ type: "connection", state });
+        emit({ type: "connection", state, at: Date.now() });
       },
     },
     { baseUrl: location.href, clientId: phoneClientId() },

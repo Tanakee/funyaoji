@@ -11,12 +11,11 @@
   --active-soft: #dff3e7;
   --inactive: #9a928b;
   --inactive-soft: #ece7df;
-  --warn: #c98a1b;
-  --warn-soft: #fbefd5;
   --danger: #c4452d;
-  --danger-soft: #fbe2dc;
   --gauge-track: #e9e2d6;
   --gauge-fill: var(--accent);
+  --figure: #bdbdb8;
+  --figure-line: #6b6b67;
   --font: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
 }
 
@@ -123,22 +122,146 @@ button {
   background: var(--inactive);
 }
 
-.notice {
-  --tone: var(--danger);
-  --tone-soft: var(--danger-soft);
+/* 待つ型とお知らせ型の絵。灰色の形だけ（おじさんの絵ができるまで） */
+.figure {
+  display: flex;
+  justify-content: center;
 }
-.notice[data-tone="warn"] {
-  --tone: var(--warn);
-  --tone-soft: var(--warn-soft);
+.figure-svg {
+  width: 120px;
+  height: 170px;
+  overflow: visible;
+}
+.figure-sitting {
+  width: 200px;
+  height: 120px;
+}
+.figure-body {
+  fill: var(--figure);
+  stroke: var(--figure-line);
+  stroke-width: 3;
+}
+.figure-string,
+.figure-limb,
+.figure-slack,
+.figure-ground {
+  fill: none;
+  stroke: var(--figure-line);
+  stroke-linecap: round;
+}
+.figure-string {
+  stroke-width: 2;
+}
+.figure-limb {
+  stroke: var(--figure);
+  stroke-width: 12;
+}
+.figure-ground {
+  stroke: var(--border);
+  stroke-width: 3;
+}
+.figure-handle {
+  fill: var(--surface);
+  stroke: var(--figure-line);
+  stroke-width: 3;
+  stroke-dasharray: 8 6;
+}
+.figure-slack {
+  stroke-width: 3;
+  stroke-dasharray: 6 6;
+}
+
+/* 待つ型。絵が揺れ続けて、固まっていないことを見せる。上の糸の付け根を軸に回す */
+.waiting {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+  text-align: center;
+}
+.figure-swing {
+  transform-origin: 50% 0;
+  animation: swing 2.4s ease-in-out infinite alternate;
+}
+@keyframes swing {
+  from {
+    transform: rotate(-8deg);
+  }
+  to {
+    transform: rotate(8deg);
+  }
+}
+.waiting-title {
+  margin: 0;
+  font-size: 32px;
+  line-height: 1.3;
+}
+.remaining {
+  margin: 0;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 700;
+}
+.remaining-number {
+  margin: 0 4px;
+  color: var(--fg);
+  font-size: 40px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+/* お知らせ型。見出し・理由・次にすること。ボタンは画面の下に置く */
+.notice {
+  flex: 1;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+.notice .figure {
+  margin-bottom: 12px;
 }
 .notice-title {
   margin: 0;
-  padding: 20px 12px;
-  border-radius: 20px;
-  background: var(--tone-soft);
-  color: var(--tone);
-  font-size: 30px;
+  font-size: 28px;
   line-height: 1.3;
+}
+.notice-reason {
+  margin: 0;
+  color: var(--muted);
+  font-size: 18px;
+}
+.notice-next {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* P5a つなぎ直し中。待機・プレイ中・結果の画面の上に重ねる */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: 0 max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  background: var(--bg);
+}
+.joint-band {
+  margin: 0 calc(-1 * max(16px, env(safe-area-inset-right))) 0
+    calc(-1 * max(16px, env(safe-area-inset-left)));
+  padding: max(16px, env(safe-area-inset-top)) 16px 16px;
+  background: var(--band-bg);
+  color: var(--band-fg);
+  font-size: 24px;
+  font-weight: 900;
+  text-align: center;
 }
 
 .joined {
@@ -147,15 +270,6 @@ button {
   flex-direction: column;
   gap: 16px;
   min-height: 0;
-}
-.banner {
-  margin: 0;
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: var(--warn-soft);
-  color: var(--warn);
-  font-weight: 700;
-  text-align: center;
 }
 
 .joint {
