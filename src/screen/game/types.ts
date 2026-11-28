@@ -8,6 +8,25 @@ import type { Joint, Mode, PlayResult } from "../../shared/messages.ts";
  */
 export type JointInputs = Record<Joint, number>;
 
+/**
+ * 席の状態。joined は room の joints にいる（active は入力が届いている）。
+ * reserved は抜けて、つなぎ直しを待っている（残り秒数）
+ */
+export type SeatState =
+  | { kind: "empty" }
+  | { kind: "joined"; active: boolean }
+  | { kind: "reserved"; remainingSec: number };
+
+export interface SeatView {
+  state: SeatState;
+  /** 札の近くに部位の名前を出す（ロビー） */
+  showName: boolean;
+  /** キーボードで動かしているときの、キーの表示 */
+  key?: string;
+}
+
+export type Seats = Record<Joint, SeatView>;
+
 /** プレイの終わり方のうち、ゲームが決めるもの。切断は通信の側が決める */
 export type GameResult = Exclude<PlayResult, { outcome: "disconnected" }>;
 
@@ -21,6 +40,8 @@ export interface GameOptions {
 }
 
 export interface Game {
+  /** 席の状態を、札・糸・部位の色に出す */
+  setSeats(seats: Seats): void;
   /** おじさんをスタートラインに立たせ直し、止めて待つ。タイムは 0 に戻る。mode はこの走りのモード */
   reset(mode: Mode): void;
   /** 物理演算とタイムを進め始める。reset() のあとに呼ぶ */

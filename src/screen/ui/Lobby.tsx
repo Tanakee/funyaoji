@@ -1,6 +1,5 @@
 import type { ConnectionState } from "../../net/client.ts";
 import { TEAM_NAME_MAX_LENGTH } from "../../shared/api.ts";
-import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import {
   INPUT_METHODS,
   JOINTS,
@@ -52,18 +51,6 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
           <h1 className="lobby-count">
             <strong>{joints.length}</strong> / {JOINTS.length} 人
           </h1>
-          <ul className="slots">
-            {JOINTS.map((joint) => {
-              const filled = joints.includes(joint);
-              return (
-                <li key={joint} className={`slot ${filled ? "slot--filled" : "slot--empty"}`}>
-                  <span className="slot-joint">{JOINT_DISPLAY[joint].name}</span>
-                  <span className="slot-state">{filled ? "参加中" : "空き"}</span>
-                </li>
-              );
-            })}
-          </ul>
-
           <div className="lobby-start">
             <p className={ready ? "start-row start-row--ready" : "start-row"}>
               <kbd>Space</kbd>
@@ -164,6 +151,7 @@ function Join({ roomCode }: { roomCode: string }) {
         <span className="room-code-label">ルームコード</span>
         <strong className="room-code-value">{roomCode}</strong>
       </div>
+      <p className="lobby-manual-url">QR を読めないとき：{url.origin}/play</p>
     </>
   );
 }

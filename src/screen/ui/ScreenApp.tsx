@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { COUNTDOWN_GUIDANCE } from "../../shared/countdown.ts";
 import { DebugControls } from "./DebugControls.tsx";
 import { DebugPanel } from "./DebugPanel.tsx";
-import { Hud, RestartHint } from "./Hud.tsx";
+import { RestartHint } from "./Hud.tsx";
 import { Lobby } from "./Lobby.tsx";
 import { OperatorControls } from "./OperatorControls.tsx";
 import { ResultScreen } from "./ResultScreen.tsx";
@@ -34,7 +34,6 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
           <span className="countdown-number countdown-start">{view.startLabel}</span>
         </div>
       )}
-      <Hud view={view} />
       <RestartHint view={view} />
       <DebugControls session={session} view={view} />
       {flow.kind === "result" && (
