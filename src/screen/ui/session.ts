@@ -21,6 +21,7 @@ import {
   demoGait,
   KEYBOARD_KEYS,
   NEUTRAL_INPUTS,
+  PLACEHOLDER_ART,
   type KeyboardHandle,
 } from "../game/index.ts";
 import {
@@ -255,10 +256,14 @@ export class ScreenSession {
 
   private async openGame(): Promise<void> {
     try {
+      const usePlaceholder =
+        this.view.debug.enabled &&
+        new URLSearchParams(location.search).get("art") === "placeholder";
       const game = await createGame({
         container: this.stage,
         inputs: this.inputs,
         onEnd: (result) => this.dispatch({ type: "ended", result }),
+        ...(usePlaceholder ? { art: PLACEHOLDER_ART } : {}),
       });
       if (this.disposed) return game.destroy();
       this.game = game;
