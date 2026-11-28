@@ -43,8 +43,8 @@ export type PhoneState =
   | { kind: "permission-denied" }
   /** つないでいる。joined か rejected を待つ */
   | { kind: "connecting" }
-  /** 満員かプレイ中。席が空くまで自動でつなぎ直す */
-  | { kind: "waiting" }
+  /** 満員（full）かプレイ中（playing）。席が空くまで自動でつなぎ直す。reason は最後に断られた理由 */
+  | { kind: "waiting"; reason: "full" | "playing" }
   | {
       kind: "joined";
       joint: Joint;
@@ -231,7 +231,9 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
       if (message.reason === "no-room") {
         return state.kind === "rejected" ? state : { kind: "rejected", reason: message.reason };
       }
-      return state.kind === "waiting" ? state : { kind: "waiting" };
+      return state.kind === "waiting" && state.reason === message.reason
+        ? state
+        : { kind: "waiting", reason: message.reason };
     case "room":
       if (state.kind !== "joined") return state;
       return state.link === "rejoining"

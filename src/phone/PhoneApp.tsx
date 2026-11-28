@@ -169,7 +169,7 @@ function Body({
     case "connecting":
       return <Waiting title="つないでいます" />;
     case "waiting":
-      return <WaitingForSeat onCancel={onCancelWait} />;
+      return <WaitingForSeat reason={state.reason} onCancel={onCancelWait} />;
     case "ended":
       return (
         <>
