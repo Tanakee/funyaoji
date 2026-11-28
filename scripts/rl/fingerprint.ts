@@ -8,7 +8,7 @@
 // 使い方：node scripts/rl/fingerprint.ts [--mode <モード>] [--theory <記録.json>] [--github-output] [--expect-unchanged]
 //   モードごとに1行、{"mode":"normal","current":"...","recorded":"...","rapier":"...","replay":{...},"reasons":[...],"changed":true} を出す。
 //   --mode：このモードだけを確かめる。省くと、一覧の全部のモード
-//   --theory：theory/<モード>.json の代わりに、この記録を確かめる。--mode と一緒に使う
+//   --theory：theory/<モード>.json の代わりに、この記録を確かめる。--mode で記録のモードを渡す（省くとノーマル）
 //   --github-output：GitHub Actions の出力に、次を JSON で書く
 //     modes=["normal",...]（確かめたモード）、changed=["normal",...]（変わったモード）、fingerprints={"normal":"<今の指紋>",...}
 //   --expect-unchanged：どれかのモードが変わっていたら、終了コード 1 で終わる
@@ -17,7 +17,13 @@ import { parseArgs } from "node:util";
 import { JOINTS } from "../../src/shared/messages.ts";
 import { ACTION_HZ } from "../../src/screen/game/ai/observe.ts";
 import { replay } from "../../src/screen/game/ai/record.ts";
-import { SIM_MODES, modeSimOptions, toSimMode, type SimMode } from "../../src/screen/game/modes.ts";
+import {
+  DEFAULT_SIM_MODE,
+  SIM_MODES,
+  modeSimOptions,
+  toSimMode,
+  type SimMode,
+} from "../../src/screen/game/modes.ts";
 import { initPhysics } from "../../src/screen/game/sim.ts";
 import { physicsFingerprint } from "./env.ts";
 
@@ -29,10 +35,13 @@ const { values } = parseArgs({
     "expect-unchanged": { type: "boolean", default: false },
   },
 });
-if (values.theory !== undefined && values.mode === undefined) {
-  throw new Error("--theory は、どのモードの記録かを --mode で一緒に渡す");
-}
-const modes: SimMode[] = values.mode === undefined ? SIM_MODES : [toSimMode(values.mode)];
+// --theory を付けてモードを省いたときは、ノーマルの記録として確かめる（モードを分ける前と同じ使い方）
+const modes: SimMode[] =
+  values.mode !== undefined
+    ? [toSimMode(values.mode)]
+    : values.theory !== undefined
+      ? [DEFAULT_SIM_MODE]
+      : SIM_MODES;
 
 /** モードの理論値の記録の場所 */
 function theoryPath(mode: SimMode): string | URL {
