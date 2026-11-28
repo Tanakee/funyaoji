@@ -67,7 +67,54 @@ jobs:
       # 学習し直すモードと指紋を「（モード・指紋）」で並べたもの。verify と publish のジョブの名前に入れる
       labels: ${{ steps.decide.outputs.labels }}
       run: ${{ steps.decide.outputs.run }}
+      # 学習のジョブの runs-on（JSON。"ubuntu-latest" か、確かめたラベルの配列）と、並べる Node のプロセスの数・1プロセスあたりの体の数
+      runs_on: ${{ steps.machine.outputs.runs_on }}
+      workers: ${{ steps.machine.outputs.workers }}
+      per: ${{ steps.machine.outputs.per }}
     steps:
+      # どこで学習を流すか（docs/ml.md の「どこで学習を流すか」）。リポジトリの変数を、GitHub のマシンで確かめてから学習のジョブに渡す
+      - name: 学習を流すマシンを決める
+        id: machine
+        env:
+          # runs-on のラベルを JSON の配列で書く（["self-hosted","linux","x64","funyaoji-ml"]）。無ければ GitHub のマシン
+          RUNNER_VAR: ${{ vars.ML_TRAIN_RUNNER }}
+          # 並べる Node のプロセスの数（128 の約数）。self-hosted のときだけ使う。無ければ 4
+          WORKERS_VAR: ${{ vars.ML_TRAIN_WORKERS }}
+        run: |
+          # 体の数の合計。並べる数を変えても、これは変えない（合計が同じなら、学習の結果は変わらない）
+          envs=128
+          workers=4
+          if [ -z "$RUNNER_VAR" ]; then
+            runs_on='"ubuntu-latest"'
+          else
+            # 文字列の配列で、空でなく、ラベルの形をしていて、funyaoji-ml を含むものだけを許す。小文字にそろえ、重なりを除く
+            if ! runs_on=$(jq -ce '
+                if type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))
+                then (map(ascii_downcase) | reduce .[] as $l ([]; if index([$l]) then . else . + [$l] end))
+                     | if index(["funyaoji-ml"]) then . else false end
+                else false end' <<<"$RUNNER_VAR" 2>/dev/null); then
+              echo "::error::リポジトリの変数 ML_TRAIN_RUNNER（$RUNNER_VAR）は、funyaoji-ml を含むラベルの JSON の配列にする（[\"self-hosted\",\"linux\",\"x64\",\"funyaoji-ml\"]）"
+              exit 1
+            fi
+            if [ -n "$WORKERS_VAR" ]; then
+              case "$WORKERS_VAR" in
+                1 | 2 | 4 | 8 | 16 | 32 | 64 | 128) workers=$WORKERS_VAR ;;
+                *)
+                  echo "::error::リポジトリの変数 ML_TRAIN_WORKERS（$WORKERS_VAR）は、$envs の約数（1・2・4・8・16・32・64・128）にする"
+                  exit 1
+                  ;;
+              esac
+            fi
+            msg="学習は self-hosted（funyaoji-ml、ラベル $runs_on）で、Node のプロセス $workers 個 × $((envs / workers)) 体で流れる。始まらなければ ml/runner/README.md の「困ったとき」"
+            echo "::notice::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo "runs_on=$runs_on"
+            echo "workers=$workers"
+            echo "per=$((envs / workers))"
+          } >> "$GITHUB_OUTPUT"
+
       # ref を指定しない：pull_request ではマージした結果（github.sha）、手で流したときは選んだブランチ
       - uses: actions/checkout@v5
 
@@ -130,6 +177,12 @@ jobs:
               all=true
               for mode in $(jq -r '.[]' <<<"$retrain"); do
                 label="（${mode}・$(jq -r --arg m "$mode" '.[$m]' <<<"$FPS")）"
+                # そのモードの学習が、ランナーを待ってキューにいる（まだ始まっていない）なら、受け持っているとみなさない。
+                # self-hosted のランナーが止まっているときに、変数を消して流し直すと、この実行が学習し、古い実行の学習は concurrency が止める
+                if awk -F'\t' -v n="学習し直す$label" '$3 == n && ($1 == "queued" || $1 == "waiting" || $1 == "pending" || $1 == "requested") { found = 1 } END { exit !found }' <<<"$jobs"; then
+                  all=false
+                  continue
+                fi
                 if awk -F'\t' -v l="$label" '$1 != "completed" && index($3, l) { found = 1 } END { exit !found }' <<<"$jobs"; then
                   continue
                 fi
@@ -190,9 +243,9 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
       && needs.fingerprint.outputs.run == 'true'
-    # どこで学習を流すか（docs/ml.md の「どこで学習を流すか」）。リポジトリの変数 ML_TRAIN_RUNNER に、
-    # runs-on のラベルを JSON の配列で書く（["self-hosted","linux","x64","funyaoji-ml"]）。変数が無ければ GitHub のマシン
-    runs-on: ${{ vars.ML_TRAIN_RUNNER && fromJSON(vars.ML_TRAIN_RUNNER) || 'ubuntu-latest' }}
+    # どこで学習を流すか（docs/ml.md の「どこで学習を流すか」）。fingerprint がリポジトリの変数 ML_TRAIN_RUNNER を確かめて決めたもの。
+    # 変数が無ければ GitHub のマシン（"ubuntu-latest"）
+    runs-on: ${{ fromJSON(needs.fingerprint.outputs.runs_on || '"ubuntu-latest"') }}
     # GitHub のマシンで数時間かかる。GitHub のマシンの上限（6時間）より少し短くする。
     # self-hosted ではずっと速い（1モード約35分）が、止まったジョブがマシンを長く使い続けないよう、同じ上限にしておく
     timeout-minutes: 330
@@ -212,31 +265,25 @@ jobs:
     env:
       STEPS: ${{ inputs.steps || '20000000' }}
       MODE: ${{ matrix.mode }}
-      # 学習で並べる Node のプロセスの数。体の数の合計（ENVS）は変えず、1プロセスあたりの体の数を ENVS / WORKERS にする。
-      # 物理は乱数を使わず、体ごとに別の物理で動くので、合計が同じなら学習の結果は変わらない（docs/ml.md の「どこで学習を流すか」）。
-      # 変数 ML_TRAIN_WORKERS は、self-hosted（ML_TRAIN_RUNNER がある）ときだけ使う
-      ENVS: 128
-      WORKERS: ${{ vars.ML_TRAIN_RUNNER && vars.ML_TRAIN_WORKERS || '4' }}
+      # 学習で並べる Node のプロセスの数と、1プロセスあたりの体の数（fingerprint が変数 ML_TRAIN_WORKERS を確かめて決めたもの）。
+      # 体の数の合計（128）は変えない。物理は乱数を使わず、体ごとに別の物理で動くので、合計が同じなら学習の結果は変わらない
+      WORKERS: ${{ needs.fingerprint.outputs.workers || '4' }}
+      PER: ${{ needs.fingerprint.outputs.per || '32' }}
     steps:
       # 使い捨てのランナー（ml/runner/）でも、前のジョブの残りが無いことを確かめてから始める
       - name: 作業フォルダが空であることを確かめる
         if: runner.environment == 'self-hosted'
         run: |
-          if [ -n "$(ls -A "$GITHUB_WORKSPACE")" ]; then
+          # 一覧が取れなかった（フォルダが無い・読めない）ときも、空とみなさずに落とす
+          if ! list=$(ls -A -- "$GITHUB_WORKSPACE"); then
+            echo "::error::作業フォルダ（$GITHUB_WORKSPACE）の中を読めない（ml/runner/README.md の「困ったとき」）"
+            exit 1
+          fi
+          if [ -n "$list" ]; then
             echo "::error::作業フォルダ（$GITHUB_WORKSPACE）が空でない。ランナーが使い捨てになっていない（ml/runner/README.md の「困ったとき」）"
-            ls -lA "$GITHUB_WORKSPACE"
+            ls -lA -- "$GITHUB_WORKSPACE"
             exit 1
           fi
-
-      - name: 並べる数を決める
-        id: par
-        run: |
-          if ! [[ "$WORKERS" =~ ^[1-9][0-9]*$ ]] || [ "$WORKERS" -gt "$ENVS" ] || [ $((ENVS % WORKERS)) != 0 ]; then
-            echo "::error::変数 ML_TRAIN_WORKERS（$WORKERS）は、$ENVS を割り切る正の整数にする（4・8・16・32 など）"
-            exit 1
-          fi
-          echo "Node のプロセス $WORKERS 個 × $((ENVS / WORKERS)) 体"
-          { echo "workers=$WORKERS"; echo "per=$((ENVS / WORKERS))"; } >> "$GITHUB_OUTPUT"
 
       # fingerprint と同じく、マージした結果で学習する。書き込みの認証情報は残さない
       - uses: actions/checkout@v5
@@ -267,9 +314,6 @@ jobs:
 
       - name: 学習し直して、記録を作り直す
         working-directory: ml
-        env:
-          WORKERS: ${{ steps.par.outputs.workers }}
-          PER: ${{ steps.par.outputs.per }}
         run: >-
           uv run python -m funyaoji_rl.pipeline --mode "$MODE" --steps "$STEPS"
           --workers "$WORKERS" --envs-per-worker "$PER"
