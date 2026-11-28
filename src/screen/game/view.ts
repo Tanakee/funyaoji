@@ -27,6 +27,8 @@ import { formatDistance, formatTime } from "./format.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
 import { bottomRightControlsLeft, SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
+import { SPEECH, SPEECH_CHARS, type BubbleStyle } from "./speech.ts";
+import { createSpeechBubble, DISPLAY_FONT_FAMILY } from "./speech-bubble.ts";
 import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
 import type { JointInputs, Seats, SeatState } from "./types.ts";
 
@@ -76,7 +78,6 @@ const LAYOUT = {
     "'Zen Kaku Gothic New', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif",
 };
 
-const DISPLAY_FONT_FAMILY = "'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif";
 type FontState = "loaded" | "fallback";
 const HUD_FONT_NAME: Record<FontState, string> = {
   loaded: "funyaoji-hud",
@@ -102,7 +103,7 @@ function hudFontName(state: FontState): string {
 async function loadViewFonts(): Promise<boolean> {
   try {
     const faces = await Promise.all([
-      document.fonts.load('900 64px "Zen Old Mincho"', "0123456789.m秒"),
+      document.fonts.load('900 64px "Zen Old Mincho"', `0123456789.m秒${SPEECH_CHARS}`),
       document.fonts.load('700 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
       document.fonts.load('900 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
     ]);
@@ -119,6 +120,9 @@ export interface View {
   onFrame(callback: (dtSec: number) => void): void;
   setSeats(seats: Seats): void;
   setExpression(expression: Expression): void;
+  /** おじさんの台詞を出す。undefined なら消す */
+  say(text: string | undefined): void;
+  readonly speech: string | undefined;
   render(state: SimState, inputs: JointInputs, dtSec: number): void;
   destroy(): void;
 }
@@ -268,7 +272,11 @@ function drawString(
     .stroke({ width: 2, color: COLORS.seatOutline, alpha: look.alpha });
 }
 
-export async function createView(container: HTMLElement, art: UncleArt = {}): Promise<View> {
+export async function createView(
+  container: HTMLElement,
+  art: UncleArt = {},
+  options: { bubbleStyle?: BubbleStyle } = {},
+): Promise<View> {
   const loaded = await loadUncleArt(art);
   const app = new Application();
   await app.init({
@@ -294,7 +302,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   observer.observe(container);
 
   const backdrop = createBackdrop(app.renderer);
-  // 重なりの順：ルーラー（地面と目盛り）→ おじさん → 糸と札 → HUD
+  // 重なりの順：ルーラー（地面と目盛り）→ おじさん → 糸と札 → 吹き出し → HUD
   const ruler = new Graphics();
   const labelLayer = new Container();
   const rulerLabels = new Map<string, Text>();
@@ -439,6 +447,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     };
   });
 
+  const bubble = createSpeechBubble(options.bubbleStyle ?? SPEECH.defaultStyle);
   app.stage.addChild(
     backdrop.back,
     backdrop.ground,
@@ -446,6 +455,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     labelLayer,
     world,
     seatLayer,
+    bubble.container,
     hud,
     route,
   );
@@ -538,6 +548,17 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       parts[name].node.position.set(pose.x, pose.y);
       parts[name].node.rotation = pose.rot;
     }
+    const torso = state.poses.torso;
+    const headOffset = TORSO_SIZE.hh + TORSO_SIZE.headR;
+    bubble.update({
+      headX: screenX(torso.x - headOffset * Math.sin(torso.rot)),
+      headY: groundY - (torso.y + headOffset * Math.cos(torso.rot)) * pxPerM,
+      headRadius: TORSO_SIZE.headR * pxPerM,
+      width: w,
+      height: h,
+      ui,
+      nowMs: performance.now(),
+    });
 
     seatLayer.scale.set(ui);
     seatLayer.x = w / 2;
@@ -658,8 +679,15 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
         placeImage(head, image, "head");
       }
     },
+    say(text) {
+      bubble.say(text, performance.now());
+    },
+    get speech() {
+      return bubble.text;
+    },
     destroy() {
       observer.disconnect();
+      bubble.destroy();
       backdrop.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
