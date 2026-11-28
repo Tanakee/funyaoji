@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { GAME_COLORS, KEYBOARD_KEYS } from "../game/index.ts";
 import { JOINT_LABELS } from "./labels.ts";
-import type { ScreenSession, ScreenView } from "./session.ts";
+import { keyboardDrives, type ScreenSession, type ScreenView } from "./session.ts";
 
 /** つまみの上端・下端が、その関節の何にあたるか（docs/game.md の「関節の入力」） */
 const ENDS: Record<Joint, { top: string; bottom: string }> = {
@@ -21,6 +21,17 @@ const jointColor = (joint: Joint) => `#${GAME_COLORS.joint[joint].toString(16).p
 export function DebugControls({ session, view }: { session: ScreenSession; view: ScreenView }) {
   if (!view.debug.enabled || view.flow.kind === "lobby") return null;
   const { players } = view.flow;
+  // つまみの上に出す、いまその関節を動かしているもの
+  const driver = (joint: Joint): string =>
+    view.absent[joint] !== undefined
+      ? `切断中 あと${view.absent[joint]}秒`
+      : players.includes(joint) || view.joints.includes(joint)
+        ? "スマホ"
+        : keyboardDrives(view, joint)
+          ? `${KEYBOARD_KEYS[joint].label}キー`
+          : view.debug.autoplay && view.flow.kind !== "result"
+            ? "お手本"
+            : "";
   return (
     <section className="debug-controls" aria-label="デバッグ操作">
       <div className="debug-actions">
@@ -42,12 +53,7 @@ export function DebugControls({ session, view }: { session: ScreenSession; view:
           お手本の間も、つまみをつかんだ関節は指に従う。白い線がお手本の位置
         </p>
       </div>
-      <Strips
-        session={session}
-        players={players}
-        absent={view.absent}
-        showGuide={view.debug.autoplay}
-      />
+      <Strips session={session} players={players} driver={driver} showGuide={view.debug.autoplay} />
     </section>
   );
 }
@@ -60,12 +66,12 @@ type Refs = Record<
 function Strips({
   session,
   players,
-  absent,
+  driver,
   showGuide,
 }: {
   session: ScreenSession;
   players: readonly Joint[];
-  absent: ScreenView["absent"];
+  driver: (joint: Joint) => string;
   showGuide: boolean;
 }) {
   const refs = useRef<Refs>({
@@ -98,7 +104,7 @@ function Strips({
           session={session}
           joint={joint}
           phone={players.includes(joint)}
-          absentSec={absent[joint]}
+          driver={driver(joint)}
           showGuide={showGuide}
           refs={refs}
         />
@@ -111,20 +117,19 @@ function Strip({
   session,
   joint,
   phone,
-  absentSec,
+  driver,
   showGuide,
   refs,
 }: {
   session: ScreenSession;
   joint: Joint;
   phone: boolean;
-  /** つなぎ直しを待っているときの残り秒数 */
-  absentSec: number | undefined;
+  /** いまその関節を動かしているもの（スマホ・キー・お手本・切断中） */
+  driver: string;
   showGuide: boolean;
   refs: React.RefObject<Refs>;
 }) {
   const slot = refs.current[joint];
-  const { up, down } = KEYBOARD_KEYS[joint];
   // 指の高さ（0 が下端、1 が上端）をそのまま入力にする。1人で何本も触るので、押した場所に飛ぶ
   const setFrom = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -159,13 +164,7 @@ function Strip({
     >
       <div className="strip-name">
         {JOINT_LABELS[joint]}
-        <small>
-          {absentSec !== undefined
-            ? `切断中 あと${absentSec}秒`
-            : phone
-              ? "スマホ"
-              : `${up.label}/${down.label}`}
-        </small>
+        <small>{driver}</small>
       </div>
       <div
         className="strip-track"

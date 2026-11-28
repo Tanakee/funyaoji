@@ -1,13 +1,14 @@
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { KEYBOARD_KEYS } from "../game/index.ts";
 import { JOINT_LABELS } from "./labels.ts";
-import type { ScreenView } from "./session.ts";
+import { keyboardDrives, type ScreenView } from "./session.ts";
 
 type JointStatus = "active" | "idle" | "keyboard" | "absent";
 
 /**
  * 4つの関節の入力の状態。直近0.5秒に tilt が届いている（active）・スマホはいるが届いていない（idle）・
  * スマホがいなくてキーボード（keyboard）・切れてつなぎ直しを待っている（absent）。
+ * プレイを始めたあとに入ったスマホも、スマホとして出す（キーボードはその関節を動かさない）。
  * active の集合が変わったときと、待つ残り秒数が変わった（1秒に1回）ときだけ描き直す
  */
 export function Hud({ view }: { view: ScreenView }) {
@@ -17,7 +18,7 @@ export function Hud({ view }: { view: ScreenView }) {
   const status = (joint: Joint): JointStatus =>
     view.absent[joint] !== undefined
       ? "absent"
-      : !players.includes(joint)
+      : !players.includes(joint) && !view.joints.includes(joint)
         ? "keyboard"
         : view.active.includes(joint)
           ? "active"
@@ -27,7 +28,8 @@ export function Hud({ view }: { view: ScreenView }) {
       {JOINTS.map((joint) => (
         <li key={joint} className={`hud-joint hud-joint--${status(joint)}`}>
           <span className="hud-joint-name">{JOINT_LABELS[joint]}</span>
-          {status(joint) === "keyboard" ? (
+          {/* キーの案内は、キーボードが効いているときだけ（結果の画面では出さない） */}
+          {keyboardDrives(view, joint) ? (
             <KeyHint joint={joint} />
           ) : (
             <span className="hud-joint-state">
@@ -43,11 +45,12 @@ export function Hud({ view }: { view: ScreenView }) {
 
 /** キーボードで動かす関節に、どのキーで何が起きるかを出す。覚えていなくても操作できるように */
 function KeyHint({ joint }: { joint: Joint }) {
-  const { up, down } = KEYBOARD_KEYS[joint];
-  const [upText, downText] = joint.endsWith("Hip") ? ["前", "後ろ"] : ["曲げる", "伸ばす"];
+  const { label } = KEYBOARD_KEYS[joint];
+  // 押している間だけ引き、離すと戻る（docs/game.md の「関節の入力」）
+  const text = joint.endsWith("Hip") ? "押すと前に振る" : "押すと曲げる";
   return (
     <span className="hud-joint-keys">
-      <kbd>{up.label}</kbd> {upText} <kbd>{down.label}</kbd> {downText}
+      <kbd>{label}</kbd> {text}
     </span>
   );
 }
