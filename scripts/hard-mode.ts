@@ -1,8 +1,9 @@
 // ハードモードのモーターの値を決めるために、ノーマルとハードで決まった歩き方を再生して比べる（docs/game.md の「ハードモード」）。
 // お手本の歩き方と、周期・振幅などをでたらめに変えた歩き方（種を固定）を、ノーマルと、モーターの候補ごとのハードで再生し、
 // ゴールした数・転んだ時刻・進んだ距離を表にする。体の状態を見ない、時間だけで決まる入力なので、人が見て直す操作より厳しい
-// 使い方：node scripts/hard-mode.ts [--n 1500] [--seed 7]
+// 使い方：node scripts/hard-mode.ts [--n 1500] [--seed 7] [--perturb]
 //   1500 通りで30分ほどかかる（ノーマルは転ばずに60秒歩き続ける歩き方が多く、その分が長い）
+//   --perturb：表の代わりに、今の HARD_MOTOR でゴールした歩き方の5つの値を1つずつ ±5% ずらし、続けてゴールするかを数える
 import { parseArgs } from "node:util";
 import { DEMO_GAIT, type Gait, gaitRecord } from "../src/screen/game/ai/gait.ts";
 import { replay } from "../src/screen/game/ai/record.ts";
@@ -13,6 +14,7 @@ const { values: args } = parseArgs({
   options: {
     n: { type: "string", default: "1500" },
     seed: { type: "string", default: "7" },
+    perturb: { type: "boolean", default: false },
   },
 });
 const LIMIT_S = 60;
@@ -94,17 +96,59 @@ function withHardMotor<T>(motor: typeof MOTOR, f: () => T): T {
   }
 }
 
-console.log(`歩き方 ${gaits.length} 通り（種 ${args.seed}）、${LIMIT_S} 秒まで`);
-console.log(
-  "| 物理 | お手本 | ゴール | 転倒 | 転んだ時刻の中央値 | 進んだ距離の中央値 | いちばん速いゴール |",
-);
-console.log("|---|---|---|---|---|---|---|");
-row("ノーマル", false);
-for (const c of CANDIDATES) {
-  withHardMotor(c, () =>
-    row(
-      `ハード stiffness ${c.stiffness}・damping ${c.damping}・maxForce ${c.maxForceBodyWeights}`,
-      true,
-    ),
+const GAIT_KEYS = ["T", "h0", "A", "K", "kp"] as const;
+/** 5つの値を1つずつ、PERTURB 倍だけ大きく・小さくした10通り */
+const PERTURB = 0.05;
+function perturbations(g: Gait): { label: string; gait: Gait }[] {
+  return GAIT_KEYS.flatMap((key) =>
+    [1, -1].map((sign) => ({
+      label: `${key} ${sign > 0 ? "+" : "-"}${PERTURB * 100}%`,
+      gait: { ...g, [key]: g[key] * (1 + sign * PERTURB) },
+    })),
   );
+}
+
+/**
+ * 今の HARD_MOTOR で、ゴールした歩き方を、値をずらしても続けてゴールするか確かめる。
+ * テストの歩き方（sim.test.ts の HARD_GAIT）と、でたらめな歩き方のうちゴールしたもの
+ */
+function perturb(): void {
+  const isGoal = (g: Gait) => play(g, true).result?.outcome === "goal";
+  const survivors = (g: Gait) => perturbations(g).filter((p) => isGoal(p.gait));
+  const test: Gait = { T: 2.92, h0: 0.58, A: 0.39, K: 0.4, kp: 0.23 };
+  console.log(
+    `ハード（maxForce ${HARD_MOTOR.maxForceBodyWeights}）、値を1つずつ ±${PERTURB * 100}%`,
+  );
+  console.log(`テストの歩き方（${fmt(test)}）：${describe(play(test, true))}`);
+  for (const p of perturbations(test)) console.log(`  ${p.label}：${describe(play(p.gait, true))}`);
+  const goals = gaits.filter(isGoal);
+  const counts = goals.map((g) => survivors(g).length);
+  const all = counts.filter((c) => c === 10).length;
+  console.log(
+    `でたらめな歩き方 ${gaits.length} 通りのうち、ゴール ${goals.length}。` +
+      `10通りすべてでゴール ${all}、ゴールした数の分布 ${JSON.stringify(
+        Object.fromEntries(
+          Array.from({ length: 11 }, (_, k) => [k, counts.filter((c) => c === k).length]),
+        ),
+      )}`,
+  );
+}
+
+if (args.perturb) {
+  perturb();
+} else {
+  console.log(`歩き方 ${gaits.length} 通り（種 ${args.seed}）、${LIMIT_S} 秒まで`);
+  console.log(
+    "| 物理 | お手本 | ゴール | 転倒 | 転んだ時刻の中央値 | 進んだ距離の中央値 | いちばん速いゴール |",
+  );
+  console.log("|---|---|---|---|---|---|---|");
+  row("ノーマル", false);
+  for (const c of CANDIDATES) {
+    withHardMotor(c, () =>
+      row(
+        `ハード stiffness ${c.stiffness}・damping ${c.damping}・maxForce ${c.maxForceBodyWeights}`,
+        true,
+      ),
+    );
+  }
 }
