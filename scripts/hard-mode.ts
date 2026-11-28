@@ -47,7 +47,13 @@ const describe = (end: SimState): string => {
     return `${(end.elapsedMs / 1000).toFixed(2)} 秒で転倒・${r.distanceM.toFixed(2)} m`;
   return `${LIMIT_S} 秒で終わらない・${end.distanceM.toFixed(2)} m`;
 };
-const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? NaN;
+/** 中央値。件数が偶数のときは、中央の2つの平均 */
+const median = (xs: number[]): number => {
+  if (xs.length === 0) return NaN;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+};
 const fmt = (g: Gait) =>
   `T ${g.T.toFixed(2)}・h0 ${g.h0.toFixed(2)}・A ${g.A.toFixed(2)}・K ${g.K.toFixed(2)}・kp ${g.kp.toFixed(2)}`;
 
