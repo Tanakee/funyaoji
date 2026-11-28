@@ -59,6 +59,12 @@ export function PhoneApp({ room }: { room: string | undefined }) {
   // ページを閉じるとき（と開発中の再読み込み）に、接続を閉じる
   useEffect(() => () => session.current?.stop(), []);
 
+  // スクリーンが選んだ操作方法で読む。参加していないあいだ（つなぎ直し中も）は、いまの読み方を続ける
+  const input = state.kind === "joined" ? state.input : undefined;
+  useEffect(() => {
+    if (input !== undefined) session.current?.setInput(input);
+  }, [input]);
+
   const start = useCallback(() => {
     session.current?.send({ type: "start" });
   }, []);
@@ -149,17 +155,23 @@ function Body({
         <>
           <div className="joined" inert={state.reconnectingSince !== undefined}>
             {state.phase.kind === "lobby" ? (
-              <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
+              <Lobby
+                room={room}
+                joint={state.joint}
+                count={state.count}
+                input={state.input}
+                onStart={onStart}
+              />
             ) : state.phase.kind === "playing" ? (
               state.phase.countdown === undefined ? (
-                <Playing joint={state.joint} active={state.active} />
+                <Playing joint={state.joint} active={state.active} input={state.input} />
               ) : (
                 <Countdown
                   key={state.phase.countdown.endsAt}
                   countdown={state.phase.countdown}
                   joint={state.joint}
                 >
-                  <Playing joint={state.joint} active={state.active} />
+                  <Playing joint={state.joint} active={state.active} input={state.input} />
                 </Countdown>
               )
             ) : (

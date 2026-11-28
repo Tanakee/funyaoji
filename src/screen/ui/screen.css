@@ -240,9 +240,52 @@ kbd {
 .team-name-field:has([aria-invalid="true"]) p {
   color: var(--color-ink);
 }
-.lobby-mode {
+/* 操作方法。傾きとカメラを、2つのボタンが並んだ形で選ぶ */
+.input-field {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
   font-size: clamp(20px, 1.6vw, 26px);
   font-weight: 700;
+}
+.input-field legend {
+  float: left;
+  margin-right: 4px;
+  padding: 0;
+}
+.input-option {
+  position: relative;
+}
+.input-option input {
+  position: absolute;
+  opacity: 0;
+}
+.input-option span {
+  display: block;
+  padding: 8px 20px;
+  border: 2px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.input-option input:checked + span {
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+.input-option input:focus-visible + span {
+  outline: 3px solid var(--color-keyboard);
+  outline-offset: 2px;
+}
+.input-field p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 20px;
+  color: var(--color-ink-soft);
 }
 .lobby-notice {
   margin: 0;

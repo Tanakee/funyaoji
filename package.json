@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.21.0",
+    "@mediapipe/tasks-vision": "^1.2.3",
     "hono": "^4.13.19",
     "pixi.js": "^8.23.0",
     "react": "^19.3.1",

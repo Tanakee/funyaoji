@@ -4,6 +4,7 @@ import { MAX_DELAY_MS, type CountdownKind } from "../shared/countdown.ts";
 import { isRoomCode, normalizeRoomCode } from "../shared/room.ts";
 import {
   ROOM_CLOSED_CODE,
+  type InputMethod,
   type Joint,
   type PhaseMessage,
   type PlayResult,
@@ -50,6 +51,8 @@ export type PhoneState =
       /** 接続中のスマホの数 */
       count: number;
       phase: RoomPhase;
+      /** 操作方法。スクリーンがロビーで選び、phase で知らせる。結果の phase には無いので、前の値を残す */
+      input: InputMethod;
       /** 自分の関節の入力がスクリーンに届いている（プレイ中だけ意味がある） */
       active: boolean;
       /**
@@ -164,6 +167,7 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
           joint: message.joint,
           count: 1,
           phase: { kind: "lobby" },
+          input: "tilt",
           active: false,
           link: "open",
           reconnectingSince: undefined,
@@ -182,7 +186,12 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
         : { ...state, count: message.joints.length };
     case "phase":
       return state.kind === "joined"
-        ? { ...state, phase: toRoomPhase(message, state.joint, at), active: false }
+        ? {
+            ...state,
+            phase: toRoomPhase(message, state.joint, at),
+            input: message.phase === "result" ? state.input : message.input,
+            active: false,
+          }
         : state;
     case "status": {
       if (state.kind !== "joined") return state;

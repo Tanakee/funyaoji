@@ -26,16 +26,21 @@ describe("/api/rankings", () => {
       [`${tag}a`, 1],
       [`${tag}b`, 2],
     ] as const) {
-      const response = await submit({ mode: "10m", teamName, timeMs });
+      const response = await submit({ mode: "10m", input: "tilt", teamName, timeMs });
       expect(response.status).toBe(201);
     }
     // 全角の英字と全角の空白
-    const response = await submit({ mode: "10m", teamName: `　${tag}ＺＺ `, timeMs: 2 });
+    const response = await submit({
+      mode: "10m",
+      input: "tilt",
+      teamName: `　${tag}ＺＺ `,
+      timeMs: 2,
+    });
     const saved = (await response.json()) as SubmitRankingResponse;
     expect(saved.entry.teamName).toBe(`${tag}ZZ`);
 
     const top = (await (
-      await fetch(new URL("/api/rankings?mode=10m", serverUrl))
+      await fetch(new URL("/api/rankings?mode=10m&input=tilt", serverUrl))
     ).json()) as RankingsResponse;
     const mine = top.rankings.filter((e) => e.teamName.startsWith(tag));
     // 同じタイムは先に保存したものが上
@@ -46,21 +51,46 @@ describe("/api/rankings", () => {
 
   test("形や範囲の正しくない値は 400 で断る", async () => {
     for (const body of [
-      { mode: "50m", teamName: "a", timeMs: 1000 },
-      { mode: "10m", teamName: "  ", timeMs: 1000 },
-      { mode: "10m", teamName: "a\nb", timeMs: 1000 },
-      { mode: "10m", teamName: "\u200B", timeMs: 1000 },
-      { mode: "10m", teamName: "\u200D", timeMs: 1000 },
-      { mode: "10m", teamName: "12345678901", timeMs: 1000 },
-      { mode: "10m", teamName: "a", timeMs: 0 },
-      { mode: "10m", teamName: "a", timeMs: RANKING_MAX_TIME_MS + 1 },
+      { mode: "50m", input: "tilt", teamName: "a", timeMs: 1000 },
+      { mode: "10m", teamName: "a", timeMs: 1000 },
+      { mode: "10m", input: "mouse", teamName: "a", timeMs: 1000 },
+      { mode: "10m", input: "tilt", teamName: "  ", timeMs: 1000 },
+      { mode: "10m", input: "tilt", teamName: "a\nb", timeMs: 1000 },
+      { mode: "10m", input: "tilt", teamName: "\u200B", timeMs: 1000 },
+      { mode: "10m", input: "tilt", teamName: "\u200D", timeMs: 1000 },
+      { mode: "10m", input: "tilt", teamName: "12345678901", timeMs: 1000 },
+      { mode: "10m", input: "tilt", teamName: "a", timeMs: 0 },
+      { mode: "10m", input: "tilt", teamName: "a", timeMs: RANKING_MAX_TIME_MS + 1 },
       "10m",
     ]) {
       const response = await submit(body);
       expect(response.status, JSON.stringify(body)).toBe(400);
     }
-    const response = await fetch(new URL("/api/rankings", serverUrl));
-    expect(response.status).toBe(400);
+    for (const query of ["", "?mode=10m", "?mode=10m&input=mouse", "?input=tilt"]) {
+      const response = await fetch(new URL(`/api/rankings${query}`, serverUrl));
+      expect(response.status, query).toBe(400);
+    }
+  });
+
+  test("傾きとカメラのランキングは分かれる", async () => {
+    const tag = crypto.randomUUID().slice(0, 4);
+    await submit({ mode: "10m", input: "tilt", teamName: `${tag}t`, timeMs: 1 });
+    const response = await submit({ mode: "10m", input: "camera", teamName: `${tag}c`, timeMs: 2 });
+    const saved = (await response.json()) as SubmitRankingResponse;
+    // 傾きの記録より遅くても、カメラの中では自分の順位になる
+    expect(saved.rankings.some((e) => e.teamName === `${tag}t`)).toBe(false);
+    for (const [input, name] of [
+      ["tilt", `${tag}t`],
+      ["camera", `${tag}c`],
+    ] as const) {
+      const top = (await (
+        await fetch(new URL(`/api/rankings?mode=10m&input=${input}`, serverUrl))
+      ).json()) as RankingsResponse;
+      expect(top.input).toBe(input);
+      expect(top.rankings.filter((e) => e.teamName.startsWith(tag)).map((e) => e.teamName)).toEqual(
+        [name],
+      );
+    }
   });
 
   // ローカルの Rate Limiting は時計の分の区切りで数え直すので、区切りをまたいでも断られるまで呼ぶ
@@ -68,7 +98,10 @@ describe("/api/rankings", () => {
     const ip = crypto.randomUUID();
     let response: Response | undefined;
     for (let i = 0; i < 11; i++) {
-      response = await submit({ mode: "10m", teamName: "連打", timeMs: RANKING_MAX_TIME_MS }, ip);
+      response = await submit(
+        { mode: "10m", input: "tilt", teamName: "連打", timeMs: RANKING_MAX_TIME_MS },
+        ip,
+      );
       if (response.status === 429) break;
     }
     expect(response?.status).toBe(429);

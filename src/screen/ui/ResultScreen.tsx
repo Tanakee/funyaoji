@@ -1,4 +1,5 @@
 import type { PlayResult } from "../../shared/messages.ts";
+import { modeLabel } from "./Lobby.tsx";
 import type { ScreenSession, ScreenView } from "./session.ts";
 
 type Outcome = PlayResult["outcome"];
@@ -28,7 +29,8 @@ export function ResultScreen({
           ふ
         </div>
         <div className="brand-name">ふにゃおじ</div>
-        <span className="header-mode">10m モード</span>
+        {/* ランキングは、モードと操作方法の組ごとに分かれる */}
+        <span className="header-mode">{modeLabel(view.input)}</span>
       </header>
 
       <div className="result-layout">

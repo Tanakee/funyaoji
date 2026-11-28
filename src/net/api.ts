@@ -8,7 +8,7 @@ import {
   type RankingEntry,
   type SubmitRankingInput,
 } from "../shared/api.ts";
-import type { Mode } from "../shared/messages.ts";
+import type { InputMethod, Mode } from "../shared/messages.ts";
 
 /** POST /api/rooms が断った理由ごとに、スクリーンに出す文 */
 const REJECTED_MESSAGES: Record<CreateRoomRejected["reason"], string> = {
@@ -63,9 +63,10 @@ export async function submitRanking(input: SubmitRankingInput): Promise<SubmitRa
   return result.output;
 }
 
-/** ランキングの上位を、速い順に返す（GET /api/rankings） */
-export async function fetchRankings(mode: Mode): Promise<RankingEntry[]> {
-  const response = await fetch(`/api/rankings?mode=${encodeURIComponent(mode)}`);
+/** ランキングの上位を、速い順に返す（GET /api/rankings）。モードと操作方法の組ごとに分かれる */
+export async function fetchRankings(mode: Mode, input: InputMethod): Promise<RankingEntry[]> {
+  const query = new URLSearchParams({ mode, input });
+  const response = await fetch(`/api/rankings?${query}`);
   if (!response.ok) {
     throw new Error(`/api/rankings が ${response.status} を返しました`);
   }

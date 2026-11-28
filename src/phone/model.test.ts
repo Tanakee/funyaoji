@@ -74,7 +74,7 @@ describe("JumpFilter", () => {
 });
 
 describe("reduce", () => {
-  const playing = { type: "phase", phase: "playing", mode: "10m" } as const;
+  const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" } as const;
   const countdown = { kind: "count", durationMs: 3_000, remainingMs: 2_000 } as const;
 
   it("自分の関節の遅延だけを引き、新しい countdown が来たら開始時刻を置き換える", () => {
@@ -129,10 +129,23 @@ describe("reduce", () => {
     expect(next.kind === "joined" && next.phase).toEqual({ kind: "playing" });
   });
 
+  it("操作方法は傾きから始め、ロビーとプレイの phase で変わり、結果の phase では残す", () => {
+    const joined = run(joinedEvents);
+    expect(joined).toMatchObject({ kind: "joined", input: "tilt" });
+    const camera = run([message({ type: "phase", phase: "lobby", input: "camera" })], joined);
+    expect(camera).toMatchObject({ input: "camera" });
+    const result = run(
+      [message({ type: "phase", phase: "result", result: { outcome: "fell", distanceM: 1 } })],
+      camera,
+    );
+    expect(result).toMatchObject({ input: "camera", phase: { kind: "result" } });
+    expect(run([message(playing)], result)).toMatchObject({ input: "tilt" });
+  });
+
   it("参加していたスマホがつなぎ直して断られたら、断られた理由を出す", () => {
     const state = run([
       ...joinedEvents,
-      message({ type: "phase", phase: "playing", mode: "10m" }),
+      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
       connection({ status: "reconnecting", attempt: 1 }),
       connection({ status: "open" }),
       message({ type: "rejected", reason: "playing" }),
@@ -153,7 +166,7 @@ describe("reduce", () => {
     const state = run([
       ...joinedEvents,
       message({ type: "room", roomCode: "K7Q2", joints: ["rightHip", "leftKnee"] }),
-      message({ type: "phase", phase: "playing", mode: "10m" }),
+      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
       message({ type: "status", active: ["leftKnee"] }),
     ]);
     expect(state).toMatchObject({
@@ -230,7 +243,7 @@ describe("reduce", () => {
       ...joinedEvents,
       connection({ status: "reconnecting", attempt: 1 }, 1_000),
       message({ type: "joined", joint: "leftKnee" }),
-      message({ type: "phase", phase: "playing", mode: "10m" }),
+      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
     ]);
     expect(state).toMatchObject({ link: "rejoining", phase: { kind: "playing" } });
     expect(
@@ -244,7 +257,7 @@ describe("reduce", () => {
   it("phase を受け取っていないルームでは、joined のあとの room で、ロビーのまま閉じる", () => {
     const state = run([
       ...joinedEvents,
-      message({ type: "phase", phase: "playing", mode: "10m" }),
+      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
       connection({ status: "reconnecting", attempt: 1 }, 1_000),
       message({ type: "joined", joint: "leftKnee" }),
       message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] }),

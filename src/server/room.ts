@@ -534,7 +534,7 @@ export class Room extends DurableObject<Env> {
         ws,
         remaining > 0
           ? { ...phase, countdown: { ...phase.countdown, remainingMs: Math.round(remaining) } }
-          : { type: "phase", phase: "playing", mode: phase.mode },
+          : { type: "phase", phase: "playing", mode: phase.mode, input: phase.input },
       );
     } else if (phase !== undefined) {
       send(ws, phase);

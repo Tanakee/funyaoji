@@ -58,12 +58,12 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
   },
   {
     name: "phase: lobby",
-    message: { type: "phase", phase: "lobby" },
+    message: { type: "phase", phase: "lobby", input: "tilt" },
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "phase: playing",
-    message: { type: "phase", phase: "playing", mode: "10m" },
+    message: { type: "phase", phase: "playing", mode: "10m", input: "tilt" },
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
@@ -201,7 +201,7 @@ const rejected: { name: string; message: unknown }[] = [
 ];
 
 describe("メッセージのスキーマ", () => {
-  const playing = { type: "phase", phase: "playing", mode: "10m" };
+  const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
   const countdown = {
     kind: "count",
     durationMs: 3_000,
