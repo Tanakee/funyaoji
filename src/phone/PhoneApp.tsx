@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { RoomCodeEntry } from "./RoomCodeEntry.tsx";
 import { Countdown } from "./Countdown.tsx";
 import { Entry } from "./Entry.tsx";
 import { HowTo } from "./HowTo.tsx";
@@ -139,8 +140,15 @@ function Body({
 }) {
   switch (state.kind) {
     case "invalid-room":
+      return <RoomCodeEntry />;
     case "rejected":
-      return <Notice {...NO_ROOM} />;
+      return (
+        <Notice {...NO_ROOM}>
+          <a className="phone-button room-reenter" href="/play">
+            ルームコードを入れ直す
+          </a>
+        </Notice>
+      );
     case "ready":
     case "asking-permission":
       return <Entry askingPermission={state.kind === "asking-permission"} onJoin={onJoin} />;
