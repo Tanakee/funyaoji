@@ -19,6 +19,7 @@ import {
   type ServerToScreenMessage,
 } from "../shared/messages.ts";
 import { parseMessage } from "../shared/parse.ts";
+import { upgradeStoredPhase, type StoredPhase } from "./stored-phase.ts";
 
 /**
  * WebSocket に付けておく情報。休止（Hibernation）から戻っても残る。connectedAt は接続した時刻（ミリ秒）。
@@ -110,11 +111,12 @@ export class Room extends DurableObject<Env> {
     }
     const { 0: client, 1: server } = new WebSocketPair();
     const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
-    const [phase, countdownEndsAt, howto] = await Promise.all([
-      this.ctx.storage.get<PhaseMessage>(PHASE_KEY),
+    const [storedPhase, countdownEndsAt, howto] = await Promise.all([
+      this.ctx.storage.get<StoredPhase>(PHASE_KEY),
       role === "phone" ? this.ctx.storage.get<number>(COUNTDOWN_ENDS_AT_KEY) : undefined,
       role === "phone" ? this.ctx.storage.get<HowtoMessage>(HOWTO_KEY) : undefined,
     ]);
+    const phase = upgradeStoredPhase(storedPhase);
 
     // 断る理由は no-room → playing → full の順に調べる。戻ってきたスマホは playing・full では断らない
     if (roomCode === undefined || (await this.ctx.storage.get<boolean>(CLOSED_KEY))) {

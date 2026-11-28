@@ -205,10 +205,13 @@ const rejected: { name: string; message: unknown }[] = [
   { name: "未知の joint (howto)", message: { type: "howto", ready: ["rightHip", "head"] } },
   { name: "未知の reason", message: { type: "rejected", reason: "banned" } },
   { name: "phase が未知", message: { type: "phase", phase: "paused" } },
-  { name: "playing に mode が無い", message: { type: "phase", phase: "playing" } },
+  {
+    name: "playing に mode が無い",
+    message: { type: "phase", phase: "playing", input: "tilt" },
+  },
   {
     name: "playing の mode が normal・hard 以外",
-    message: { type: "phase", phase: "playing", mode: "10m" },
+    message: { type: "phase", phase: "playing", mode: "10m", input: "tilt" },
   },
   { name: "result に result が無い", message: { type: "phase", phase: "result" } },
   {
