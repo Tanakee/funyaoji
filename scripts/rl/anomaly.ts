@@ -12,6 +12,7 @@ import {
 } from "../../src/screen/game/body.ts";
 import { quantize, toJointInputs } from "../../src/screen/game/ai/observe.ts";
 import type { InputRecord } from "../../src/screen/game/ai/record.ts";
+import { modeSimOptions, type SimMode } from "../../src/screen/game/modes.ts";
 import { Sim } from "../../src/screen/game/sim.ts";
 
 export interface Anomaly {
@@ -57,7 +58,8 @@ function lowest(name: (typeof PART_NAMES)[number], pose: Pose): number {
   return low;
 }
 
-export function measure(record: InputRecord): Anomaly {
+/** 記録を、モードの設定の Sim で再生して測る */
+export function measure(record: InputRecord, mode: SimMode): Anomaly {
   // 1回の入力を、物理の何ステップに割るか。割り切れないと、刻みが再生（Sim.advance）とずれるので止める
   const sub = Math.round(1 / record.hz / STEP_S);
   if (Math.abs(1 / record.hz / STEP_S - sub) > 1e-9) {
@@ -65,7 +67,7 @@ export function measure(record: InputRecord): Anomaly {
       `入力の間隔（1/${record.hz} 秒）が、物理の1ステップ（${STEP_S} 秒）で割り切れない`,
     );
   }
-  const sim = new Sim();
+  const sim = new Sim(modeSimOptions(mode));
   sim.start();
   const a: Anomaly = {
     jointOvershoot: 0,

@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import IO
 
+from .vec_env import DEFAULT_MODE, mode_prefix
+
 RUNS = Path("runs")
 # 学習・評価・レジストリへの登録まで終わった run に付ける印
 DONE = "registered"
@@ -53,9 +55,14 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", default=DEFAULT_MODE, help="モード（src/screen/game/modes.ts の一覧）。どの run もこのモードで学習する")
     ap.add_argument("--parallel", type=int, default=8)
     ap.add_argument("--plan", choices=["first", "bench"], default="first")
-    ap.add_argument("--base-gait", default="runs/base-gait.json")
+    ap.add_argument(
+        "--base-gait",
+        default=None,
+        help="土台の歩き方。省くと runs/base-gait.json（ノーマル）、runs/<モード>-base-gait.json（ほかのモード）",
+    )
     ap.add_argument("--steps", type=int, default=20_000_000)
     # 1本あたり 4 プロセス × 32 体 ＝ 128 体（16 × 8 と同じ数なので、PPO の設定はそのまま比べられる）
     ap.add_argument("--workers", type=int, default=4)
@@ -64,8 +71,12 @@ def main() -> None:
     ap.add_argument("--separate-db", action="store_true", help="速さを測るとき：MLflow の記録先を run ごとに別の一時ファイルにする")
     args = ap.parse_args()
 
-    plan = plan_first(args.base_gait) if args.plan == "first" else plan_bench(args.base_gait, args.parallel)
-    common = ["--workers", str(args.workers), "--envs-per-worker", str(args.envs_per_worker),
+    # 土台の歩き方はモードの物理で探したものを使う。ほかのモードの歩き方を黙って使わないよう、既定もモードで分ける
+    base = args.base_gait or f"runs/{mode_prefix(args.mode)}base-gait.json"
+    plan = plan_first(base) if args.plan == "first" else plan_bench(base, args.parallel)
+    # ノーマル以外は、run の名前にモードを付ける（終わった印 runs/<名前>/registered が、モードをまたいで重ならないように）
+    plan = [(f"{mode_prefix(args.mode)}{name}", extra) for name, extra in plan]
+    common = ["--mode", args.mode, "--workers", str(args.workers), "--envs-per-worker", str(args.envs_per_worker),
               "--torch-threads", str(args.torch_threads)]
     queue = [(name, extra) for name, extra in plan if not (RUNS / name / DONE).exists()]
     running: dict[str, tuple[subprocess.Popen, IO[str], float]] = {}

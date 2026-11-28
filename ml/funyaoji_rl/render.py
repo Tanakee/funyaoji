@@ -3,7 +3,7 @@
 Node（server.ts の replay）で記録を再生して、コマごとの体の位置を出し、Pillow で絵にする。
 記録を複数渡すと、並べて同時にスタートさせる。GIF と mp4（imageio-ffmpeg）を作る。
 
-使い方（ml/ で）：uv run python -m funyaoji_rl.render --out runs/x/video 記録1.json 記録2.json ...
+使い方（ml/ で）：uv run python -m funyaoji_rl.render [--mode normal] --out runs/x/video 記録1.json 記録2.json ...
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import imageio.v2 as imageio
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .vec_env import NodeProcess
+from .vec_env import DEFAULT_MODE, NodeProcess
 
 PANEL_W, PANEL_H = 420, 250
 SCALE = 80  # 1m の画素数
@@ -119,9 +119,10 @@ def render(
     runs: list[tuple[str, list[list[float]]]],
     out_base: Path,
     cols: int = 2,
+    mode: str = DEFAULT_MODE,
 ) -> tuple[Path, Path]:
-    """記録を並べて同時に再生する動画を作り、GIF と mp4 の場所を返す"""
-    proc = NodeProcess()
+    """記録を並べて同時に再生する動画を作り、GIF と mp4 の場所を返す。記録は mode のモードの物理で再生する"""
+    proc = NodeProcess(mode)
     try:
         replays = [replay(proc, inputs) for _, inputs in runs]
     finally:
@@ -164,9 +165,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True, help="出力の名前（拡張子なし）")
     ap.add_argument("--cols", type=int, default=2)
+    ap.add_argument("--mode", default=DEFAULT_MODE, help="記録を再生するモード（src/screen/game/modes.ts の一覧）")
     ap.add_argument("records", type=Path, nargs="+")
     args = ap.parse_args()
-    proc = NodeProcess()
+    proc = NodeProcess(args.mode)
     try:
         shapes = proc.call({"cmd": "init", "n": 1, "config": {}})["shapes"]
     finally:
@@ -175,7 +177,7 @@ def main() -> None:
     for path in args.records:
         rec = json.loads(path.read_text(encoding="utf-8"))
         runs.append((rec.get("label", path.stem), rec["inputs"]))
-    gif, mp4 = render(shapes, runs, args.out, args.cols)
+    gif, mp4 = render(shapes, runs, args.out, args.cols, args.mode)
     print(gif, mp4)
 
 

@@ -16,9 +16,12 @@ import {
   toJointInputs,
 } from "../../src/screen/game/ai/observe.ts";
 import { replay, type InputRecord } from "../../src/screen/game/ai/record.ts";
+import { DEFAULT_SIM_MODE, modeSimOptions, type SimMode } from "../../src/screen/game/modes.ts";
 import { Sim } from "../../src/screen/game/sim.ts";
 
 export interface EnvConfig {
+  /** モード（src/screen/game/modes.ts の一覧）。Sim はその設定で作る */
+  mode: SimMode;
   /** r1：前進 ＋ 時間の減点 ＋ ゴール・転倒。r2：ゴール ＋ ポテンシャル型の整形 */
   reward: "r1" | "r2";
   /** r2：ゴールしたときの報酬 */
@@ -46,6 +49,7 @@ export function actorObs(cfg: EnvConfig): number {
 }
 
 export const DEFAULT_CONFIG: EnvConfig = {
+  mode: DEFAULT_SIM_MODE,
   reward: "r2",
   goal: 30,
   k: 1,
@@ -87,7 +91,10 @@ export class Env {
 
   reset(): number[] {
     this.sim?.free();
-    this.sim = new Sim(this.cfg.stepS === undefined ? {} : { stepS: this.cfg.stepS });
+    const options = modeSimOptions(this.cfg.mode);
+    this.sim = new Sim(
+      this.cfg.stepS === undefined ? options : { ...options, stepS: this.cfg.stepS },
+    );
     this.sim.start();
     this.prev = NEUTRAL;
     this.inputs = [];
@@ -192,11 +199,16 @@ export function extremeRecords(): InputRecord[] {
 }
 
 /**
- * 物理の指紋（docs/ml.md の「物理の指紋」）。決まった入力の列（お手本の歩き方と、関節を両端へ動かす列）を
- * それぞれ再生し、終わりの状態からハッシュを作る。実際に入っている Rapier の版も返す
+ * モードの物理の指紋（docs/ml.md の「物理の指紋」）。決まった入力の列（お手本の歩き方と、関節を両端へ動かす列）を
+ * モードの設定の Sim でそれぞれ再生し、終わりの状態からハッシュを作る。実際に入っている Rapier の版も返す。
+ * モードの名前はハッシュに入れない（物理が同じなら、同じ指紋になる）
  */
-export function physicsFingerprint(): { fingerprint: string; rapier: string } {
-  const ends = [demoRecord(), ...extremeRecords()].map((r) => replay(r));
+export function physicsFingerprint(mode: SimMode = DEFAULT_SIM_MODE): {
+  fingerprint: string;
+  rapier: string;
+} {
+  const options = modeSimOptions(mode);
+  const ends = [demoRecord(), ...extremeRecords()].map((r) => replay(r, options));
   const h = createHash("sha256").update(JSON.stringify(ends)).digest("hex").slice(0, 12);
   return { fingerprint: h, rapier: RAPIER.version() };
 }

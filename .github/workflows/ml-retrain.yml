@@ -1,12 +1,21 @@
 # 物理が変わったら、理論値の記録を作り直して PR を出す（docs/ml.md の「物理の変更から記録の差し替えまでを自動にする」）。
-# 1. fingerprint：物理に関わるファイルが変わった PR で、マージした結果（github.sha）の物理で theory.json を確かめる
-#    （物理の指紋が同じか、再生して同じタイムでゴールするか）。読むだけ
-# 2. retrain：使えなければ、同じマージした結果で学習の流れ（ml/funyaoji_rl/pipeline.py）を流し、
-#    新しい theory.json で再生が一致するかを確かめる。読むだけの権限で動かす
-# 3. publish：新しい theory.json を、元の PR のブランチから切ったブランチにコミットし、元の PR のブランチに向けて PR を出す。
+# モードの一覧（src/screen/game/modes.ts）を回り、モードごとに記録（src/screen/game/ai/theory/<モード>.json）を確かめ、作り直す。
+# 1. fingerprint：物理に関わるファイルが変わった PR で、マージした結果（github.sha）の物理で、どのモードの記録が使えるかを確かめる
+#    （記録があるか、物理の指紋が同じか、再生して同じタイムでゴールするか）。読むだけ
+# 2. retrain：使えないモードごとに（matrix。並べて流す）、同じマージした結果で学習の流れ（ml/funyaoji_rl/pipeline.py）を流し、
+#    新しい記録で再生が一致するかを確かめる。読むだけの権限で動かす
+# 3. verify：学習には数時間かかり、そのあいだに PR が進むので、学習し終えた時点の PR のマージした結果で、記録を確かめ直す。
+#    使える記録（この実行の記録と、前に出した PR の記録）だけを選ぶ。読むだけの権限で動かす
+# 4. publish：選んだ記録を、元の PR のブランチから切ったブランチに1つのコミットで入れ、元の PR のブランチに向けて PR を出す。
+#    確かめ直したときから、元の PR のブランチと、前に出した PR のブランチが変わっていないときだけ書く。
 #    書き込みの権限を持つので、PR のコード（npm・uv・学習）は動かさない
-# 4. 人が動画（このワークフローの成果物）を見て、マージする
+# 5. 人が動画（このワークフローの成果物）を見て、マージする
+#
+# 実行の照らし合わせと concurrency のキーは、PR の番号（pr-<番号>）。手で流したときは dispatch-<ブランチ>。
+# 同じ head のブランチから別の base に出した PR や、手で流した実行どうしが、互いの学習を止めないようにする
 name: 理論値の記録の作り直し
+# 末尾の [キー] で、同じ PR の実行を見分ける（fingerprint の「同じ物理の学習が進んでいるか」）
+run-name: 理論値の記録の作り直し [${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('dispatch-{0}', github.ref_name) }}]
 
 on:
   pull_request:
@@ -22,7 +31,7 @@ on:
         description: "③ の学習のステップ数"
         default: "20000000"
       force:
-        description: "記録が今の物理で使えても、学習し直す"
+        description: "記録が今の物理で使えても、一覧の全部のモードを学習し直す"
         type: boolean
         default: false
 
@@ -31,6 +40,8 @@ permissions:
 
 env:
   RETRAIN_BRANCH: chore/retrain-${{ github.event.pull_request.number || github.run_id }}
+  # 実行の照らし合わせのキー。run-name の末尾と同じ
+  KEY: ${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('dispatch-{0}', github.ref_name) }}
 
 # ワークフロー全体の concurrency は付けない。付けると、PR を直すたびに数時間の学習も止まる。ジョブごとに付ける
 jobs:
@@ -42,11 +53,18 @@ jobs:
     permissions:
       contents: read
       actions: read # 同じ物理の学習が、別の実行で進んでいるかを見る
+      pull-requests: read # 前に出した PR が開いているかを見る
     concurrency:
-      group: ml-retrain-fingerprint-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+      group: ml-retrain-fingerprint-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('dispatch-{0}', github.ref_name) }}
       cancel-in-progress: true
     outputs:
-      fingerprint: ${{ steps.fp.outputs.fingerprint }}
+      key: ${{ env.KEY }}
+      # 一覧の全部のモードの、今の物理の指紋（{"normal":"..."}）
+      fingerprints: ${{ steps.fp.outputs.fingerprints }}
+      # 学習し直すモード（["normal"]）。学習し直さないときは []
+      retrain: ${{ steps.decide.outputs.retrain }}
+      # 学習し直すモードと指紋を「（モード・指紋）」で並べたもの。verify と publish のジョブの名前に入れる
+      labels: ${{ steps.decide.outputs.labels }}
       run: ${{ steps.decide.outputs.run }}
     steps:
       # ref を指定しない：pull_request ではマージした結果（github.sha）、手で流したときは選んだブランチ
@@ -59,63 +77,132 @@ jobs:
       - name: 依存を入れる
         run: npm ci
 
-      - name: 理論値の記録が今の物理で使えるかを確かめる
+      # modes（一覧の全部のモード）、changed（記録が使えないモード）、fingerprints を出す
+      - name: 理論値の記録が今の物理で使えるかを、モードごとに確かめる
         id: fp
         run: node scripts/rl/fingerprint.ts --github-output
 
-      - name: 学習し直すかを決める
+      - name: 学習し直すモードを決める
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
+          MODES: ${{ steps.fp.outputs.modes }}
           CHANGED: ${{ steps.fp.outputs.changed }}
-          FP: ${{ steps.fp.outputs.fingerprint }}
+          FPS: ${{ steps.fp.outputs.fingerprints }}
           # pull_request では inputs が空なので false になる
           FORCE: ${{ inputs.force == true }}
           REF: ${{ github.head_ref || github.ref_name }}
         run: |
-          run=false
+          # 指紋の出力の形を確かめる（形が違えば、黙って「変わっていない」にせず止める）
+          if ! jq -e 'type == "array"' <<<"$MODES" > /dev/null || ! jq -e 'type == "array"' <<<"$CHANGED" > /dev/null \
+              || ! jq -e 'type == "object"' <<<"$FPS" > /dev/null; then
+            echo "::error::fingerprint.ts の出力の形が違う（modes=$MODES changed=$CHANGED fingerprints=$FPS）"
+            exit 1
+          fi
           if [ "$FORCE" = "true" ]; then
-            echo "force の指定があるので、学習し直す"
-            run=true
-          elif [ "$CHANGED" = "true" ]; then
-            run=true
-            # 同じ物理の学習（か PR を出すところ）が、別の実行で進んでいれば、それに任せる。
-            # 物理が違うときは、下の retrain の concurrency が、前の学習を止める
-            for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ml-retrain.yml/runs?branch=$REF&status=in_progress" \
-                --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id"); do
-              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
-                  --jq '.jobs[] | select(.status != "completed") | .name' | grep -qF "（$FP）"; then
-                echo "::notice::同じ物理（$FP）の学習が、別の実行（$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id）で進んでいるので、そちらに任せる"
+            echo "force の指定があるので、一覧の全部のモードを学習し直す"
+            retrain="$MODES"
+          else
+            retrain="$CHANGED"
+          fi
+          run=false
+          if [ "$(jq 'length' <<<"$retrain")" -gt 0 ]; then run=true; fi
+          # ジョブの名前に入れる「（モード・指紋）」。下の「同じ物理の学習が進んでいるか」は、これを見る
+          labels=$(jq -r --argjson fp "$FPS" '.[] | "（\(.)・\($fp[.])）"' <<<"$retrain")
+          if [ "$run" = true ] && [ "$FORCE" != "true" ]; then
+            # 同じキー（同じ PR）の、終わっていない別の実行のうち、学習し直すモードの全部を同じ物理で受け持っているものがあれば、それに任せる。
+            # 1つでも違えば、全部を学習し直す（前の実行の学習は、下の retrain の concurrency が止める）。
+            # 受け持っているとみなすのは、そのモードの学習・確かめ直し・PR を出すジョブが進んでいるか、
+            # 学習が成功して終わり、その記録が成果物に残っているとき。
+            # 失敗・取り消しで終わったジョブがある実行は、PR まで進まないので任せない
+            while IFS=$'\t' read -r id title; do
+              [ -n "$id" ] || continue
+              [ "$id" != "$GITHUB_RUN_ID" ] || continue
+              [[ "$title" == *"[$KEY]" ]] || continue
+              jobs=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
+                --jq '.jobs[] | [.status, (.conclusion // ""), .name] | @tsv')
+              if awk -F'\t' '$1 == "completed" && ($2 == "failure" || $2 == "cancelled" || $2 == "timed_out") { bad = 1 } END { exit !bad }' <<<"$jobs"; then
+                continue
+              fi
+              artifacts=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" -f per_page=100 \
+                --jq '.artifacts[] | select(.expired | not) | .name')
+              all=true
+              for mode in $(jq -r '.[]' <<<"$retrain"); do
+                label="（${mode}・$(jq -r --arg m "$mode" '.[$m]' <<<"$FPS")）"
+                if awk -F'\t' -v l="$label" '$1 != "completed" && index($3, l) { found = 1 } END { exit !found }' <<<"$jobs"; then
+                  continue
+                fi
+                if awk -F'\t' -v n="学習し直す$label" '$1 == "completed" && $2 == "success" && $3 == n { found = 1 } END { exit !found }' <<<"$jobs" \
+                    && grep -qxF "theory-$id-$mode" <<<"$artifacts"; then
+                  continue
+                fi
+                all=false
+              done
+              if [ "$all" = true ]; then
+                echo "::notice::同じ物理（$(tr -d '\n' <<<"$labels")）の学習を、別の実行（$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id）が受け持っているので、そちらに任せる"
                 run=false
               fi
-            done
-            # 前に出した PR の記録が、今の物理で使えるなら、学習し直さずに、その PR をマージすればよい
-            if [ "$run" = true ] && git fetch --depth=1 origin "$RETRAIN_BRANCH" 2>/dev/null; then
-              git show FETCH_HEAD:src/screen/game/ai/theory.json > "$RUNNER_TEMP/retrained.json"
-              if node scripts/rl/fingerprint.ts --theory "$RUNNER_TEMP/retrained.json" --expect-unchanged; then
-                echo "::notice::$RETRAIN_BRANCH の記録が今の物理で使えるので、学習し直さない。その PR をマージする"
+            done < <(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ml-retrain.yml/runs" -f "branch=$REF" -f per_page=100 \
+              --jq '.workflow_runs[] | select(.status != "completed") | [.id, .display_title] | @tsv')
+            # 前に出した PR が開いていて、その記録が学習し直すモードの全部で今の物理で使えるなら、学習し直さずに、その PR をマージすればよい。
+            # ブランチだけが残っている（PR を閉じた）ときは、学習し直して出し直す
+            if [ "$run" = true ] \
+                && [ "$(gh pr list --head "$RETRAIN_BRANCH" --state open --json number --jq 'length')" -gt 0 ] \
+                && git fetch --depth=1 origin "refs/heads/$RETRAIN_BRANCH" 2>/dev/null; then
+              usable=true
+              for mode in $(jq -r '.[]' <<<"$retrain"); do
+                if ! git show "FETCH_HEAD:src/screen/game/ai/theory/$mode.json" > "$RUNNER_TEMP/retrained-$mode.json" 2>/dev/null; then
+                  usable=false
+                  continue
+                fi
+                # 0：使える。1：使えない。それ以外：確かめられなかったので止める
+                if node scripts/rl/fingerprint.ts --mode "$mode" --theory "$RUNNER_TEMP/retrained-$mode.json" --expect-unchanged; then
+                  :
+                else
+                  rc=$?
+                  if [ "$rc" != 1 ]; then
+                    echo "::error::前に出した PR のモード $mode の記録を確かめられなかった（fingerprint.ts の終了コード $rc）"
+                    exit 1
+                  fi
+                  usable=false
+                fi
+              done
+              if [ "$usable" = true ]; then
+                echo "::notice::開いている PR（$RETRAIN_BRANCH）の記録が今の物理で使えるので、学習し直さない。その PR をマージする"
                 run=false
               fi
             fi
           fi
-          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [ "$run" != true ]; then retrain='[]'; labels=''; fi
+          {
+            echo "run=$run"
+            echo "retrain=$(jq -c . <<<"$retrain")"
+            echo "labels=$(tr -d '\n' <<<"$labels")"
+          } >> "$GITHUB_OUTPUT"
 
   retrain:
-    # 名前に物理の指紋を入れる。fingerprint の「同じ物理の学習が進んでいるか」は、これを見る
-    name: 学習し直す（${{ needs.fingerprint.outputs.fingerprint }}）
+    # 名前にモードと物理の指紋を入れる。fingerprint の「同じ物理の学習が進んでいるか」は、これを見る
+    name: 学習し直す（${{ matrix.mode }}・${{ fromJSON(needs.fingerprint.outputs.fingerprints || '{}')[matrix.mode] }}）
     needs: fingerprint
     if: needs.fingerprint.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:
       contents: read
-    # 同じ PR の学習は1つだけ。新しく始まるのは、物理が違うときだけ（同じなら fingerprint で run=false になる）なので、前のものを止める。
+    strategy:
+      # モードごとに別のマシンで並べて流す。1つのモードが落ちても、ほかのモードの学習は止めない
+      # （落ちたモードだけを「Re-run failed jobs」で流し直せば、PR が出る）
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(needs.fingerprint.outputs.retrain) }}
+    # 同じ PR（キー）・同じモードの学習は1つだけ。新しく始まるのは、物理が違うときだけ（同じなら fingerprint で run=false になる）なので、前のものを止める。
     # 飛ばしたジョブが前の学習を止めないように、飛ばすときは別のグループにする
     concurrency:
-      group: ${{ needs.fingerprint.outputs.run == 'true' && format('ml-retrain-train-{0}-{1}', github.event.pull_request.head.repo.full_name || github.repository, github.head_ref || github.ref_name) || format('ml-retrain-skip-{0}', github.run_id) }}
+      group: ${{ needs.fingerprint.outputs.run == 'true' && format('ml-retrain-train-{0}-{1}', needs.fingerprint.outputs.key, matrix.mode) || format('ml-retrain-skip-{0}', github.run_id) }}
       cancel-in-progress: true
     env:
       STEPS: ${{ inputs.steps || '20000000' }}
+      MODE: ${{ matrix.mode }}
     steps:
       # fingerprint と同じく、マージした結果で学習する。書き込みの認証情報は残さない
       - uses: actions/checkout@v5
@@ -140,29 +227,32 @@ jobs:
 
       - name: 学習し直して、記録を作り直す
         working-directory: ml
-        run: uv run python -m funyaoji_rl.pipeline --steps "$STEPS"
+        run: uv run python -m funyaoji_rl.pipeline --mode "$MODE" --steps "$STEPS"
 
-      # ワークフローが出した PR では CI が自動で流れないので、ここで確かめてから出す
+      # ワークフローが出した PR では CI が自動で流れないので、ここで確かめてから出す。
+      # ほかのモードの記録は、別のジョブで作り直しているので、このモードのテストだけを流す
       - name: 新しい記録で、再生が一致するかを確かめる
         run: |
-          npx vp test run src/screen/game/ai/theory.test.ts
-          node scripts/rl/fingerprint.ts --expect-unchanged
+          npx vp test run src/screen/game/ai/theory.test.ts -t "^${MODE}："
+          node scripts/rl/fingerprint.ts --mode "$MODE" --expect-unchanged
 
       - name: 新しい記録と、その動画を残す
         uses: actions/upload-artifact@v4
         with:
-          name: theory-${{ github.run_id }}
+          name: theory-${{ github.run_id }}-${{ matrix.mode }}
           path: |
-            src/screen/game/ai/theory.json
-            ml/runs/theory-export/
+            src/screen/game/ai/theory/${{ matrix.mode }}.json
+            ml/runs/theory-export/${{ matrix.mode }}/
           if-no-files-found: error
           retention-days: 30
+          # 「Re-run failed jobs」で流し直したときに、前の試みの成果物を置き換える
+          overwrite: true
 
       - name: 学習の記録と動画を残す
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ml-retrain-${{ github.run_id }}
+          name: ml-retrain-${{ github.run_id }}-${{ matrix.mode }}
           path: |
             ml/mlflow.db
             ml/mlartifacts/
@@ -170,29 +260,237 @@ jobs:
             ml/runs/**/*.mp4
             ml/runs/**/*.json
           retention-days: 30
+          overwrite: true
+
+  verify:
+    # 名前に、学習し直したモードと物理の指紋を全部入れる（fingerprint の「同じ物理の学習が進んでいるか」が見る）
+    name: 確かめ直す${{ needs.fingerprint.outputs.labels }}
+    # retrain の全部のモードが通ったときだけ流れる
+    needs: [fingerprint, retrain]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      publish: ${{ steps.pick.outputs.publish }}
+      # 確かめ直した、元の PR の head（手で流したときは、選んだブランチの先頭）
+      head: ${{ steps.pick.outputs.head }}
+      # 確かめ直した、元の PR の base（手で流したときは空）
+      base: ${{ steps.pick.outputs.base }}
+      # 確かめ直したときの、前に出した PR のブランチの先頭（無ければ空）
+      retrain_sha: ${{ steps.pick.outputs.retrain_sha }}
+      # 書くモード（["normal"]）と、その今の物理の指紋
+      modes: ${{ steps.pick.outputs.modes }}
+      fingerprints: ${{ steps.pick.outputs.fingerprints }}
+    steps:
+      - name: 今の PR の状態を読む
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR" ]; then
+            # 手で流したとき：選んだブランチの今の先頭で確かめる
+            { echo "ok=true"; echo "ref=$REF"; echo "head="; echo "base="; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # PR のマージした結果は、GitHub が後から計算する。計算中（mergeable が null）のあいだだけ待つ
+          mergeable=null
+          state=""
+          for _ in $(seq 1 18); do
+            if ! pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR"); then
+              echo "::error::PR #$PR を読めなかった（API のエラー）。この実行の「確かめ直す」のジョブを選んで再実行する"
+              exit 1
+            fi
+            state=$(jq -r '.state' <<<"$pr")
+            mergeable=$(jq -r '.mergeable | tostring' <<<"$pr")
+            [ "$state" = open ] && [ "$mergeable" = null ] || break
+            sleep 10
+          done
+          head=$(jq -r '.head.sha' <<<"$pr")
+          base=$(jq -r '.base.sha' <<<"$pr")
+          merge=$(jq -r '.merge_commit_sha // ""' <<<"$pr")
+          ok=true
+          if [ "$state" != open ]; then
+            echo "::notice::PR #$PR が開いていないので、PR を出さない"
+            ok=false
+          elif [ "$mergeable" = null ]; then
+            echo "::error::PR #$PR のマージした結果の計算が、待っても終わらなかった。この実行の「確かめ直す」のジョブを選んで再実行する"
+            exit 1
+          elif [ "$mergeable" = false ]; then
+            echo "::warning::PR #$PR のマージした結果が作れない（ぶつかっている）ので、記録を確かめ直せない。ぶつかりを直すと、また流れる"
+            ok=false
+          elif ! [[ "$merge" =~ ^[0-9a-f]{40}$ && "$head" =~ ^[0-9a-f]{40}$ && "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::PR #$PR の SHA が読めない（merge=$merge head=$head base=$base）"
+            exit 1
+          fi
+          { echo "ok=$ok"; echo "ref=$merge"; echo "head=$head"; echo "base=$base"; } >> "$GITHUB_OUTPUT"
+
+      # 今のマージした結果（PR）か、選んだブランチの今の先頭（手で流したとき）で確かめる
+      - uses: actions/checkout@v5
+        if: steps.target.outputs.ok == 'true'
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+
+      - uses: actions/setup-node@v5
+        if: steps.target.outputs.ok == 'true'
+        with:
+          node-version: 24
+
+      - name: 依存を入れる
+        if: steps.target.outputs.ok == 'true'
+        run: npm ci
+
+      - uses: actions/download-artifact@v4
+        if: steps.target.outputs.ok == 'true'
+        with:
+          pattern: theory-${{ github.run_id }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/new
+
+      - name: 使える記録を選ぶ
+        id: pick
+        if: steps.target.outputs.ok == 'true'
+        env:
+          RETRAIN: ${{ needs.fingerprint.outputs.retrain }}
+          TRAINED: ${{ needs.fingerprint.outputs.fingerprints }}
+          HEAD_SHA: ${{ steps.target.outputs.head }}
+          BASE_SHA: ${{ steps.target.outputs.base }}
+          # force のときは、記録が使えるモードも学習し直しているので、学習したモードを全部候補にする
+          FORCE: ${{ inputs.force == true }}
+        run: |
+          set -euo pipefail
+          NEW="$RUNNER_TEMP/new/src/screen/game/ai/theory"
+          OLD="$RUNNER_TEMP/old"
+          OUT="$RUNNER_TEMP/publish/src/screen/game/ai/theory"
+          mkdir -p "$OLD" "$OUT"
+          if [ -n "$HEAD_SHA" ]; then
+            # チェックアウトしたのが、読んだ head と base のマージした結果か
+            parents=$(git cat-file -p HEAD | sed -n 's/^parent //p' | sort | tr '\n' ' ')
+            want=$(printf '%s\n%s\n' "$BASE_SHA" "$HEAD_SHA" | sort | tr '\n' ' ')
+            if [ "$parents" != "$want" ]; then
+              echo "::error::チェックアウトしたマージした結果の親（$parents）が、読んだ head と base（$want）と違う。この実行の「確かめ直す」のジョブを選んで再実行する"
+              exit 1
+            fi
+          else
+            # 手で流したときは、チェックアウトした先頭を、確かめ直したブランチの先頭とする
+            HEAD_SHA=$(git rev-parse HEAD)
+          fi
+          # 学習し直したモードの記録が、成果物に全部そろい、学習した物理の指紋のものか
+          for mode in $(jq -r '.[]' <<<"$RETRAIN"); do
+            f="$NEW/$mode.json"
+            if [ ! -f "$f" ]; then
+              echo "::error::学習し直したモード $mode の記録が、成果物に無い"
+              exit 1
+            fi
+            want=$(jq -r --arg m "$mode" '.[$m]' <<<"$TRAINED")
+            got=$(jq -r '.physicsFingerprint' "$f")
+            if [ "$got" != "$want" ]; then
+              echo "::error::モード $mode の記録の物理の指紋（$got）が、学習した物理の指紋（$want）と違う"
+              exit 1
+            fi
+          done
+          # 前に出した PR のブランチの記録も、候補にする（ほかの実行が先に出した記録を消さないため）
+          retrain_sha=""
+          if git fetch --depth=1 origin "refs/heads/$RETRAIN_BRANCH" 2>/dev/null; then
+            retrain_sha=$(git rev-parse FETCH_HEAD)
+            for path in $(git ls-tree --name-only FETCH_HEAD src/screen/game/ai/theory/); do
+              git show "FETCH_HEAD:$path" > "$OLD/$(basename "$path")"
+            done
+          fi
+          # 今のマージした結果で、記録が使えないモード。確かめられなかったときと、出力の形が違うときは止める
+          : > "$RUNNER_TEMP/fp.txt"
+          if ! GITHUB_OUTPUT="$RUNNER_TEMP/fp.txt" node scripts/rl/fingerprint.ts --github-output; then
+            echo "::error::今のマージした結果で、記録を確かめられなかった（fingerprint.ts が異常で終わった）"
+            exit 1
+          fi
+          changed=$(sed -n 's/^changed=//p' "$RUNNER_TEMP/fp.txt")
+          current=$(sed -n 's/^fingerprints=//p' "$RUNNER_TEMP/fp.txt")
+          if ! jq -e 'type == "array" and all(.[]; type == "string")' <<<"$changed" > /dev/null \
+              || ! jq -e 'type == "object"' <<<"$current" > /dev/null; then
+            echo "::error::fingerprint.ts の出力の形が違う（changed=$changed fingerprints=$current）"
+            exit 1
+          fi
+          targets="$changed"
+          if [ "$FORCE" = true ]; then
+            targets=$(jq -c --argjson r "$RETRAIN" '. + $r | unique' <<<"$changed")
+          fi
+          picked='[]'
+          for mode in $(jq -r '.[]' <<<"$targets"); do
+            for f in "$NEW/$mode.json" "$OLD/$mode.json"; do
+              [ -f "$f" ] || continue
+              # 0：今の物理で使える。1：使えない。それ以外：確かめられなかったので止める
+              if node scripts/rl/fingerprint.ts --mode "$mode" --theory "$f" --expect-unchanged; then
+                cp "$f" "$OUT/$mode.json"
+                picked=$(jq -c --arg m "$mode" '. + [$m]' <<<"$picked")
+                break
+              else
+                rc=$?
+                if [ "$rc" != 1 ]; then
+                  echo "::error::モード $mode の記録（$f）を確かめられなかった（fingerprint.ts の終了コード $rc）"
+                  exit 1
+                fi
+              fi
+            done
+            if [ ! -f "$OUT/$mode.json" ]; then
+              echo "::warning::モード $mode は、物理がまた変わって、使える記録が無い。新しい実行が作り直す"
+            fi
+          done
+          publish=false
+          if [ "$(jq 'length' <<<"$picked")" -gt 0 ]; then
+            publish=true
+          else
+            echo "::notice::今の PR で使える新しい記録が無いので、PR を出さない"
+          fi
+          {
+            echo "publish=$publish"
+            echo "head=$HEAD_SHA"
+            echo "base=$BASE_SHA"
+            echo "retrain_sha=$retrain_sha"
+            echo "modes=$picked"
+            echo "fingerprints=$current"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.pick.outputs.publish == 'true'
+        with:
+          name: publish-${{ github.run_id }}
+          path: ${{ runner.temp }}/publish/
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
 
   publish:
-    name: PR を出す（${{ needs.fingerprint.outputs.fingerprint }}）
-    needs: [fingerprint, retrain]
+    # 名前に、学習し直したモードと物理の指紋を全部入れる（fingerprint の「同じ物理の学習が進んでいるか」が見る）
+    name: PR を出す${{ needs.fingerprint.outputs.labels }}
+    needs: [fingerprint, verify]
+    if: needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     concurrency:
-      group: ml-retrain-publish-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+      group: ml-retrain-publish-${{ needs.fingerprint.outputs.key }}
       cancel-in-progress: false
     env:
       BASE_BRANCH: ${{ github.head_ref || github.ref_name }}
+      HEAD_SHA: ${{ needs.verify.outputs.head }}
+      BASE_SHA: ${{ needs.verify.outputs.base }}
+      RETRAIN_SHA: ${{ needs.verify.outputs.retrain_sha }}
+      MODES: ${{ needs.verify.outputs.modes }}
+      FPS: ${{ needs.verify.outputs.fingerprints }}
     steps:
-      # 元の PR のブランチから切る。このジョブでは PR のコードを動かさない（npm・uv・node scripts は使わない）
+      # 確かめ直した、元の PR のブランチの先頭から切る。このジョブでは PR のコードを動かさない（npm・uv・node scripts は使わない）
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ needs.verify.outputs.head }}
 
       - uses: actions/download-artifact@v4
         with:
-          name: theory-${{ github.run_id }}
-          path: ${{ runner.temp }}/theory
+          name: publish-${{ github.run_id }}
+          path: ${{ runner.temp }}/publish
 
       - name: 新しい記録の PR を出す
         env:
@@ -201,32 +499,86 @@ jobs:
           SOURCE_PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+          # 確かめ直したときから PR が動いていたら、黙って終わらずに落とす。落ちた実行には、ほかの実行も任せない
+          fail_moved() {
+            fail "$1。古い状態で確かめた記録は書かない。新しい実行に任せるか、この実行の「確かめ直す」のジョブを選んで再実行する（PR を出すジョブも流れ直す）"
+          }
+          # 確かめ直したときと同じ PR（開いていて、同じ head と base）か。手で流したときは、ブランチの先頭が同じか
+          check_target() {
+            if [ -n "$SOURCE_PR" ]; then
+              pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$SOURCE_PR") || fail "PR #$SOURCE_PR を読めなかった（API のエラー）。この実行の「PR を出す」のジョブを再実行する"
+              [ "$(jq -r '.state' <<<"$pr")" = open ] || fail_moved "PR #$SOURCE_PR が閉じられた"
+              [ "$(jq -r '.head.sha' <<<"$pr")" = "$HEAD_SHA" ] || fail_moved "PR #$SOURCE_PR の head が、確かめ直したとき（$HEAD_SHA）から動いた"
+              [ "$(jq -r '.base.sha' <<<"$pr")" = "$BASE_SHA" ] || fail_moved "PR #$SOURCE_PR の base が、確かめ直したとき（$BASE_SHA）から動いた"
+            else
+              now=$(git ls-remote origin "refs/heads/$BASE_BRANCH" | cut -f1)
+              [ "$now" = "$HEAD_SHA" ] || fail_moved "$BASE_BRANCH の先頭が、確かめ直したとき（$HEAD_SHA）から動いた（$now）"
+            fi
+          }
+
+          # verify から受け取った値を、そのまま信じずに確かめる
+          sha='^[0-9a-f]{40}$'
+          [[ "$HEAD_SHA" =~ $sha ]] || fail "head の SHA が正しくない（$HEAD_SHA）"
+          if [ -n "$SOURCE_PR" ]; then
+            [[ "$BASE_SHA" =~ $sha ]] || fail "base の SHA が正しくない（$BASE_SHA）"
+          fi
+          [ -z "$RETRAIN_SHA" ] || [[ "$RETRAIN_SHA" =~ $sha ]] || fail "前に出した PR のブランチの SHA が正しくない（$RETRAIN_SHA）"
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and test("^[a-z][a-z0-9-]*$")) and length == (unique | length)' \
+            <<<"$MODES" > /dev/null || fail "書くモードの一覧が正しくない（$MODES）"
+          check_target
+
+          NEW="$RUNNER_TEMP/publish/src/screen/game/ai/theory"
+          paths=()
+          SUMMARY=""
+          LINES=""
+          for mode in $(jq -r '.[]' <<<"$MODES"); do
+            f="$NEW/$mode.json"
+            path="src/screen/game/ai/theory/$mode.json"
+            # 通常のファイルで、JSON として読め、要るフィールドがそろい、確かめ直した物理の指紋のものか
+            [ -f "$f" ] && [ ! -L "$f" ] || fail "モード $mode の記録が、通常のファイルとして無い"
+            jq -e '.hz == 30 and (.joints | type == "array") and (.timeMs | type == "number") and (.physicsFingerprint | type == "string") and (.inputs | type == "array")' \
+              "$f" > /dev/null || fail "モード $mode の記録が、理論値の記録の形をしていない"
+            want=$(jq -r --arg m "$mode" '.[$m] // ""' <<<"$FPS")
+            [ "$(jq -r '.physicsFingerprint' "$f")" = "$want" ] || fail "モード $mode の記録が、確かめ直した物理の指紋（$want）のものでない"
+            mkdir -p "$(dirname "$path")"
+            cp "$f" "$path"
+            paths+=("$path")
+            time=$(jq -r '.timeMs / 1000' "$f")
+            SUMMARY="${SUMMARY:+${SUMMARY}・}${mode} ${time} 秒"
+            LINES="${LINES}- ${mode}：新しい理論値 ${time} 秒（物理の指紋 \`${want}\`）。記録だけを再生した動画は、その記録を作った実行の成果物 \`theory-<実行の番号>-${mode}\`"$'\n'
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$RETRAIN_BRANCH"
-          cp "$RUNNER_TEMP/theory/src/screen/game/ai/theory.json" src/screen/game/ai/theory.json
-          git add src/screen/game/ai/theory.json
+          # ステージするのは、記録のファイルだけ
+          git add -- "${paths[@]}"
           if git diff --cached --quiet; then
             echo "::notice::新しい記録が $BASE_BRANCH のものと同じなので、PR は出さない"
             exit 0
           fi
-          TIME=$(jq -r '.timeMs / 1000' src/screen/game/ai/theory.json)
-          FP=$(jq -r '.physicsFingerprint' src/screen/game/ai/theory.json)
-          git commit -m "chore: 物理の変更に合わせて、理論値の記録を作り直す（${TIME} 秒）"
-          git push --force origin "$RETRAIN_BRANCH"
+          git commit -m "chore: 物理の変更に合わせて、理論値の記録を作り直す（${SUMMARY}）"
+          # push の直前に、もう一度 PR を確かめる
+          check_target
+          # 確かめ直したあとに、前に出した PR のブランチがほかの実行で書き換わっていたら、上書きしない
+          if ! git push --force-with-lease="refs/heads/$RETRAIN_BRANCH:$RETRAIN_SHA" origin "HEAD:refs/heads/$RETRAIN_BRANCH"; then
+            fail_moved "$RETRAIN_BRANCH が、確かめ直したあとに、ほかの実行で書き換わった"
+          fi
 
           SOURCE="#${SOURCE_PR}"
           [ -n "$SOURCE_PR" ] || SOURCE="なし（$BASE_BRANCH で手で流した）"
           TITLE="chore: 物理の変更に合わせて、理論値の記録を作り直す"
           BODY=$(printf '%s\n' \
-            "物理が変わって前の記録が使えなくなったので、学習し直して \`src/screen/game/ai/theory.json\` を作り直した（docs/ml.md の「物理の変更から記録の差し替えまでを自動にする」）。" \
+            "物理が変わって前の記録が使えなくなったモードを学習し直して、\`src/screen/game/ai/theory/<モード>.json\` を作り直した（docs/ml.md の「物理の変更から記録の差し替えまでを自動にする」）。" \
             "" \
             "- 元の PR：${SOURCE}" \
-            "- 新しい理論値：${TIME} 秒（物理の指紋 \`${FP}\`）" \
-            "- 書き出した記録の動画：${RUN_URL} の成果物 \`theory-${GITHUB_RUN_ID}\`。マージする前に、動画で走りを見る" \
-            "- 学習の記録：同じ実行の成果物 \`ml-retrain-${GITHUB_RUN_ID}\`" \
-            "- 再生が一致すること（\`theory.test.ts\`・\`fingerprint.ts\`）は、学習したジョブで確かめた" \
-            "- このワークフローが出した PR では CI が自動で流れないので、必要なら閉じて開き直す")
+            "- PR を出した実行：${RUN_URL}。マージする前に、成果物の動画で走りを見る" \
+            "${LINES%$'\n'}" \
+            "- 学習の記録：記録を作った実行の成果物 \`ml-retrain-<実行の番号>-<モード>\`" \
+            "- 再生が一致すること（\`fingerprint.ts\`）は、PR を出す直前に、元の PR のマージした結果（head \`${HEAD_SHA}\` の時点）で確かめた" \
+            "- このワークフローが作った・更新した PR では、CI が流れないか、承認待ち（Approve and run）になることがある。この PR の Checks と Actions の画面で確かめ、流れていなければ承認するか、閉じて開き直す")
 
           PR=$(gh pr list --head "$RETRAIN_BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$PR" ]; then
