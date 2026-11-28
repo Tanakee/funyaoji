@@ -1,9 +1,11 @@
 import { useRef } from "react";
+import type { InputMethod } from "../shared/messages.ts";
 import { MAX_ANGLE } from "./tilt.ts";
 import { useTiltFrame } from "./useTiltFrame.ts";
 
-/** いまの傾きのバー。スクリーンの返事を待たずに動かす。色は親の --joint */
-export function Gauge() {
+/** いまの傾き（カメラなら指の曲げ）のバー。スクリーンの返事を待たずに動かす。色は親の --joint */
+export function Gauge({ input }: { input: InputMethod }) {
+  const camera = input === "camera";
   const root = useRef<HTMLDivElement>(null);
   const meter = useRef<HTMLDivElement>(null);
   const fill = useRef<HTMLDivElement>(null);
@@ -23,21 +25,23 @@ export function Gauge() {
   return (
     <div className="gauge" ref={root} data-empty="">
       <div className="gauge-scale">
-        <span>寝かせる</span>
-        <span>立てる</span>
+        <span>{camera ? "伸ばす" : "寝かせる"}</span>
+        <span>{camera ? "曲げる" : "立てる"}</span>
       </div>
       <div
         className="gauge-track"
         ref={meter}
         role="meter"
-        aria-label="いまの傾き"
+        aria-label={camera ? "いまの指の曲げ" : "いまの傾き"}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={0}
       >
         <div className="gauge-fill" ref={fill} />
       </div>
-      <p className="gauge-empty">傾きが読み取れていません</p>
+      <p className="gauge-empty">
+        {camera ? "指が読み取れていません" : "傾きが読み取れていません"}
+      </p>
     </div>
   );
 }

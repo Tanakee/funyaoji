@@ -17,6 +17,7 @@ import { COUNTDOWNS, countdownLeadMs, GO_DISPLAY_MS } from "../../shared/countdo
 import {
   JOINTS,
   ROOM_CLOSED_CODE,
+  type InputMethod,
   type Joint,
   type PhaseMessage,
   type RejectedMessage,
@@ -91,6 +92,8 @@ export interface ScreenView {
   /** room の joints から抜けてから、予約が切れるまでの秒数（切り上げ） */
   reserved: Readonly<Partial<Record<Joint, number>>>;
   game: GameState;
+  /** 操作方法（docs/game.md の「操作方法」）。ロビーでだけ変えられ、phase でスマホに知らせる */
+  input: InputMethod;
   debug: DebugState;
   audio: AudioState;
   /** 入力中のチーム名。正規化前の文字列を保ち、日本語の変換を妨げない */
@@ -191,6 +194,7 @@ export class ScreenSession {
     absent: {},
     reserved: {},
     game: "loading",
+    input: "tilt",
     audio: { ready: false, muted: false, unavailable: false },
     recreation: { status: "idle" },
     debug: { enabled: false, autoplay: false },
@@ -233,6 +237,8 @@ export class ScreenSession {
   /** 指やマウスでつかまれている関節。お手本より、つかんでいる手を優先する */
   private readonly grabbed = new Set<Joint>();
   private frame = 0;
+  /** 操作方法を変えたが、まだサーバーに届けられていない。つながったら、ロビーの phase で送り直す */
+  private inputUnsent = false;
 
   private readonly stage: HTMLElement;
   private readonly audio: ScreenAudio;
@@ -263,6 +269,21 @@ export class ScreenSession {
       teamNameError: result.success ? undefined : result.issues[0].message,
       teamName: result.success ? result.output : undefined,
     });
+  }
+
+  /**
+   * 操作方法を変える。変えられるのはロビーだけ。参加中のスマホは、ロビーの phase を受け取るとすぐに切り替える。
+   * つながっていなければ、つながったときに送り直す
+   */
+  setInputMethod(input: InputMethod): void {
+    if (this.view.flow.kind !== "lobby" || input === this.view.input) return;
+    this.update({ input });
+    this.inputUnsent = !this.sendLobby();
+  }
+
+  /** ロビーの phase を、いまの操作方法で送る */
+  private sendLobby(): boolean {
+    return this.send({ type: "phase", phase: "lobby", input: this.view.input });
   }
 
   /** ルームを作ってつなぎ、ゲームを作る。ページに1回だけ呼ぶ */
@@ -344,6 +365,7 @@ export class ScreenSession {
         this.updateRoom(
           connection.status === "open" ? { connection, rejected: undefined } : { connection },
         );
+        if (connection.status === "open") this.flushInput();
       },
       onLatency: (latency) => {
         if (current()) this.debug.latency = latency;
@@ -409,6 +431,9 @@ export class ScreenSession {
         recreation: { status: "idle" },
       });
       prepared.activate(this.roomHandlers(generation));
+      // 新しいルームのスマホは傾きから始める。カメラを選んでいれば知らせる
+      this.inputUnsent = this.view.input !== "tilt";
+      this.flushInput();
     } catch (error) {
       prepared?.discard();
       if (!this.disposed)
@@ -419,6 +444,11 @@ export class ScreenSession {
           },
         });
     }
+  }
+
+  /** 届けられていない操作方法を、ロビーのあいだだけ送り直す */
+  private flushInput(): void {
+    if (this.inputUnsent && this.view.flow.kind === "lobby") this.inputUnsent = !this.sendLobby();
   }
 
   private onRoomClosed(): void {
@@ -462,7 +492,7 @@ export class ScreenSession {
         this.onRoomClosed();
         break;
       case "room":
-        this.onRoom(message.joints);
+        this.onRoom(message.joints, message.vacated);
         break;
       case "phase":
         this.onPhase(message);
@@ -488,7 +518,7 @@ export class ScreenSession {
     }
   }
 
-  private onRoom(joints: readonly Joint[]): void {
+  private onRoom(joints: readonly Joint[], vacated?: Joint): void {
     const now = performance.now();
     for (const joint of joints) {
       this.left.delete(joint);
@@ -498,7 +528,8 @@ export class ScreenSession {
     // 抜けた関節だけを戻す。もともとスマホのいない関節はキーボードが動かしているので、触らない
     for (const joint of this.view.joints) {
       if (joints.includes(joint)) continue;
-      this.left.set(joint, now);
+      // 「抜ける」で空いた席（vacated）は予約されないので、すぐ空きにする。切れた席だけ60秒を数える
+      if (joint !== vacated) this.left.set(joint, now);
       this.inputs[joint] = NEUTRAL_INPUTS[joint];
       this.lastTiltAt.delete(joint);
       delete this.debug.tilts[joint];
@@ -528,7 +559,7 @@ export class ScreenSession {
     const wasLobby = this.view.flow.kind === "lobby";
     this.dispatch({ type: "toLobby" });
     // ロビーのままだと遷移の副作用が無いので、サーバーが持つ playing を直すために送る
-    if (wasLobby) this.send({ type: "phase", phase: "lobby" });
+    if (wasLobby) this.sendLobby();
   }
 
   // 操作。スペースで開始・やり直し、Enter でデバッグの開始、R でやり直し。画面のボタンも同じメソッドを呼ぶ
@@ -786,6 +817,7 @@ export class ScreenSession {
             type: "phase",
             phase: "playing",
             mode: "10m",
+            input: this.view.input,
             countdown: { kind, durationMs, remainingMs: leadMs + durationMs, delayMs },
           });
           this.scheduleCountdown();
@@ -805,6 +837,7 @@ export class ScreenSession {
           this.update({ ranking: { status: "loading" } });
           void submitRanking({
             mode: "10m",
+            input: this.view.input,
             teamName: this.view.teamName,
             timeMs: next.result.timeMs,
           })
@@ -834,7 +867,7 @@ export class ScreenSession {
         }
         this.keyboard?.reset();
         this.game?.practice();
-        this.send({ type: "phase", phase: "lobby" });
+        this.inputUnsent = !this.sendLobby();
         break;
     }
   }

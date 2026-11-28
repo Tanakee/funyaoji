@@ -34,6 +34,14 @@ export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 export const Mode = v.picklist(["10m"]);
 export type Mode = v.InferOutput<typeof Mode>;
 
+/**
+ * 操作方法。tilt はスマホの傾き、camera は前面カメラに映した人差し指の曲げ（docs/game.md の「操作方法」）。
+ * 距離のモードとは別に、スクリーンのロビーで選ぶ
+ */
+export const INPUT_METHODS = ["tilt", "camera"] as const;
+export const InputMethod = v.picklist(INPUT_METHODS);
+export type InputMethod = v.InferOutput<typeof InputMethod>;
+
 export const PlayResult = v.variant("outcome", [
   v.object({ outcome: v.literal("goal"), distanceM: FiniteNumber, timeMs: FiniteNumber }),
   v.object({
@@ -52,11 +60,12 @@ const Countdown = v.object({
 });
 
 export const PhaseMessage = v.variant("phase", [
-  v.object({ type: v.literal("phase"), phase: v.literal("lobby") }),
+  v.object({ type: v.literal("phase"), phase: v.literal("lobby"), input: InputMethod }),
   v.object({
     type: v.literal("phase"),
     phase: v.literal("playing"),
     mode: Mode,
+    input: InputMethod,
     countdown: v.optional(Countdown),
   }),
   v.object({ type: v.literal("phase"), phase: v.literal("result"), result: PlayResult }),

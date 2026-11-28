@@ -1,9 +1,16 @@
-// ルームにつないでいるあいだ、React の外でやること：接続、tilt の送信、画面を消さないこと
+// ルームにつないでいるあいだ、React の外でやること：接続、入力（傾きかカメラ）の読み取りと tilt の送信、画面を消さないこと
 import { connectPhone } from "../net/client.ts";
 import { createTiltSeq, phoneClientId } from "../net/phone.ts";
-import type { Joint, ReadyMessage, RetryMessage, StartMessage } from "../shared/messages.ts";
+import type {
+  InputMethod,
+  Joint,
+  ReadyMessage,
+  RetryMessage,
+  StartMessage,
+} from "../shared/messages.ts";
+import { startCamera } from "./camera/camera.ts";
 import { RECONNECT_GRACE_MS, type PhoneEvent } from "./model.ts";
-import { startReadingTilt, startSendingTilt } from "./tilt.ts";
+import { setLatestAngle, startReadingTilt, startSendingTilt } from "./tilt.ts";
 import { holdWakeLock } from "./wakeLock.ts";
 
 /** つながっているあいだ、ページが動いている時刻を覚える間隔 */
@@ -13,11 +20,24 @@ interface PhoneSession {
   stop(): void;
   leave(): void;
   send(message: StartMessage | RetryMessage | ReadyMessage): boolean;
+  /** 操作方法を切り替える。スクリーンが phase で知らせてくる。同じものなら何もしない */
+  setInput(input: InputMethod): void;
+}
+
+function startReading(input: InputMethod): () => void {
+  return input === "camera" ? startCamera(setLatestAngle) : startReadingTilt();
 }
 
 /** ルームにつなぐ。stop でつなぎ直しも含めて終了する */
 export function startSession(room: string, emit: (event: PhoneEvent) => void): PhoneSession {
-  const stopReading = startReadingTilt();
+  // 参加したときは傾き。スクリーンがカメラを選んでいれば、phase を受け取ってから切り替える
+  let input: InputMethod | undefined = "tilt";
+  let stopInput = startReading(input);
+  const stopReading = () => {
+    stopInput();
+    stopInput = () => {};
+    input = undefined;
+  };
   const nextSeq = createTiltSeq();
   let stopSending: (() => void) | undefined;
   let releaseWakeLock: (() => void) | undefined;
@@ -160,6 +180,13 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
       if (leaving) return false;
       if (message.type === "ready") readyAttempted = true;
       return joined && connection.send(message);
+    },
+    setInput(next) {
+      // 閉じたあとは読み直さない
+      if (input === undefined || next === input) return;
+      stopInput();
+      input = next;
+      stopInput = startReading(next);
     },
   };
 }

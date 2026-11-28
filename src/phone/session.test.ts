@@ -31,6 +31,7 @@ vi.mock("../net/client.ts", async (importOriginal) => {
 vi.mock("./tilt.ts", () => ({
   startReadingTilt: () => () => {},
   startSendingTilt: () => () => {},
+  setLatestAngle: () => {},
 }));
 vi.mock("./wakeLock.ts", () => ({ holdWakeLock: () => () => {} }));
 
@@ -67,7 +68,7 @@ test.each([
   const again = opened[1]!;
   again.handlers.onOpen();
   again.handlers.onMessage(JOINED);
-  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby" }));
+  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby", input: "tilt" }));
   if (ready !== undefined) again.handlers.onMessage(JSON.stringify({ type: "howto", ready }));
   expect(again.sent).toEqual(sendsAgain ? ['{"type":"ready"}'] : []);
   again.handlers.onMessage(
@@ -78,7 +79,7 @@ test.each([
     again.handlers.onMessage(JSON.stringify({ type: "howto", ready: ["rightHip"] }));
     expect(again.sent).toHaveLength(sendsAgain ? 1 : 0);
   }
-  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby" }));
+  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby", input: "tilt" }));
   again.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
   expect(again.sent).toHaveLength(sendsAgain ? 1 : 0);
   session.stop();

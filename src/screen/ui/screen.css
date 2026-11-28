@@ -240,12 +240,54 @@ kbd {
 .team-name-field:has([aria-invalid="true"]) p {
   color: var(--color-ink);
 }
-.lobby-mode {
-  padding: calc(4 * var(--u)) calc(12 * var(--u));
+/* 操作方法。傾きとカメラを、2つのボタンが並んだ形で選ぶ。チーム名の欄と同じ板に載せる */
+.input-field {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  gap: calc(4 * var(--u)) calc(12 * var(--u));
+  margin: 0;
+  padding: calc(4 * var(--u)) calc(8 * var(--u));
+  border: 0;
   border-radius: 8px;
   background: var(--color-surface);
   font-size: var(--font-size-body);
+  line-height: 1.2;
   font-weight: 700;
+}
+.input-field legend {
+  float: left;
+  margin-right: 4px;
+  padding: 0;
+}
+.input-option {
+  position: relative;
+}
+.input-option input {
+  position: absolute;
+  opacity: 0;
+}
+.input-option span {
+  display: block;
+  padding: calc(4 * var(--u)) calc(16 * var(--u));
+  border: 2px solid var(--color-line-strong);
+  border-radius: 999px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.input-option input:checked + span {
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+.input-option input:focus-visible + span {
+  outline: 3px solid var(--color-keyboard);
+  outline-offset: 2px;
+}
+.input-field p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-ink-soft);
 }
 .lobby-notice {
   position: absolute;

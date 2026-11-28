@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import type { Joint } from "../shared/messages.ts";
+import type { InputMethod, Joint } from "../shared/messages.ts";
+import { CameraPreview } from "./camera/CameraPreview.tsx";
 import { Gauge } from "./Gauge.tsx";
 import { JOINT_LABELS } from "./joints.ts";
 import { LobbyLeg, TILT_ICON } from "./Lobby.tsx";
@@ -8,11 +9,13 @@ export function HowTo({
   room,
   joint,
   ready,
+  input,
   onReady,
 }: {
   room: string | undefined;
   joint: Joint;
   ready: boolean;
+  input: InputMethod;
   onReady: () => void;
 }) {
   const label = JOINT_LABELS[joint];
@@ -30,13 +33,22 @@ export function HowTo({
         <h1>{label.name}</h1>
       </div>
       <div className="lobby-controls">
-        <p className="joint-hint">
-          {TILT_ICON}
-          <span>{label.tiltHint}</span>
-        </p>
-        <Gauge />
+        {input === "camera" ? (
+          <>
+            <CameraPreview />
+            <p className="joint-hint">
+              <span>{label.cameraHint}</span>
+            </p>
+          </>
+        ) : (
+          <p className="joint-hint">
+            {TILT_ICON}
+            <span>{label.tiltHint}</span>
+          </p>
+        )}
+        <Gauge input={input} />
       </div>
-      <p className="howto-prompt">傾けてみよう</p>
+      <p className="howto-prompt">{input === "camera" ? "指を曲げてみよう" : "傾けてみよう"}</p>
       <div className="howto-action">
         {ready ? (
           <p role="status">みんなを待っています</p>
