@@ -2,12 +2,14 @@ import { DurableObject } from "cloudflare:workers";
 import {
   HEARTBEAT,
   ROOM_CLOSED_CODE,
+  LEFT_CODE,
   JOINTS,
   PhoneToServerMessage,
   ScreenToServerMessage,
   type HowtoMessage,
   type Joint,
   type JoinedMessage,
+  type LeftMessage,
   type PhaseMessage,
   type RejectedMessage,
   type RelayedPongMessage,
@@ -21,7 +23,7 @@ import { parseMessage } from "../shared/parse.ts";
 /**
  * WebSocket に付けておく情報。休止（Hibernation）から戻っても残る。connectedAt は接続した時刻（ミリ秒）。
  * clientId は、スマホが接続の URL の client に付けてきた ID。付けていなければ無い。
- * departed は、切断を処理し終えたか、置き換えた（切断を処理しない）接続のとき true
+ * departed は、切断を処理した、抜けるを受け付けた、または置き換えた接続のとき true
  */
 type Attachment = { connectedAt: number; departed?: true } & (
   | { role: "screen" }
@@ -255,19 +257,33 @@ export class Room extends DurableObject<Env> {
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     // 形の違うメッセージでも、届いたなら接続は生きている
     this.lastMessageAt.set(ws, Date.now());
-    // 閉じかけの接続から届いたものは捨てる。置き換えた古いスクリーンが新しいスクリーンの状態を上書きしたり、
-    // タイムアウトで関節を空けたスマホの入力が、その関節に入った別のスマホの入力と重なったりしないように
-    if (ws.readyState !== WebSocket.OPEN || isDeparted(ws)) return;
+    if (isDeparted(ws)) return;
     // 送信元が送れないメッセージ・形の違うメッセージは、何も返さずに捨てる
     const attachment = ws.deserializeAttachment() as Attachment | null;
+    // 閉じかけの接続から届いたものは捨てる。置き換えた古いスクリーンが新しいスクリーンの状態を上書きしたり、
+    // タイムアウトで関節を空けたスマホの入力が、その関節に入った別のスマホの入力と重なったりしないように。
+    // ただし leave は受け付ける。抜けるを押した直後にタブを閉じても、関節を予約しないように
+    if (ws.readyState !== WebSocket.OPEN) {
+      if (
+        attachment?.role === "phone" &&
+        parseMessage(PhoneToServerMessage, message)?.type === "leave"
+      ) {
+        await this.leave(ws, attachment.joint);
+      }
+      return;
+    }
     if (attachment?.role === "phone") {
-      this.receiveFromPhone(attachment.joint, message);
+      await this.receiveFromPhone(ws, attachment.joint, message);
     } else if (attachment?.role === "screen") {
       await this.receiveFromScreen(message);
     }
   }
 
-  private receiveFromPhone(joint: Joint, message: string | ArrayBuffer): void {
+  private async receiveFromPhone(
+    ws: WebSocket,
+    joint: Joint,
+    message: string | ArrayBuffer,
+  ): Promise<void> {
     const received = parseMessage(PhoneToServerMessage, message);
     if (received === undefined) return;
     // joint はサーバーが付ける。スマホは担当を偽れない
@@ -283,10 +299,30 @@ export class Room extends DurableObject<Env> {
       case "ready":
         this.sendToScreens({ type: received.type, joint });
         break;
+      case "leave":
+        await this.leave(ws, joint);
+        break;
       case "heartbeat":
         // HEARTBEAT と1文字でも違う形はランタイムが返さず、ここに届く。受信した時刻は上で記録した
         break;
     }
+  }
+
+  private async leave(ws: WebSocket, joint: Joint): Promise<void> {
+    // あとの切断処理で関節を予約しない
+    markDeparted(ws);
+    this.log({ event: "left", joint });
+    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
+    // 閉じかけの接続の関節は、切断を処理する前でも新しいスマホに渡ることがある。そのときは空いていない
+    const vacated = this.phoneJoints(ws).includes(joint) ? undefined : joint;
+    if (roomCode !== undefined) this.broadcastRoom(roomCode, ws, vacated);
+    send(ws, { type: "left" } satisfies LeftMessage);
+    try {
+      ws.close(LEFT_CODE, "left");
+    } catch {
+      /* 閉じかけの接続 */
+    }
+    if (this.openSockets(ws).length === 0) await this.scheduleDeletion(Date.now());
   }
 
   private async receiveFromScreen(message: string | ArrayBuffer): Promise<void> {
@@ -576,33 +612,38 @@ export class Room extends DurableObject<Env> {
   }
 
   /** 参加者が変わったことを、スクリーンとすべてのスマホに知らせる */
-  private broadcastRoom(roomCode: string, closing?: WebSocket): void {
-    const message = this.roomMessage(roomCode, closing);
+  private broadcastRoom(roomCode: string, closing?: WebSocket, vacated?: Joint): void {
+    const message = this.roomMessage(roomCode, closing, vacated);
     for (const ws of this.ctx.getWebSockets()) {
       if (ws !== closing) send(ws, message);
     }
   }
 
-  private roomMessage(roomCode: string, closing?: WebSocket): RoomMessage {
+  private roomMessage(roomCode: string, closing?: WebSocket, vacated?: Joint): RoomMessage {
     const joints = this.phoneJoints(closing);
-    return { type: "room", roomCode, joints: JOINTS.filter((j) => joints.includes(j)) };
+    return {
+      type: "room",
+      roomCode,
+      joints: JOINTS.filter((j) => joints.includes(j)),
+      ...(vacated !== undefined && { vacated }),
+    };
   }
 
-  /** 接続中のスマホが担当する関節。閉じかけ・閉じた接続は除く */
+  /** 接続中のスマホが担当する関節。閉じかけ・閉じた接続と、departed の接続は除く */
   private phoneJoints(closing?: WebSocket): Joint[] {
     return this.openPhones(closing).map(phoneJoint);
   }
 
-  /** 接続中のスマホ。閉じかけ・閉じた接続は除く */
+  /** 接続中のスマホ。閉じかけ・閉じた接続と、departed の接続は除く */
   private openPhones(closing?: WebSocket): WebSocket[] {
     return this.openSockets(closing, "phone");
   }
 
-  /** 接続中のスクリーンとスマホ。閉じかけ・閉じた接続は除く */
+  /** 接続中のスクリーンとスマホ。閉じかけ・閉じた接続と、departed の接続は除く */
   private openSockets(closing?: WebSocket, tag?: Attachment["role"]): WebSocket[] {
     return this.ctx
       .getWebSockets(tag)
-      .filter((ws) => ws !== closing && ws.readyState === WebSocket.OPEN);
+      .filter((ws) => ws !== closing && ws.readyState === WebSocket.OPEN && !isDeparted(ws));
   }
 
   /**

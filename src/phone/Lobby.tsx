@@ -40,11 +40,15 @@ export function Lobby({
   room,
   joint,
   count,
+  leaving,
+  onLeave,
   onStart,
 }: {
   room: string | undefined;
   joint: Joint;
   count: number;
+  leaving: boolean;
+  onLeave: () => void;
   onStart: () => void;
 }) {
   const label = JOINT_LABELS[joint];
@@ -75,11 +79,26 @@ export function Lobby({
         </strong>
         {remaining > 0 ? <span>あと{remaining}人</span> : null}
       </p>
-      {count === JOINTS.length ? (
-        <button type="button" className="phone-button start-button" onClick={onStart}>
-          スタート
+      <div className="lobby-actions">
+        {count === JOINTS.length ? (
+          <button
+            type="button"
+            className="phone-button start-button"
+            disabled={leaving}
+            onClick={onStart}
+          >
+            スタート
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="phone-button leave-button"
+          disabled={leaving}
+          onClick={onLeave}
+        >
+          {leaving ? "抜けています" : "抜ける"}
         </button>
-      ) : null}
+      </div>
     </section>
   );
 }
