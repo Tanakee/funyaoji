@@ -78,7 +78,7 @@ kbd {
 .lobby {
   display: flex;
   flex-direction: column;
-  padding: 32px clamp(24px, 5vw, 84px) 28px;
+  padding: 32px clamp(24px, 5vw, 84px) 48px;
   background:
     radial-gradient(circle at 20% 68%, var(--color-bg-glow) 0, transparent 45%), var(--color-bg);
 }
@@ -103,7 +103,7 @@ kbd {
   font-weight: 800;
 }
 .qr {
-  width: min(46vh, 100%);
+  width: min(34vh, 100%);
   aspect-ratio: 1;
   border: 2px solid var(--color-line);
   border-radius: 20px;
@@ -135,8 +135,8 @@ kbd {
   text-align: center;
 }
 .lobby-count {
-  margin: 0 0 24px;
-  font-size: clamp(32px, 3.4vw, 54px);
+  margin: 0 0 12px;
+  font-size: clamp(28px, 2.6vw, 44px);
   font-weight: 800;
 }
 .lobby-count strong {
@@ -155,7 +155,7 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 20px 24px;
+  padding: 12px 24px;
   border: 3px dashed var(--color-idle);
   border-radius: 22px;
   color: var(--color-ink-soft);
@@ -167,7 +167,7 @@ kbd {
   color: var(--color-ink);
 }
 .slot-joint {
-  font-size: clamp(28px, 3vw, 46px);
+  font-size: clamp(24px, 2.4vw, 40px);
   font-weight: 900;
 }
 .slot-state {
@@ -178,9 +178,9 @@ kbd {
   color: var(--color-active);
 }
 .lobby-start {
-  margin-top: 32px;
+  margin-top: 16px;
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 .start-row {
   display: flex;
@@ -199,6 +199,51 @@ kbd {
 .start-row--debug {
   font-size: clamp(14px, 1.2vw, 18px);
 }
+.lobby-settings {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 16px 0 0;
+  border-top: 2px solid var(--color-line);
+}
+.team-name-field {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 400px);
+  align-items: center;
+  gap: 8px 16px;
+  font-size: clamp(20px, 1.6vw, 26px);
+  font-weight: 700;
+}
+.team-name-field input {
+  min-width: 0;
+  width: 100%;
+  padding: 10px 16px;
+  border: 2px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+}
+.team-name-field input:focus-visible {
+  outline: 3px solid var(--color-keyboard);
+  outline-offset: 2px;
+}
+.team-name-field input[aria-invalid="true"] {
+  border-color: var(--color-disconnected);
+}
+.team-name-field p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 20px;
+  color: var(--color-ink-soft);
+}
+.team-name-field:has([aria-invalid="true"]) p {
+  color: var(--color-ink);
+}
+.lobby-mode {
+  font-size: clamp(20px, 1.6vw, 26px);
+  font-weight: 700;
+}
 .lobby-notice {
   margin: 0;
   padding: 12px 20px;
@@ -211,19 +256,31 @@ kbd {
 
 /* カウントダウン。ゲームの Canvas の上に重ねる */
 .countdown {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
 }
 .countdown-number {
   color: var(--color-surface);
-  font-size: 34vh;
+  font-size: max(64px, 34vh);
   font-weight: 900;
   line-height: 1;
   text-shadow:
     0 0.04em 0 var(--color-ink),
     0 0 0.3em var(--color-ink);
   animation: countdown-pop 1s ease-out;
+}
+.countdown-start {
+  animation: none;
+}
+.countdown-guidance {
+  margin: 0.5em 0 0;
+  color: var(--color-surface);
+  font-size: max(20px, 2.78vh);
+  font-weight: 700;
+  text-shadow: 0 0.08em 0.2em var(--color-ink);
 }
 @keyframes countdown-pop {
   from {
