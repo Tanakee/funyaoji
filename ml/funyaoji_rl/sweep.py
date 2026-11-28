@@ -53,6 +53,7 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", default="normal", help="モード（src/screen/game/modes.ts の一覧）。どの run もこのモードで学習する")
     ap.add_argument("--parallel", type=int, default=8)
     ap.add_argument("--plan", choices=["first", "bench"], default="first")
     ap.add_argument("--base-gait", default="runs/base-gait.json")
@@ -65,7 +66,10 @@ def main() -> None:
     args = ap.parse_args()
 
     plan = plan_first(args.base_gait) if args.plan == "first" else plan_bench(args.base_gait, args.parallel)
-    common = ["--workers", str(args.workers), "--envs-per-worker", str(args.envs_per_worker),
+    # ノーマル以外は、run の名前にモードを付ける（終わった印 runs/<名前>/registered が、モードをまたいで重ならないように）
+    if args.mode != "normal":
+        plan = [(f"{args.mode}-{name}", extra) for name, extra in plan]
+    common = ["--mode", args.mode, "--workers", str(args.workers), "--envs-per-worker", str(args.envs_per_worker),
               "--torch-threads", str(args.torch_threads)]
     queue = [(name, extra) for name, extra in plan if not (RUNS / name / DONE).exists()]
     running: dict[str, tuple[subprocess.Popen, IO[str], float]] = {}

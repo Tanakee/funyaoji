@@ -2,6 +2,7 @@
 
 使い方（ml/ で）：
   uv run python -m funyaoji_rl.train --steps 20000000 --reward r2 --gamma 0.99 --seed 0
+  --mode でモード（src/screen/game/modes.ts の一覧）を選ぶ。省くとノーマル
 
 学習の経過・途中の記録・最後の評価・動画が MLflow の run に残る。同じものが runs/<名前>/ にもできる。
 """
@@ -27,7 +28,7 @@ from . import registry, tracking
 from .policy import AsymmetricPolicy
 from .render import render
 from .tracking import mlflow
-from .vec_env import FunyaojiVecEnv, NodeProcess
+from .vec_env import DEFAULT_MODE, FunyaojiVecEnv, NodeProcess
 
 
 class MlflowWriter(KVWriter):
@@ -158,6 +159,7 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", default=DEFAULT_MODE, help="モード（src/screen/game/modes.ts の一覧）。そのモードの物理で学習する")
     ap.add_argument("--steps", type=int, default=20_000_000)
     ap.add_argument("--reward", choices=["r1", "r2"], default="r2")
     ap.add_argument("--goal", type=float, default=30.0, help="r2 のゴールの報酬 G")
@@ -194,9 +196,9 @@ def main() -> None:
         gait = json.loads(args.base_gait.read_text(encoding="utf-8"))["gait"]
         env_config["base"] = {"gait": gait, "scale": args.residual_scale}
 
-    venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, env_config)
+    venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, env_config, args.mode)
     try:
-        eval_venv = FunyaojiVecEnv(1, 1, {**env_config, "record": True})
+        eval_venv = FunyaojiVecEnv(1, 1, {**env_config, "record": True}, args.mode)
     except BaseException:
         venv.close()
         raise
@@ -206,11 +208,13 @@ def main() -> None:
         venv.close()
         eval_venv.close()
     # 評価して登録し、速ければ別名を移す（registry.py）
-    registry.submit([run_id])
+    registry.submit([run_id], args.mode)
     print(f"done: {out}")
 
 
-def final_eval(eval_env: VecNormalize, model: PPO, trials_n: int, perturb: float, out: Path) -> dict[str, Any]:
+def final_eval(
+    eval_env: VecNormalize, model: PPO, trials_n: int, perturb: float, out: Path, mode: str
+) -> dict[str, Any]:
     """最後の評価（docs/ml.md の「理論値として出す数字」）。メトリクスと、記録の候補のファイルを返す"""
     exact = rollout(eval_env, model)
     trials = [rollout(eval_env, model, perturb, seed=i + 1) for i in range(trials_n)]
@@ -231,7 +235,7 @@ def final_eval(eval_env: VecNormalize, model: PPO, trials_n: int, perturb: float
     # ゴールした走りを全部、物理の不具合を測ってから、(E1) の最速と (E2) の最速を別々に残す。
     # 最速の1本だけを残すと、それが (E2) で落ちたとき、2番目に速い記録が評価されない
     goals = [t for t in [exact, *trials] if t["outcome"] == "goal"]
-    proc = NodeProcess()
+    proc = NodeProcess(mode)
     try:
         checked = [(t, registry.evaluate(proc, t["inputs"])) for t in goals]
     finally:
@@ -289,6 +293,7 @@ def train(
         mlflow.set_tags(
             {
                 **tracking.git_info(),
+                "mode": args.mode,
                 "method": "ppo-residual" if args.base_gait else "ppo",
                 "physics_fingerprint": venv.fingerprint,
                 "rapier": venv.rapier,
@@ -315,7 +320,7 @@ def train(
 
         # 最後の評価。記録の候補は、そのままの1回、(E1) の最速、(E2) の最速
         eval_env.obs_rms = env.obs_rms
-        ev = final_eval(eval_env, model, args.trials, args.perturb, out)
+        ev = final_eval(eval_env, model, args.trials, args.perturb, out, args.mode)
         mlflow.log_metrics(ev["metrics"])
         print(json.dumps(ev["metrics"]), flush=True)
         for path in ev["paths"]:
@@ -325,7 +330,7 @@ def train(
         picked = pick_snapshots(progress.snapshots)
         runs = [(rec["label"], rec["inputs"]) for _, rec in picked]
         runs.append(("最後（評価）", ev["exact"]["inputs"]))
-        gif, mp4 = render(venv.shapes, runs, out / "progress", cols=2 if len(runs) <= 4 else 3)
+        gif, mp4 = render(venv.shapes, runs, out / "progress", cols=2 if len(runs) <= 4 else 3, mode=args.mode)
         mlflow.log_artifact(str(gif), "video")
         mlflow.log_artifact(str(mp4), "video")
     return run.info.run_id

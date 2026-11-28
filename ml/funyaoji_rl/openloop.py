@@ -3,7 +3,7 @@
 体の状態を見ない、時間だけで決まる入力で出せる最速を出す。機械学習を使わない基準であり、③ の土台にもなる。
 歩き方を走らせるのは Node（server.ts の gait）で、学習と同じ毎秒30回・1/1000 の目盛りを通す。
 
-使い方（ml/ で）：uv run python -m funyaoji_rl.openloop --seed 0
+使い方（ml/ で）：uv run python -m funyaoji_rl.openloop [--mode normal] --seed 0
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import numpy as np
 from . import registry, tracking
 from .render import render
 from .tracking import mlflow
-from .vec_env import NodeProcess
+from .vec_env import DEFAULT_MODE, NodeProcess
 
 KEYS = ["T", "h0", "A", "K", "kp"]
 # 探す範囲。CMA-ES は 0〜1 に直した値で探す
@@ -44,13 +44,14 @@ def fitness(result: dict) -> float:
 
 
 class Pool:
-    """Node のプロセスを並べて、歩き方をまとめて走らせる"""
+    """Node のプロセスを並べて、歩き方をまとめて走らせる。mode のモードの物理で動く"""
 
-    def __init__(self, n: int):
+    def __init__(self, n: int, mode: str = DEFAULT_MODE):
+        self.mode = mode
         self.procs: list[NodeProcess] = []
         try:
             for _ in range(n):
-                self.procs.append(NodeProcess())
+                self.procs.append(NodeProcess(mode))
             replies = [p.call({"cmd": "init", "n": 1, "config": {}}) for p in self.procs]
         except BaseException:
             # 途中で失敗したら、起動済みのプロセスを残さない
@@ -94,6 +95,7 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", default=DEFAULT_MODE, help="モード（src/screen/game/modes.ts の一覧）。そのモードの物理で探す")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--popsize", type=int, default=24)
@@ -113,12 +115,13 @@ def main() -> None:
     # 最速の1本だけを残すと、それが (E2) で落ちたとき、2番目に速い記録が評価されない。上位 TOP_K 個を残す
     top = Top(TOP_K)
     t0 = time.time()
-    pool = Pool(args.workers)
+    pool = Pool(args.workers, args.mode)
     try:
         with mlflow.start_run(run_name=name) as run:
             mlflow.set_tags(
                 {
                     **tracking.git_info(),
+                    "mode": args.mode,
                     "method": "openloop-cmaes",
                     "physics_fingerprint": pool.fingerprint,
                     "rapier": pool.rapier,
@@ -164,12 +167,12 @@ def main() -> None:
             if snapshots:
                 snap_runs = pool.run([g for _, g in snapshots], with_inputs=True)
                 runs = [(label, r["inputs"]) for (label, _), r in zip(snapshots, snap_runs)]
-                gif, mp4 = render(pool.shapes, runs, out / "progress", cols=2)
+                gif, mp4 = render(pool.shapes, runs, out / "progress", cols=2, mode=args.mode)
                 mlflow.log_artifact(str(gif), "video")
                 mlflow.log_artifact(str(mp4), "video")
     finally:
         pool.close()
-    registry.submit([run.info.run_id])
+    registry.submit([run.info.run_id], args.mode)
     print(json.dumps({"best": top.items[0]}, ensure_ascii=False), flush=True)
 
 

@@ -2,6 +2,7 @@
 
 Node のプロセスを workers 個立て、それぞれがおじさんを envs_per_worker 体持つ。
 1ステップごとに、全プロセスへ行動を送ってから、順番に結果を受け取る（プロセスは並列に計算する）。
+Node のプロセスは、1つのモード（src/screen/game/modes.ts の一覧）だけを扱う。モードは立てるときに渡す（--mode）。
 """
 
 from __future__ import annotations
@@ -18,14 +19,17 @@ from stable_baselines3.common.vec_env import VecEnv
 ROOT = Path(__file__).resolve().parents[2]
 SERVER = ROOT / "scripts/rl/server.ts"
 ACT_DIM = 4
+# 省いたときのモード（src/screen/game/modes.ts の DEFAULT_SIM_MODE と同じ）
+DEFAULT_MODE = "normal"
 
 
 class NodeProcess:
-    """server.ts を1つ立て、JSON を1行ずつやり取りする"""
+    """server.ts を1つ立て、JSON を1行ずつやり取りする。mode のモードの物理で動く"""
 
-    def __init__(self) -> None:
+    def __init__(self, mode: str = DEFAULT_MODE) -> None:
+        self.mode = mode
         self.p = subprocess.Popen(
-            ["node", str(SERVER)],
+            ["node", str(SERVER), "--mode", mode],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             cwd=ROOT,
@@ -71,14 +75,16 @@ class FunyaojiVecEnv(VecEnv):
         workers: int = 16,
         envs_per_worker: int = 8,
         config: dict[str, Any] | None = None,
+        mode: str = DEFAULT_MODE,
     ):
         self.workers = workers
         self.per = envs_per_worker
         self.config = config or {}
+        self.mode = mode
         self.procs: list[NodeProcess] = []
         try:
             for _ in range(workers):
-                self.procs.append(NodeProcess())
+                self.procs.append(NodeProcess(mode))
             init = {"cmd": "init", "n": self.per, "config": self.config}
             for p in self.procs:
                 p.send(init)

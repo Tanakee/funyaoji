@@ -1,14 +1,18 @@
 """入力の記録を評価し、MLflow のレジストリに載せ、別名を移し、ゲームに書き出す（docs/ml.md の「実験の管理」）。
 
-- 評価：記録を Node で物理の1ステップずつ再生し、タイムと物理の不具合の量を測る（scripts/rl/anomaly.ts）
+どの操作も、1つのモード（src/screen/game/modes.ts の一覧。省くとノーマル）について行う。
+
+- 評価：記録を Node で、そのモードの物理の1ステップずつ再生し、タイムと物理の不具合の量を測る（scripts/rl/anomaly.ts）
   - (E1)：10m に着いた
   - (E2)：(E1) で、物理の不具合のしきい値（THRESHOLDS）を越えていない
-- 登録：モデル funyaoji-10m-record の version として載せる。同じ物理の指紋で同じ記録（入力の列のハッシュ）は二度載せない。
+- 登録：モードのモデル（ノーマルは funyaoji-10m-record、ほかは funyaoji-10m-record-<モード>）の version として載せる。
+  候補は、run のタグ mode がそのモードの run だけ（タグの無い run はノーマル）。
+  同じ物理の指紋で同じ記録（入力の列のハッシュ）は二度載せない。
   記録は今の物理で再生して評価するので、学習したときの指紋が今と違う run の記録も、今の指紋で載せる
 - 別名：同じ物理の指紋の中で、(E2) の最速に theory、(E1) の最速に theory-any を付ける。
   別名の記録が別の指紋のものなら、新しい指紋の記録が速さにかかわらず別名を取る
 - 登録と、実験・モデルを作るところは、ml/.registry.lock の鍵で1つずつにする（何本も同時に流すため）
-- 書き出し：theory の記録を src/screen/game/ai/theory.json に書く。ゲームとテストはこれを読む。
+- 書き出し：theory の記録を src/screen/game/ai/theory/<モード>.json に書く。ゲームとテストはこれを読む。
   theory が今の物理の指紋の記録でなければ、書き出さずに止める
 
 使い方（ml/ で）：
@@ -16,6 +20,7 @@
   uv run python -m funyaoji_rl.registry submit <run_id> ...
   uv run python -m funyaoji_rl.registry list
   uv run python -m funyaoji_rl.registry export
+  uv run python -m funyaoji_rl.registry --mode normal export   # モードを選ぶ（省くとノーマル）
 """
 
 from __future__ import annotations
@@ -30,12 +35,28 @@ from typing import Any
 
 from . import tracking
 from .tracking import mlflow
-from .vec_env import ROOT, NodeProcess
+from .vec_env import DEFAULT_MODE, ROOT, NodeProcess
 
+# ノーマルのモデル。ほかのモードは model_name() の名前
 MODEL = "funyaoji-10m-record"
 THEORY = "theory"
 THEORY_ANY = "theory-any"
-EXPORT = ROOT / "src/screen/game/ai/theory.json"
+EXPORT_DIR = ROOT / "src/screen/game/ai/theory"
+
+
+def model_name(mode: str = DEFAULT_MODE) -> str:
+    """モードのモデルの名前。ノーマルは前からの名前のまま（モードを分ける前の version と別名をそのまま使う）"""
+    return MODEL if mode == DEFAULT_MODE else f"{MODEL}-{mode}"
+
+
+def export_path(mode: str = DEFAULT_MODE) -> Path:
+    """モードの理論値の記録の場所。ゲームとテスト（theory.test.ts）はこれを読む"""
+    return EXPORT_DIR / f"{mode}.json"
+
+
+def run_mode(run: Any) -> str:
+    """run のモード。モードを分ける前の run には mode のタグが無く、ノーマルで学習している"""
+    return run.data.tags.get("mode", DEFAULT_MODE)
 
 # 物理の不具合のしきい値。普通の走り（お手本の歩き方）と、最初の実験の走りで出た値の、およそ 10 倍にした（ml/README.md）
 THRESHOLDS = {
@@ -72,14 +93,17 @@ def record_hash(inputs: list[list[float]]) -> str:
     return hashlib.sha256(json.dumps(inputs).encode()).hexdigest()[:16]
 
 
-def _client() -> mlflow.MlflowClient:
+def _client(mode: str) -> mlflow.MlflowClient:
+    model = model_name(mode)
     with tracking.lock():
         tracking.setup()
         client = mlflow.MlflowClient()
         try:
-            client.get_registered_model(MODEL)
+            client.get_registered_model(model)
         except mlflow.exceptions.MlflowException:
-            client.create_registered_model(MODEL, description="入力の記録（毎秒30回の4つの値）。docs/ml.md")
+            client.create_registered_model(
+                model, description=f"モード {mode} の入力の記録（毎秒30回の4つの値）。docs/ml.md"
+            )
     return client
 
 
@@ -97,13 +121,20 @@ def _all_runs(client: mlflow.MlflowClient, experiment_id: str) -> list[Any]:
             return out
 
 
-def _candidates(client: mlflow.MlflowClient, run_ids: list[str] | None) -> list[dict[str, Any]]:
+def _candidates(
+    client: mlflow.MlflowClient, run_ids: list[str] | None, mode: str
+) -> list[dict[str, Any]]:
     exp = mlflow.get_experiment_by_name(tracking.EXPERIMENT)
     runs = [client.get_run(r) for r in run_ids] if run_ids else _all_runs(client, exp.experiment_id)
     out = []
     with tempfile.TemporaryDirectory() as tmp:
         for run in runs:
             if "physics_fingerprint" not in run.data.tags:
+                continue
+            # ほかのモードで学習した記録は載せない
+            if run_mode(run) != mode:
+                if run_ids:
+                    print(f"{run.info.run_name} はモード {run_mode(run)} の run なので、{mode} には載せない")
                 continue
             # 動作確認と速さの計測の run は載せない
             if any(w in (run.info.run_name or "") for w in ("smoke", "bench")):
@@ -126,42 +157,45 @@ def _candidates(client: mlflow.MlflowClient, run_ids: list[str] | None) -> list[
     return out
 
 
-def _versions(client: mlflow.MlflowClient) -> list[Any]:
+def _versions(client: mlflow.MlflowClient, model: str) -> list[Any]:
     """件数の上限で切れないよう、ページをたどって全部の version を読む"""
     out: list[Any] = []
     token = None
     while True:
-        page = client.search_model_versions(f"name='{MODEL}'", max_results=1000, page_token=token)
+        page = client.search_model_versions(f"name='{model}'", max_results=1000, page_token=token)
         out.extend(page)
         token = page.token
         if not token:
             return out
 
 
-def current_physics() -> dict[str, Any]:
-    """今の物理の指紋と Rapier の版を、Node に聞く"""
-    proc = NodeProcess()
+def current_physics(mode: str = DEFAULT_MODE) -> dict[str, Any]:
+    """モードの今の物理の指紋と Rapier の版を、Node に聞く"""
+    proc = NodeProcess(mode)
     try:
         return proc.call({"cmd": "init", "n": 1, "config": {}})
     finally:
         proc.close()
 
 
-def submit(run_ids: list[str] | None = None) -> None:
+def submit(run_ids: list[str] | None = None, mode: str = DEFAULT_MODE) -> None:
     # 読み直してから別名を移すまでに、ほかの run が割り込まないよう、全体を鍵の中で行う
     with tracking.lock():
-        _submit(run_ids)
+        _submit(run_ids, mode)
 
 
-def _submit(run_ids: list[str] | None) -> None:
-    client = _client()
-    proc = NodeProcess()
+def _submit(run_ids: list[str] | None, mode: str) -> None:
+    client = _client(mode)
+    model = model_name(mode)
+    proc = NodeProcess(mode)
     try:
         current = proc.call({"cmd": "init", "n": 1, "config": {}})
         fingerprint = current["fingerprint"]
         # 重複は（物理の指紋、記録のハッシュ）で見る。物理が変われば、同じ記録も評価し直して載せる
-        known = {(v.tags.get("physics_fingerprint"), v.tags.get("record_hash")) for v in _versions(client)}
-        for c in _candidates(client, run_ids):
+        known = {
+            (v.tags.get("physics_fingerprint"), v.tags.get("record_hash")) for v in _versions(client, model)
+        }
+        for c in _candidates(client, run_ids, mode):
             run = c["run"]
             if (fingerprint, c["hash"]) in known:
                 continue
@@ -169,10 +203,11 @@ def _submit(run_ids: list[str] | None) -> None:
             ev = evaluate(proc, c["inputs"])
             a, e1, e2, problems = ev["anomaly"], ev["e1"], ev["e2"], ev["problems"]
             v =client.create_model_version(
-                MODEL,
+                model,
                 source=f"{run.info.artifact_uri}/{c['artifact']}",
                 run_id=run.info.run_id,
                 tags={
+                    "mode": mode,
                     "record_hash": c["hash"],
                     "physics_fingerprint": fingerprint,
                     # 学習・探索したときの指紋。今の指紋と違っても、記録は今の物理で再生して評価している
@@ -190,25 +225,25 @@ def _submit(run_ids: list[str] | None) -> None:
             )
             known.add((fingerprint, c["hash"]))
             print(f"v{v.version} {run.info.run_name} {c['artifact']} {a['timeMs']} E1={e1} E2={e2}")
-        _move_alias(client, THEORY, "e2", fingerprint)
-        _move_alias(client, THEORY_ANY, "e1", fingerprint)
+        _move_alias(client, model, THEORY, "e2", fingerprint)
+        _move_alias(client, model, THEORY_ANY, "e1", fingerprint)
     finally:
         proc.close()
 
 
-def _move_alias(client: mlflow.MlflowClient, alias: str, flag: str, fingerprint: str) -> None:
+def _move_alias(client: mlflow.MlflowClient, model: str, alias: str, flag: str, fingerprint: str) -> None:
     """同じ指紋で flag の立った version の最速に、別名を移す。読んでから移すまでに変わっていたら、読み直す"""
     for _ in range(3):
         ok = [
             v
-            for v in _versions(client)
+            for v in _versions(client, model)
             if v.tags.get(flag) == "True" and v.tags.get("physics_fingerprint") == fingerprint
         ]
         if not ok:
             return
         best = min(ok, key=lambda v: int(v.tags["time_ms"]))
         try:
-            cur = client.get_model_version_by_alias(MODEL, alias)
+            cur = client.get_model_version_by_alias(model, alias)
         except mlflow.exceptions.MlflowException:
             cur = None
         same_fp = cur is not None and cur.tags.get("physics_fingerprint") == fingerprint
@@ -216,27 +251,28 @@ def _move_alias(client: mlflow.MlflowClient, alias: str, flag: str, fingerprint:
             return
         # compare-and-set：移す直前に、まだ同じ version を指しているかを確かめる
         try:
-            again = client.get_model_version_by_alias(MODEL, alias).version
+            again = client.get_model_version_by_alias(model, alias).version
         except mlflow.exceptions.MlflowException:
             again = None
         if again != (cur.version if cur else None):
             continue
-        client.set_registered_model_alias(MODEL, alias, best.version)
-        print(f"{alias} → v{best.version}（{best.tags['run_name']}、{int(best.tags['time_ms']) / 1000} 秒）")
+        client.set_registered_model_alias(model, alias, best.version)
+        print(f"{model} {alias} → v{best.version}（{best.tags['run_name']}、{int(best.tags['time_ms']) / 1000} 秒）")
         return
 
 
-def export() -> Path:
-    client = _client()
+def export(mode: str = DEFAULT_MODE) -> Path:
+    client = _client(mode)
+    model = model_name(mode)
     try:
-        v = client.get_model_version_by_alias(MODEL, THEORY)
+        v = client.get_model_version_by_alias(model, THEORY)
     except mlflow.exceptions.MlflowException as e:
-        raise SystemExit(f"別名 {THEORY} が無い。先に submit で記録を載せる") from e
-    fingerprint = current_physics()["fingerprint"]
+        raise SystemExit(f"{model} に別名 {THEORY} が無い。先に submit で記録を載せる") from e
+    fingerprint = current_physics(mode)["fingerprint"]
     if v.tags.get("physics_fingerprint") != fingerprint:
         raise SystemExit(
-            f"別名 {THEORY}（v{v.version}）は物理の指紋 {v.tags.get('physics_fingerprint')} の記録で、"
-            f"今の指紋 {fingerprint} と違う。submit で今の物理の記録を載せてから書き出す"
+            f"{model} の別名 {THEORY}（v{v.version}）は物理の指紋 {v.tags.get('physics_fingerprint')} の記録で、"
+            f"モード {mode} の今の指紋 {fingerprint} と違う。submit で今の物理の記録を載せてから書き出す"
         )
     with tempfile.TemporaryDirectory() as tmp:
         local = Path(client.download_artifacts(v.run_id, v.tags["artifact"], tmp))
@@ -248,24 +284,27 @@ def export() -> Path:
         "physicsFingerprint": v.tags["physics_fingerprint"],
         "rapier": v.tags["rapier"],
         "method": v.tags["method"],
-        "source": f"{MODEL} v{v.version}（{v.tags['run_name']}）",
+        "source": f"{model} v{v.version}（{v.tags['run_name']}）",
         "inputs": rec["inputs"],
     }
-    EXPORT.write_text(json.dumps(out, separators=(",", ":")) + "\n", encoding="utf-8")
-    print(f"{EXPORT.relative_to(ROOT)} ← v{v.version}（{out['timeMs'] / 1000} 秒）")
-    return EXPORT
+    path = export_path(mode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, separators=(",", ":")) + "\n", encoding="utf-8")
+    print(f"{path.relative_to(ROOT)} ← v{v.version}（{out['timeMs'] / 1000} 秒）")
+    return path
 
 
-def show() -> None:
-    client = _client()
+def show(mode: str = DEFAULT_MODE) -> None:
+    client = _client(mode)
+    model = model_name(mode)
     aliases: dict[str, str] = {}
     for name in (THEORY, THEORY_ANY):
         try:
-            ver = client.get_model_version_by_alias(MODEL, name).version
+            ver = client.get_model_version_by_alias(model, name).version
             aliases[ver] = f"{aliases[ver]} {name}" if ver in aliases else name
         except mlflow.exceptions.MlflowException:
             pass
-    for v in sorted(_versions(client), key=lambda v: int(v.tags.get("time_ms") or 10**9)):
+    for v in sorted(_versions(client, model), key=lambda v: int(v.tags.get("time_ms") or 10**9)):
         t = v.tags
         print(f"v{v.version:>3} {t.get('time_ms') or '-':>6} E1={t['e1']:<5} E2={t['e2']:<5} {t['run_name']:<22} {t['artifact']:<34} {aliases.get(v.version, '')}")
 
@@ -273,15 +312,16 @@ def show() -> None:
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
     ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", default=DEFAULT_MODE, help="モード（src/screen/game/modes.ts の一覧）")
     ap.add_argument("action", choices=["submit", "list", "export"])
     ap.add_argument("run_ids", nargs="*")
     args = ap.parse_args()
     if args.action == "submit":
-        submit(args.run_ids or None)
+        submit(args.run_ids or None, args.mode)
     elif args.action == "list":
-        show()
+        show(args.mode)
     else:
-        export()
+        export(args.mode)
 
 
 if __name__ == "__main__":
