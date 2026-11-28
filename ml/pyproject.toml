@@ -17,3 +17,12 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+# 学習は CPU で動く。Linux（CI）で GPU 用の大きい PyTorch を入れないように、CPU 用の置き場所から取る
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

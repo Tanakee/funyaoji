@@ -31,6 +31,9 @@ uv run python -m funyaoji_rl.train --reward r2 --gamma 0.99 --seed 0 \
 # 最初の実験（③ の 12 run と ② の (R1)）を、決まった本数まで同時に流す
 uv run python -m funyaoji_rl.sweep --parallel 8 --plan first
 
+# 物理が変わったときに、理論値の記録を作り直す（① → ③ → 登録 → 書き出し）。CI（.github/workflows/ml-retrain.yml）もこれを流す
+uv run python -m funyaoji_rl.pipeline --steps 20000000
+
 # 記録を評価してレジストリに載せ、別名（theory・theory-any）を移す。学習と探索の終わりにも自動で行う
 uv run python -m funyaoji_rl.registry submit
 uv run python -m funyaoji_rl.registry list
@@ -131,3 +134,16 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 - 本数を増やしても、全体は毎秒約 1.7 万で頭打ちになる。そのあいだ CPU の使用率は 3〜4 割のまま
 - MLflow の記録先（SQLite）を run ごとに分けても、速さは変わらなかった。順番待ちの原因は SQLite ではない。原因はまだ分かっていない
 - いまは 8 本同時（`sweep.py` の既定）にしている
+
+## 物理が変わったとき
+
+スマホ向けの難しさの調整などで物理（`sim.ts`・`body.ts`・Rapier）が変わると、理論値の記録（`theory.json`）は同じタイムを出さなくなり、`theory.test.ts` が落ちる。
+
+1. PR で物理に関わるファイルが変わると、ワークフロー「理論値の記録の作り直し」が、物理の指紋を `theory.json` のものと比べる（`node scripts/rl/fingerprint.ts`）
+2. 違っていれば、`pipeline.py` を流す（GitHub のマシンで数時間）。学習の記録と動画は、ワークフローの成果物（Artifacts）に 30 日残る
+3. 新しい `theory.json` を入れた PR（ブランチ `chore/retrain-<PR の番号>`）が、元の PR のブランチに向けて出る
+4. 動画で走りを見てから、その PR をマージする。元の PR の `theory.test.ts` が通るようになる
+
+- 新しい物理では前の記録と比べないので、前より遅くても差し替える
+- ワークフローが出した PR では、GitHub の決まりで CI が自動では流れない。必要なら閉じて開き直す
+- 手元で流してもよい：`uv run python -m funyaoji_rl.pipeline` のあと、`theory.json` をコミットする

@@ -46,7 +46,13 @@ DRAW_ORDER = ["leftThigh", "leftShin", "torso", "rightThigh", "rightShin"]
 
 
 def _font(size: int) -> ImageFont.ImageFont:
-    for name in ["meiryo.ttc", "YuGothM.ttc", "msgothic.ttc", "NotoSansCJK-Regular.ttc"]:
+    # Windows のフォントと、Linux（CI）の fonts-noto-cjk
+    for name in [
+        "meiryo.ttc",
+        "YuGothM.ttc",
+        "msgothic.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ]:
         try:
             return ImageFont.truetype(name, size)
         except OSError:
