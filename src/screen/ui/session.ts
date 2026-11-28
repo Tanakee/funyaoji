@@ -221,6 +221,7 @@ export class ScreenSession {
       });
       if (this.disposed) return game.destroy();
       this.game = game;
+      if (this.view.flow.kind === "lobby") game.practice();
       this.update({ game: "ready" });
     } catch (error) {
       console.error("ゲームを作れませんでした", error);
@@ -308,7 +309,7 @@ export class ScreenSession {
       this.grabbed.clear();
       Object.assign(this.inputs, NEUTRAL_INPUTS);
       this.keyboard?.reset();
-      this.game?.reset();
+      this.game?.practice();
       this.audio.setPlaying(false);
       this.lastStatus = { key: "", at: -Infinity };
       this.update({
@@ -649,7 +650,11 @@ export class ScreenSession {
         clearTimeout(this.countdownTimer);
         // ロビーではつまみが消え、つかんだまま消えると離したことが届かない。次のプレイに持ち越さない
         this.grabbed.clear();
-        this.game?.reset();
+        for (const joint of JOINTS) {
+          if (!this.view.joints.includes(joint)) this.inputs[joint] = NEUTRAL_INPUTS[joint];
+        }
+        this.keyboard?.reset();
+        this.game?.practice();
         this.send({ type: "phase", phase: "lobby" });
         break;
     }

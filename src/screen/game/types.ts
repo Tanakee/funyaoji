@@ -25,6 +25,8 @@ export interface Game {
   reset(): void;
   /** 物理演算とタイムを進め始める。reset() のあとに呼ぶ */
   start(): void;
+  /** おじさんを空中に吊り直して関節を動かす。距離とタイムは進めず、ゴールと転倒は判定しない */
+  practice(): void;
   /** 物理演算とタイムをいまの場所で止め、最後の絵を残す。onEnd は呼ばない。いまの距離（m）を返す */
   stop(): number;
   /** Canvas と物理演算の世界を片付ける */

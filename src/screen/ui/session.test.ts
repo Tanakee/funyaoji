@@ -64,6 +64,7 @@ vi.mock("../game/index.ts", async () => {
       return {
         reset: () => calls.push("reset"),
         start() {},
+        practice: () => calls.push("practice"),
         stop: () => {
           calls.push("stop");
           return stopDistance;
@@ -128,6 +129,39 @@ async function open(audio?: ScreenAudio) {
 }
 
 describe("ScreenSession", () => {
+  it("ロビーでゲームができると練習を始め、スマホの傾きを受け取る", async () => {
+    const session = await open();
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(calls).toEqual(["practice"]);
+    room(["rightHip"]);
+    handlers.onMessage({ type: "tilt", joint: "rightHip", seq: 1, angle: 90 });
+    expect(inputs().rightHip).toBe(1);
+    session.dispose();
+  });
+
+  it("スタートで姿勢を戻し、結果からロビーへ戻ると練習を始める", async () => {
+    const { NEUTRAL_INPUTS } = await import("../game/body.ts");
+    const session = await open();
+    room(["rightHip", "leftKnee"]);
+    press("Enter");
+    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(calls).toEqual(["practice", "reset"]);
+    await vi.advanceTimersByTimeAsync(3000);
+    fire("keydown", "KeyW");
+    frames(1);
+    fire("keyup", "KeyW");
+    expect(inputs().leftHip).toBeGreaterThan(NEUTRAL_INPUTS.leftHip);
+    handlers.onMessage({ type: "tilt", joint: "rightHip", seq: 1, angle: 90 });
+    game.onEnd({ outcome: "fell", distanceM: 1 });
+    expect(session.getSnapshot().flow.kind).toBe("result");
+    room(["rightHip"]);
+
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(calls).toEqual(["practice", "reset", "practice"]);
+    expect(inputs()).toEqual({ ...NEUTRAL_INPUTS, rightHip: 1 });
+    session.dispose();
+  });
+
   it("新ルームの接続と旧ルームの終了を確認するまで切り替えず、古い通知を捨てる", async () => {
     const session = await open();
     room(["rightHip"]);
@@ -148,6 +182,7 @@ describe("ScreenSession", () => {
     old.handlers.onMessage({ type: "room-closed" });
     await pending;
     expect(old.closed).toBe(true);
+    expect(calls).toEqual(["practice", "reset", "stop", "practice"]);
     expect(session.getSnapshot()).toMatchObject({
       room: { roomCode: "WXYZ" },
       flow: { kind: "lobby" },
