@@ -3,7 +3,7 @@ import { JOINTS, type Joint } from "../shared/messages.ts";
 import { Gauge } from "./Gauge.tsx";
 import { JOINT_LABELS } from "./joints.ts";
 
-const TILT_ICON = (
+export const TILT_ICON = (
   <svg className="tilt-icon" viewBox="0 0 64 44" aria-hidden="true">
     <path d="M2 40 H26 L32 31 H8 Z" />
     <rect x="45" y="3" width="17" height="38" rx="4" />
@@ -11,7 +11,7 @@ const TILT_ICON = (
   </svg>
 );
 
-function LobbyLeg({ thigh }: { thigh: boolean }) {
+export function LobbyLeg({ thigh }: { thigh: boolean }) {
   const upper = "M99 39 L154 94";
   const lower = "M154 94 L161 151 H184";
   const own = thigh ? upper : lower;

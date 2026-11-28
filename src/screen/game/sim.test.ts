@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, test } from "vite-plus/test";
-import { NEUTRAL_INPUTS } from "./body.ts";
+import type { Joint } from "../../shared/messages.ts";
+import { NEUTRAL_INPUTS, STEP_S } from "./body.ts";
 import { demoGait as gait } from "./demo.ts";
+import { moveInputs } from "./keyboard.ts";
 import { SIT_MS, Sim, initPhysics } from "./sim.ts";
 import type { JointInputs } from "./types.ts";
 
@@ -118,5 +120,103 @@ describe("Sim", () => {
       return s.distanceM;
     };
     expect(at(1 / 30)).toBeCloseTo(at(1 / 120), 1);
+  });
+});
+
+describe("練習の Sim", () => {
+  test("関節をでたらめに10秒動かしても、胴と進行が止まったまま足は地面に着かない", () => {
+    const sim = new Sim({ practice: true });
+    const torso = sim.state().poses.torso;
+    let seed = 1;
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) < 2 ** 31 ? 0 : 1);
+    for (let i = 0; i < 20; i++) {
+      const inputs = { rightHip: rnd(), leftHip: rnd(), rightKnee: rnd(), leftKnee: rnd() };
+      for (let step = 0; step < 0.5 / STEP_S; step++) {
+        sim.advance(inputs, STEP_S);
+        expect(sim.readout().footContact).toEqual({ right: false, left: false });
+      }
+    }
+    const state = sim.state();
+    sim.free();
+    expect(state.poses.torso.x).toBeCloseTo(torso.x, 8);
+    expect(state.poses.torso.y).toBeCloseTo(torso.y, 8);
+    expect(state.poses.torso.rot).toBeCloseTo(torso.rot, 8);
+    expect(state).toMatchObject({
+      status: "ready",
+      elapsedMs: 0,
+      distanceM: 0,
+      result: undefined,
+    });
+  });
+
+  test("右ももの入力で右ももが動き、左脚の関節は立った姿勢を保つ", () => {
+    const sim = new Sim({ practice: true });
+    const before = sim.readout().joints;
+    sim.advance({ ...NEUTRAL, rightHip: 1 }, 1);
+    const after = sim.readout().joints;
+    sim.free();
+    expect(after.rightHip.angle - before.rightHip.angle).toBeGreaterThan(0.1);
+    // 0.001 rad（約0.06度）は、画面では見分けられない
+    expect(Math.abs(after.leftHip.angle - before.leftHip.angle)).toBeLessThan(0.001);
+    expect(Math.abs(after.leftKnee.angle - before.leftKnee.angle)).toBeLessThan(0.001);
+  });
+
+  test("start を呼んでも、練習ではタイムが進まない", () => {
+    const sim = new Sim({ practice: true });
+    sim.start();
+    sim.advance(NEUTRAL, 1);
+    const state = sim.state();
+    sim.free();
+    expect(state).toMatchObject({ status: "ready", elapsedMs: 0 });
+  });
+
+  test.each([
+    { joint: "rightHip", key: "KeyQ" },
+    { joint: "rightKnee", key: "KeyO" },
+  ] as const)("$joint の反応はプレイ中と1ステップ以内の差に収まる", ({ joint, key }) => {
+    // 動き始めを見る。立った姿勢の入力のまま揺れる幅（練習・プレイ中とも 0.0001 rad 未満）より大きくする
+    const threshold = 0.0002;
+    const stepsToMove = (practice: boolean): number => {
+      const sim = practice ? new Sim({ practice: true }) : new Sim();
+      try {
+        if (!practice) sim.start();
+        for (let step = 0; step < 1 / STEP_S; step++) sim.advance(NEUTRAL, STEP_S);
+        const initialAngle = sim.readout().joints[joint].angle;
+        const inputs = { ...NEUTRAL };
+        const held = new Set([key]);
+        const driving = new Set<Joint>();
+        for (let step = 0; step < 1 / STEP_S; step++) {
+          if (step % (FRAME / STEP_S) === 0) moveInputs(inputs, held, FRAME, driving);
+          sim.advance(inputs, STEP_S);
+          if (Math.abs(sim.readout().joints[joint].angle - initialAngle) > threshold) {
+            return step + 1;
+          }
+        }
+        throw new Error(`${joint} が1秒以内に動かなかった（練習: ${practice}）`);
+      } finally {
+        sim.free();
+      }
+    };
+    const practice = stepsToMove(true);
+    const playing = stepsToMove(false);
+    expect(
+      Math.abs(practice - playing),
+      `練習 ${practice} ステップ、プレイ中 ${playing} ステップ`,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  test("練習を作って動かしてから走らせても、お手本の結果が一致する", () => {
+    const demoResult = () => {
+      const sim = new Sim();
+      const { result } = run(sim, gait, 60);
+      sim.free();
+      return result;
+    };
+    const before = demoResult();
+    expect(before?.outcome).toBe("goal");
+    const practice = new Sim({ practice: true });
+    practice.advance({ ...NEUTRAL, rightHip: 1 }, 1);
+    practice.free();
+    expect(demoResult()).toEqual(before);
   });
 });

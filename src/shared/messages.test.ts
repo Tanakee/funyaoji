@@ -88,6 +88,21 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
+    name: "howto",
+    message: { type: "howto", ready: ["rightHip"] },
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
+  },
+  {
+    name: "ready (スマホの送信)",
+    message: { type: "ready" },
+    directions: ["PhoneToServerMessage"],
+  },
+  {
+    name: "ready (スクリーンの受信)",
+    message: { type: "ready", joint: "rightHip" },
+    directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
+  },
+  {
     name: "start (スマホの送信)",
     message: { type: "start" },
     directions: ["PhoneToServerMessage"],
@@ -182,6 +197,7 @@ const rejected: { name: string; message: unknown }[] = [
   { name: "未知の joint (room)", message: { type: "room", roomCode: "K7Q2", joints: ["head"] } },
   { name: "未知の joint (ping)", message: { type: "ping", id: 7, joint: "head" } },
   { name: "未知の joint (status)", message: { type: "status", active: ["head"] } },
+  { name: "未知の joint (howto)", message: { type: "howto", ready: ["rightHip", "head"] } },
   { name: "未知の reason", message: { type: "rejected", reason: "banned" } },
   { name: "phase が未知", message: { type: "phase", phase: "paused" } },
   { name: "playing に mode が無い", message: { type: "phase", phase: "playing" } },
@@ -280,6 +296,7 @@ describe("メッセージのスキーマ", () => {
   test.each([
     { name: "tilt", message: { type: "tilt", seq: 1, angle: 0, joint: "head" } },
     { name: "pong", message: { type: "pong", id: 7, joint: "head" } },
+    { name: "ready", message: { type: "ready", joint: "head" } },
   ])("スクリーンが受信する $name は、未知の joint を拒否する", (c) => {
     expect(v.safeParse(ServerToScreenMessage, c.message).success).toBe(false);
   });
@@ -301,7 +318,7 @@ describe("メッセージのスキーマ", () => {
     expect(result).toEqual({ type: "tilt", seq: 1, angle: 10 });
   });
 
-  test.each(["start", "retry"])("スマホの %s に付いた joint は捨てる", (type) => {
+  test.each(["start", "retry", "ready"])("スマホの %s に付いた joint は捨てる", (type) => {
     expect(v.parse(PhoneToServerMessage, { type, joint: "leftKnee" })).toEqual({ type });
   });
 });

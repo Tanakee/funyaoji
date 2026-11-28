@@ -286,7 +286,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     await closeAll([screen, ...phones]);
   });
 
-  test.each(["start", "retry"])(
+  test.each(["start", "retry", "ready"])(
     "スマホの %s は担当の関節を付けてスクリーンに送る",
     async (type) => {
       const roomCode = await createRoom();
@@ -299,21 +299,125 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     },
   );
 
-  test("スクリーンが送った start と retry は捨てる", async () => {
+  test("スクリーンが送った start、retry、ready と、スマホが送った howto は捨てる", async () => {
     const roomCode = await createRoom();
     const { screen, phones } = await fillRoom(roomCode);
     const phone = phones[3]!;
     await phone.next(); // room
     await screen.send(JSON.stringify({ type: "start", joint: "leftKnee" }));
     await screen.send(JSON.stringify({ type: "retry", joint: "leftKnee" }));
+    await screen.send(JSON.stringify({ type: "ready", joint: "leftKnee" }));
     const status = { type: "status", active: [] };
     await screen.send(JSON.stringify(status));
     expect(await phone.next()).toEqual(status);
+    await phone.send(JSON.stringify({ type: "howto", ready: [] }));
     // status を受け取ったあとに送った tilt だけがスクリーンに届く
     const tilt = { type: "tilt", seq: 1, angle: 0 };
     await phone.send(JSON.stringify(tilt));
     expect(await screen.next()).toEqual({ ...tilt, joint: "leftKnee" });
+    await screen.send(JSON.stringify(status));
+    expect(await phone.next()).toEqual(status);
     await closeAll([screen, ...phones]);
+  });
+
+  test("スクリーンの howto は開いているスマホ全員に届く", async () => {
+    const roomCode = await createRoom();
+    const { screen, phones } = await fillRoom(roomCode);
+    const howto = { type: "howto", ready: [] };
+    await screen.send(JSON.stringify(howto));
+    for (const [i, phone] of phones.entries()) {
+      for (let received = i; received < phones.length; received++) {
+        expect(await phone.next()).toMatchObject({ type: "room" });
+      }
+      expect(await phone.next()).toEqual(howto);
+    }
+    await closeAll([screen, ...phones]);
+  });
+
+  test.each([false, true])(
+    "遊び方の間に接続すると順に状態が届く (保存済み phase: %s)",
+    async (withPhase) => {
+      const roomCode = await createRoom();
+      const screen = new Client(roomCode, "screen");
+      await screen.next();
+      const first = new Client(roomCode, "phone");
+      await first.next(); // joined
+      await first.next(); // room
+      await screen.next(); // room
+      const phase = { type: "phase", phase: "lobby" };
+      const howto = { type: "howto", ready: [] };
+      if (withPhase) {
+        await screen.send(JSON.stringify(phase));
+        expect(await first.next()).toEqual(phase);
+      }
+      await screen.send(JSON.stringify(howto));
+      expect(await first.next()).toEqual(howto);
+
+      const phone = new Client(roomCode, "phone");
+      expect(await phone.next()).toEqual({ type: "joined", joint: "leftHip" });
+      if (withPhase) expect(await phone.next()).toEqual(phase);
+      expect(await phone.next()).toEqual(howto);
+      const room = { type: "room", roomCode, joints: ["rightHip", "leftHip"] };
+      expect(await phone.next()).toEqual(room);
+      expect(await screen.next()).toEqual(room);
+      await closeAll([screen, first, phone]);
+    },
+  );
+
+  test("同じ client には最後の howto が届き、phase の後は howto が届かない", async () => {
+    const roomCode = await createRoom();
+    const screen = new Client(roomCode, "screen");
+    await screen.next(); // 接続時の room
+    const phone = new Client(roomCode, "phone", "a");
+    const joined = { type: "joined", joint: "rightHip" };
+    const room = { type: "room", roomCode, joints: ["rightHip"] };
+    expect(await phone.next()).toEqual(joined);
+    expect(await phone.next()).toEqual(room);
+    for (const ready of [[], ["rightHip"]]) {
+      const howto = { type: "howto", ready };
+      await screen.send(JSON.stringify(howto));
+      expect(await phone.next()).toEqual(howto);
+    }
+    await phone.close();
+
+    const again = new Client(roomCode, "phone", "a");
+    expect(await again.next()).toEqual(joined);
+    expect(await again.next()).toEqual({ type: "howto", ready: ["rightHip"] });
+    expect(await again.next()).toEqual(room);
+
+    const phase = { type: "phase", phase: "lobby" };
+    await screen.send(JSON.stringify(phase));
+    expect(await again.next()).toEqual(phase);
+    const afterHowto = new Client(roomCode, "phone");
+    expect(await afterHowto.next()).toEqual({ type: "joined", joint: "leftHip" });
+    expect(await afterHowto.next()).toEqual(phase);
+    expect(await afterHowto.next()).toEqual({ ...room, joints: ["rightHip", "leftHip"] });
+    await closeAll([screen, again, afterHowto]);
+  });
+
+  test("遊び方の間に新しいスマホが空いた関節に入ると、前の人の準備OK を外し、スクリーンにも知らせる", async () => {
+    const roomCode = await createRoom();
+    const screen = new Client(roomCode, "screen");
+    await screen.next(); // room
+    const first = new Client(roomCode, "phone"); // client が無いので、切れるとすぐ関節が空く
+    await first.next(); // joined
+    await first.next(); // room
+    await screen.next(); // room
+    await screen.send(JSON.stringify({ type: "howto", ready: ["rightHip"] }));
+    expect(await first.next()).toEqual({ type: "howto", ready: ["rightHip"] });
+    await first.close();
+    expect(await screen.next()).toEqual({ type: "room", roomCode, joints: [] });
+
+    const next = new Client(roomCode, "phone");
+    expect(await next.next()).toEqual({ type: "joined", joint: "rightHip" });
+    expect(await next.next()).toEqual({ type: "howto", ready: [] });
+    expect(await screen.next()).toEqual({ type: "howto", ready: [] });
+    expect(await screen.next()).toEqual({ type: "room", roomCode, joints: ["rightHip"] });
+    // 保持している howto も外したものになる
+    const later = new Client(roomCode, "phone");
+    expect(await later.next()).toEqual({ type: "joined", joint: "leftHip" });
+    expect(await later.next()).toEqual({ type: "howto", ready: [] });
+    await closeAll([screen, next, later]);
   });
 
   test("スマホが切れると関節を空け、room を送り直す。次のスマホは空いた関節に入る", async () => {

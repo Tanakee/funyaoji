@@ -63,6 +63,12 @@ export const PhaseMessage = v.variant("phase", [
 ]);
 export type PhaseMessage = v.InferOutput<typeof PhaseMessage>;
 
+export const HowtoMessage = v.object({
+  type: v.literal("howto"),
+  ready: v.array(Joint),
+});
+export type HowtoMessage = v.InferOutput<typeof HowtoMessage>;
+
 export const StatusMessage = v.object({
   type: v.literal("status"),
   active: v.array(Joint),
@@ -109,6 +115,12 @@ export type RelayedStartMessage = v.InferOutput<typeof RelayedStartMessage>;
 export const RelayedRetryMessage = v.object({ ...RetryMessage.entries, joint: Joint });
 export type RelayedRetryMessage = v.InferOutput<typeof RelayedRetryMessage>;
 
+export const ReadyMessage = v.object({ type: v.literal("ready") });
+export type ReadyMessage = v.InferOutput<typeof ReadyMessage>;
+
+export const RelayedReadyMessage = v.object({ ...ReadyMessage.entries, joint: Joint });
+export type RelayedReadyMessage = v.InferOutput<typeof RelayedReadyMessage>;
+
 // 接続が生きていることを知らせる。サーバーは中継せず、同じ文字列をそのまま返す
 export const HeartbeatMessage = v.object({ type: v.literal("heartbeat") });
 export type HeartbeatMessage = v.InferOutput<typeof HeartbeatMessage>;
@@ -139,6 +151,7 @@ export const ServerToPhoneMessage = v.variant("type", [
   RejectedMessage,
   RoomMessage,
   PhaseMessage,
+  HowtoMessage,
   StatusMessage,
   PingMessage,
   HeartbeatMessage,
@@ -157,6 +170,8 @@ export const ServerToScreenMessage = v.variant("type", [
   RelayedPongMessage,
   RelayedStartMessage,
   RelayedRetryMessage,
+  RelayedReadyMessage,
+  HowtoMessage,
   HeartbeatMessage,
 ]);
 export type ServerToScreenMessage = v.InferOutput<typeof ServerToScreenMessage>;
@@ -166,6 +181,7 @@ export const PhoneToServerMessage = v.variant("type", [
   PongMessage,
   StartMessage,
   RetryMessage,
+  ReadyMessage,
   HeartbeatMessage,
   LeaveMessage,
 ]);
@@ -174,6 +190,7 @@ export type PhoneToServerMessage = v.InferOutput<typeof PhoneToServerMessage>;
 export const ScreenToServerMessage = v.variant("type", [
   CloseRoomMessage,
   PhaseMessage,
+  HowtoMessage,
   StatusMessage,
   PingMessage,
   HeartbeatMessage,

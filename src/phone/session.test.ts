@@ -3,7 +3,7 @@ import type { TransportHandlers } from "../net/transport.ts";
 import type { PhoneEvent } from "./model.ts";
 import { startSession } from "./session.ts";
 
-const opened: { handlers: TransportHandlers; sent: string[]; closed: boolean }[] = [];
+const opened: { handlers: TransportHandlers; closed: boolean; sent: string[] }[] = [];
 
 vi.mock("../net/client.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../net/client.ts")>();
@@ -13,10 +13,13 @@ vi.mock("../net/client.ts", async (importOriginal) => {
       actual.connectPhone(room, handlers, {
         ...options,
         transport: () => (handlers) => {
-          const transport = { handlers, sent: [] as string[], closed: false };
+          const transport = { handlers, closed: false, sent: [] as string[] };
           opened.push(transport);
           return {
-            send: (data) => transport.sent.push(data) > 0,
+            send: (data) => {
+              transport.sent.push(data);
+              return true;
+            },
             close: () => {
               transport.closed = true;
             },
@@ -43,15 +46,73 @@ afterEach(() => {
 
 const JOINED = JSON.stringify({ type: "joined", joint: "rightHip" });
 
+test.each([
+  { name: "未確認", ready: [], sendsAgain: true },
+  { name: "確認済み", ready: ["rightHip"], sendsAgain: false },
+  { name: "遊び方が終了", ready: undefined, sendsAgain: false },
+])("準備OKが $name のときに同じ関節につなぎ直す", ({ ready, sendsAgain }) => {
+  const session = startSession("K7Q2", () => {});
+  const first = opened[0]!;
+  first.handlers.onOpen();
+  first.handlers.onMessage(JOINED);
+  first.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  if (ready !== undefined) {
+    expect(session.send({ type: "ready" })).toBe(true);
+    expect(first.sent).toEqual(['{"type":"ready"}']);
+  }
+  first.handlers.onClose({ code: 1006, reason: "" });
+  if (ready === undefined) expect(session.send({ type: "ready" })).toBe(false);
+
+  vi.advanceTimersByTime(1_000);
+  const again = opened[1]!;
+  again.handlers.onOpen();
+  again.handlers.onMessage(JOINED);
+  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby" }));
+  if (ready !== undefined) again.handlers.onMessage(JSON.stringify({ type: "howto", ready }));
+  expect(again.sent).toEqual(sendsAgain ? ['{"type":"ready"}'] : []);
+  again.handlers.onMessage(
+    JSON.stringify({ type: "room", roomCode: "K7Q2", joints: ["rightHip"] }),
+  );
+
+  if (ready !== undefined) {
+    again.handlers.onMessage(JSON.stringify({ type: "howto", ready: ["rightHip"] }));
+    expect(again.sent).toHaveLength(sendsAgain ? 1 : 0);
+  }
+  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby" }));
+  again.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(again.sent).toHaveLength(sendsAgain ? 1 : 0);
+  session.stop();
+});
+
+test("別の関節につなぎ直したときは準備OKを送り直さない", () => {
+  const session = startSession("K7Q2", () => {});
+  const first = opened[0]!;
+  first.handlers.onOpen();
+  first.handlers.onMessage(JOINED);
+  first.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(session.send({ type: "ready" })).toBe(true);
+  expect(first.sent).toEqual(['{"type":"ready"}']);
+  first.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  const again = opened[1]!;
+  again.handlers.onOpen();
+  again.handlers.onMessage(JSON.stringify({ type: "joined", joint: "leftHip" }));
+  again.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(again.sent).toEqual([]);
+  session.stop();
+});
+
 test("抜けるの受け付けを待つあいだに切れたら、joined を受け取り直して leave を送る", () => {
   const session = startSession("K7Q2", () => {});
   const first = opened[0]!;
   first.handlers.onOpen();
   first.handlers.onMessage(JOINED);
+  first.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
   session.leave();
   session.leave();
   expect(session.send({ type: "start" })).toBe(false);
   expect(session.send({ type: "retry" })).toBe(false);
+  expect(session.send({ type: "ready" })).toBe(false);
   expect(first.sent).toEqual(['{"type":"leave"}']);
   expect(first.closed).toBe(false);
 
@@ -61,6 +122,7 @@ test("抜けるの受け付けを待つあいだに切れたら、joined を受�
   next.handlers.onOpen();
   expect(next.sent).toEqual([]);
   next.handlers.onMessage(JOINED);
+  next.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
   expect(next.sent).toEqual(['{"type":"leave"}']);
   session.stop();
 });
