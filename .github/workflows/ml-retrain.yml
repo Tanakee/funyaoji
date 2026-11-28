@@ -3,7 +3,8 @@
 # 1. fingerprint：物理に関わるファイルが変わった PR で、マージした結果（github.sha）の物理で、どのモードの記録が使えるかを確かめる
 #    （記録があるか、物理の指紋が同じか、再生して同じタイムでゴールするか）。読むだけ
 # 2. retrain：使えないモードごとに（matrix。並べて流す）、同じマージした結果で学習の流れ（ml/funyaoji_rl/pipeline.py）を流し、
-#    新しい記録で再生が一致するかを確かめる。読むだけの権限で動かす
+#    新しい記録で再生が一致するかを確かめる。読むだけの権限で動かす。
+#    リポジトリの変数 ML_TRAIN_RUNNER があれば、このジョブだけをチームのマシンの self-hosted runner（ml/runner/）で流す
 # 3. verify：学習には数時間かかり、そのあいだに PR が進むので、学習し終えた時点の PR のマージした結果で、記録を確かめ直す。
 #    使える記録（この実行の記録と、前に出した PR の記録）だけを選ぶ。読むだけの権限で動かす
 # 4. publish：選んだ記録を、元の PR のブランチから切ったブランチに1つのコミットで入れ、元の PR のブランチに向けて PR を出す。
@@ -184,13 +185,21 @@ jobs:
     # 名前にモードと物理の指紋を入れる。fingerprint の「同じ物理の学習が進んでいるか」は、これを見る
     name: 学習し直す（${{ matrix.mode }}・${{ fromJSON(needs.fingerprint.outputs.fingerprints || '{}')[matrix.mode] }}）
     needs: fingerprint
-    if: needs.fingerprint.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # フォークからの PR では流さない（fingerprint と同じ条件。fingerprint が飛ばされればこのジョブも飛ぶが、念のため書く）。
+    # self-hosted のマシンでは、このジョブだけが PR のコードを動かす
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+      && needs.fingerprint.outputs.run == 'true'
+    # どこで学習を流すか（docs/ml.md の「どこで学習を流すか」）。リポジトリの変数 ML_TRAIN_RUNNER に、
+    # runs-on のラベルを JSON の配列で書く（["self-hosted","linux","x64","funyaoji-ml"]）。変数が無ければ GitHub のマシン
+    runs-on: ${{ vars.ML_TRAIN_RUNNER && fromJSON(vars.ML_TRAIN_RUNNER) || 'ubuntu-latest' }}
+    # GitHub のマシンで数時間かかる。GitHub のマシンの上限（6時間）より少し短くする。
+    # self-hosted ではずっと速い（1モード約35分）が、止まったジョブがマシンを長く使い続けないよう、同じ上限にしておく
     timeout-minutes: 330
     permissions:
       contents: read
     strategy:
-      # モードごとに別のマシンで並べて流す。1つのモードが落ちても、ほかのモードの学習は止めない
+      # モードごとに別のマシンで並べて流す（self-hosted のランナーが1つなら、1つずつ順に流れる）。1つのモードが落ちても、ほかのモードの学習は止めない
       # （落ちたモードだけを「Re-run failed jobs」で流し直せば、PR が出る）
       fail-fast: false
       matrix:
@@ -203,7 +212,32 @@ jobs:
     env:
       STEPS: ${{ inputs.steps || '20000000' }}
       MODE: ${{ matrix.mode }}
+      # 学習で並べる Node のプロセスの数。体の数の合計（ENVS）は変えず、1プロセスあたりの体の数を ENVS / WORKERS にする。
+      # 物理は乱数を使わず、体ごとに別の物理で動くので、合計が同じなら学習の結果は変わらない（docs/ml.md の「どこで学習を流すか」）。
+      # 変数 ML_TRAIN_WORKERS は、self-hosted（ML_TRAIN_RUNNER がある）ときだけ使う
+      ENVS: 128
+      WORKERS: ${{ vars.ML_TRAIN_RUNNER && vars.ML_TRAIN_WORKERS || '4' }}
     steps:
+      # 使い捨てのランナー（ml/runner/）でも、前のジョブの残りが無いことを確かめてから始める
+      - name: 作業フォルダが空であることを確かめる
+        if: runner.environment == 'self-hosted'
+        run: |
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE")" ]; then
+            echo "::error::作業フォルダ（$GITHUB_WORKSPACE）が空でない。ランナーが使い捨てになっていない（ml/runner/README.md の「困ったとき」）"
+            ls -lA "$GITHUB_WORKSPACE"
+            exit 1
+          fi
+
+      - name: 並べる数を決める
+        id: par
+        run: |
+          if ! [[ "$WORKERS" =~ ^[1-9][0-9]*$ ]] || [ "$WORKERS" -gt "$ENVS" ] || [ $((ENVS % WORKERS)) != 0 ]; then
+            echo "::error::変数 ML_TRAIN_WORKERS（$WORKERS）は、$ENVS を割り切る正の整数にする（4・8・16・32 など）"
+            exit 1
+          fi
+          echo "Node のプロセス $WORKERS 個 × $((ENVS / WORKERS)) 体"
+          { echo "workers=$WORKERS"; echo "per=$((ENVS / WORKERS))"; } >> "$GITHUB_OUTPUT"
+
       # fingerprint と同じく、マージした結果で学習する。書き込みの認証情報は残さない
       - uses: actions/checkout@v5
         with:
@@ -216,8 +250,14 @@ jobs:
       - name: 依存を入れる
         run: npm ci
 
+      # self-hosted（ml/runner/）のイメージには入れてある。ジョブは sudo を使えないので、入っていれば入れない
       - name: 動画の日本語のフォントを入れる
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+        run: |
+          if [ -f /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc ]; then
+            echo "もう入っている"
+          else
+            sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+          fi
 
       - uses: astral-sh/setup-uv@v6
 
@@ -227,7 +267,12 @@ jobs:
 
       - name: 学習し直して、記録を作り直す
         working-directory: ml
-        run: uv run python -m funyaoji_rl.pipeline --mode "$MODE" --steps "$STEPS"
+        env:
+          WORKERS: ${{ steps.par.outputs.workers }}
+          PER: ${{ steps.par.outputs.per }}
+        run: >-
+          uv run python -m funyaoji_rl.pipeline --mode "$MODE" --steps "$STEPS"
+          --workers "$WORKERS" --envs-per-worker "$PER"
 
       # ワークフローが出した PR では CI が自動で流れないので、ここで確かめてから出す。
       # ほかのモードの記録は、別のジョブで作り直しているので、このモードのテストだけを流す
