@@ -155,6 +155,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 - ワークフローが作った・更新した PR では、GitHub の決まりで CI が自動では流れないか、承認待ち（「Approve and run」）になることがある。記録の PR の Checks の欄と Actions の画面で確かめ、承認待ちなら承認し、流れていなければ閉じて開き直す
 - 指紋だけが変わり、記録が今の物理でも同じタイムで再生できるときは、学習は始まるが `theory.test.ts` は通る。記録の PR をマージしてから、元の PR をマージする（docs/ml.md の「物理の変更から記録の差し替えまでを自動にする」）
 - ワークフローに PR を作らせるには、リポジトリの設定（Settings → Actions → General）の「Allow GitHub Actions to create and approve pull requests」が要る。切ってあると、ブランチを push したところで止まり、手で PR を作るリンクをエラーに出す
+- 「PR を出す」のジョブが、PR の head か base が確かめ直したときから動いたとして落ちたときは、新しい実行に任せるか、その実行の「確かめ直す」のジョブを選んで再実行する（PR を出すジョブも流れ直す）。push のあとで PR を作るところだけが落ちたときは、エラーに出たリンクから手で PR を開く
 - 手元で流してもよい：`uv run python -m funyaoji_rl.pipeline --mode <モード>` のあと、`src/screen/game/ai/theory/<モード>.json` をコミットする
 
 ### 成果物の見方
