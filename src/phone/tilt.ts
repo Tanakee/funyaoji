@@ -45,7 +45,7 @@ export class JumpFilter {
   }
 }
 
-/** 最後に読めた角度。まだ読めていなければ undefined。ゲージが毎フレーム読む */
+/** 最後に読めた角度。まだ読めていなければ undefined。ゲージと糸が毎フレーム読む */
 let latest: number | undefined;
 let filter = new JumpFilter();
 export function latestAngle(): number | undefined {
@@ -81,7 +81,7 @@ function getTiltPermissionRequest() {
     : undefined;
 }
 
-/** 傾きの読み取りに許可が要る環境（iOS）か。参加前（P1）の案内を出し分ける */
+/** 傾きを読む前に、許可の確認が出る環境か（iOS の Safari など、requestPermission がある） */
 export function needsTiltPermission(): boolean {
   return getTiltPermissionRequest() !== undefined;
 }

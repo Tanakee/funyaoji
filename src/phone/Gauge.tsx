@@ -1,40 +1,24 @@
-import { useEffect, useRef } from "react";
-import { latestAngle, MAX_ANGLE } from "./tilt.ts";
+import { useRef } from "react";
+import { MAX_ANGLE } from "./tilt.ts";
+import { useTiltFrame } from "./useTiltFrame.ts";
 
-/** いまの傾き（0〜90度）を、自分の部位の色のバーで出す。スクリーンの返事は待たない */
+/** いまの傾きのバー。スクリーンの返事を待たずに動かす。色は親の --joint */
 export function Gauge() {
   const root = useRef<HTMLDivElement>(null);
   const meter = useRef<HTMLDivElement>(null);
   const fill = useRef<HTMLDivElement>(null);
+  const drawnPercent = useRef(0);
 
-  useEffect(() => {
-    const gauge = root.current!;
-    const track = meter.current!;
-    const bar = fill.current!;
-    let frame = 0;
-    let drawn: number | undefined;
-    let drawnPercent = 0;
-
-    // 傾きは毎秒30回以上届くので、React の描画を待たずに DOM へ反映する
-    const draw = () => {
-      frame = requestAnimationFrame(draw);
-      const angle = latestAngle();
-      if (angle === drawn) return;
-      if (angle === undefined || drawn === undefined) {
-        gauge.toggleAttribute("data-empty", angle === undefined);
-      }
-      drawn = angle;
-      const ratio = (angle ?? 0) / MAX_ANGLE;
-      bar.style.transform = `scaleX(${ratio})`;
-      const percent = Math.round(ratio * 100);
-      if (percent !== drawnPercent) {
-        track.setAttribute("aria-valuenow", String(percent));
-        drawnPercent = percent;
-      }
-    };
-    draw();
-    return () => cancelAnimationFrame(frame);
-  }, []);
+  useTiltFrame((angle) => {
+    root.current!.toggleAttribute("data-empty", angle === undefined);
+    const ratio = (angle ?? 0) / MAX_ANGLE;
+    fill.current!.style.transform = `scaleX(${ratio})`;
+    const percent = Math.round(ratio * 100);
+    if (percent !== drawnPercent.current) {
+      meter.current!.setAttribute("aria-valuenow", String(percent));
+      drawnPercent.current = percent;
+    }
+  });
 
   return (
     <div className="gauge" ref={root} data-empty="">

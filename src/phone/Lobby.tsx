@@ -46,7 +46,7 @@ export function Lobby({
   count: number;
 }) {
   const label = JOINT_LABELS[joint];
-  const remaining = Math.max(0, JOINTS.length - count);
+  const remaining = JOINTS.length - count;
   return (
     <section
       className="lobby phone-content"
@@ -57,7 +57,7 @@ export function Lobby({
       </p>
       <p className="lobby-caption">あなたの担当</p>
       <div className="joint-card">
-        <LobbyLeg thigh={joint === "rightHip" || joint === "leftHip"} />
+        <LobbyLeg thigh={label.hip} />
         <h1>{label.name}</h1>
       </div>
       <div className="lobby-controls">
@@ -69,12 +69,12 @@ export function Lobby({
       </div>
       <p className="lobby-players">
         <strong>
-          {Math.min(count, JOINTS.length)} / {JOINTS.length}人
+          {count} / {JOINTS.length}人
         </strong>
         {remaining > 0 ? <span>あと{remaining}人</span> : null}
       </p>
       {/* #89 でスタートボタンを置く場所を空けておく */}
-      {remaining === 0 ? <div className="start-slot" aria-hidden="true" /> : null}
+      {remaining <= 0 ? <div className="start-slot" aria-hidden="true" /> : null}
     </section>
   );
 }

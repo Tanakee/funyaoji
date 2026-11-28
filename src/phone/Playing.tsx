@@ -1,14 +1,26 @@
-import { useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useRef, type CSSProperties } from "react";
 import type { Joint } from "../shared/messages.ts";
 import { JointBand } from "./JointBand.tsx";
 import { JOINT_LABELS } from "./joints.ts";
-import { latestAngle, MAX_ANGLE } from "./tilt.ts";
+import { MAX_ANGLE } from "./tilt.ts";
+import { useTiltFrame } from "./useTiltFrame.ts";
 
 const STRING_X = 231;
 const ATTACH_Y = 525;
 const SCALE_TOP = 55;
 const SCALE_BOTTOM = 390;
 const SLACK_BEND = 84;
+
+/** 糸は、上の端から付け所までの2次ベジェ曲線。たるむほど、中ほどの制御点を右へずらす */
+function stringPath(bend: number): string {
+  return `M${STRING_X} 0 Q${(STRING_X + bend).toFixed(1)} ${ATTACH_Y / 2} ${STRING_X} ${ATTACH_Y}`;
+}
+
+/** 高さ y での糸の横位置。結び玉を、たるんだ糸の上に載せる。この曲線は y が媒介変数に比例する */
+function stringX(y: number, bend: number): number {
+  const t = y / ATTACH_Y;
+  return STRING_X + 2 * (1 - t) * t * bend;
+}
 
 const SCALE = (
   <g className="playing-scale">
@@ -30,46 +42,26 @@ const SCALE = (
 
 export function Playing({ joint, active }: { joint: Joint; active: boolean }) {
   const label = JOINT_LABELS[joint];
-  const thigh = joint === "rightHip" || joint === "leftHip";
   const string = useRef<SVGPathElement>(null);
   const knot = useRef<SVGGElement>(null);
   const tick = useRef<SVGLineElement>(null);
 
-  useLayoutEffect(() => {
+  useTiltFrame((angle = 0) => {
+    const tension = angle / MAX_ANGLE;
+    const bend = (1 - tension) * SLACK_BEND;
+    const y = SCALE_BOTTOM - tension * (SCALE_BOTTOM - SCALE_TOP);
+    const x = stringX(y, bend).toFixed(1);
+    const knotY = y.toFixed(1);
     const rope = string.current!;
-    const ball = knot.current!;
+    rope.setAttribute("d", stringPath(bend));
+    rope.setAttribute("stroke-width", (3 + tension * 6).toFixed(1));
+    rope.setAttribute("opacity", (0.55 + tension * 0.45).toFixed(2));
+    knot.current!.setAttribute("transform", `translate(${x} ${knotY})`);
     const marker = tick.current!;
-    let frame = 0;
-    let drawn: number | undefined;
-
-    const draw = () => {
-      frame = requestAnimationFrame(draw);
-      const angle = latestAngle() ?? 0;
-      if (angle === drawn) return;
-      drawn = angle;
-      const tension = angle / MAX_ANGLE;
-      const bend = (1 - tension) * SLACK_BEND;
-      const y = SCALE_BOTTOM - tension * (SCALE_BOTTOM - SCALE_TOP);
-      // 結び玉の横位置を糸の曲線に合わせ、緩んでも糸の上に見えるようにする
-      const t = y / ATTACH_Y;
-      const x = (STRING_X + 2 * (1 - t) * t * bend).toFixed(1);
-      const knotY = y.toFixed(1);
-
-      rope.setAttribute(
-        "d",
-        `M${STRING_X} 0 Q${(STRING_X + bend).toFixed(1)} ${ATTACH_Y / 2} ${STRING_X} ${ATTACH_Y}`,
-      );
-      rope.setAttribute("stroke-width", (3 + tension * 6).toFixed(1));
-      rope.setAttribute("opacity", (0.55 + tension * 0.45).toFixed(2));
-      ball.setAttribute("transform", `translate(${x} ${knotY})`);
-      marker.setAttribute("y1", knotY);
-      marker.setAttribute("y2", knotY);
-      marker.setAttribute("x2", x);
-    };
-
-    draw();
-    return () => cancelAnimationFrame(frame);
-  }, []);
+    marker.setAttribute("y1", knotY);
+    marker.setAttribute("y2", knotY);
+    marker.setAttribute("x2", x);
+  });
 
   return (
     <>
@@ -88,11 +80,11 @@ export function Playing({ joint, active }: { joint: Joint; active: boolean }) {
           {SCALE}
           <path
             className="playing-leg-faint"
-            d={thigh ? "M222 528 L196 583" : "M93 439 L170 474"}
+            d={label.hip ? "M222 528 L196 583" : "M93 439 L170 474"}
           />
           <path
             className="playing-leg"
-            d={thigh ? "M100 463 L221 533" : "M170 474 L225 535 H260"}
+            d={label.hip ? "M100 463 L221 533" : "M170 474 L225 535 H260"}
           />
           <line className="playing-marker" x1="154" ref={tick} />
           <path className="playing-string" ref={string} />
