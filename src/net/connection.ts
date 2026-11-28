@@ -1,6 +1,7 @@
 import type * as v from "valibot";
 import {
   HEARTBEAT,
+  ROOM_CLOSED_CODE,
   HEARTBEAT_INTERVAL_MS,
   type HeartbeatMessage,
   type RejectedMessage,
@@ -179,6 +180,15 @@ export function connect<Receive extends { type: string }, Send>(
           // playing で断られ続けているあいだは、待つ時間を延ばしていく
           attempt = 0;
         }
+        if (message.type === "room-closed") {
+          finalRejection = true;
+          options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
+          // close フレームを待たず、通知だけでも再接続とタイマーを止める。
+          generation++;
+          transport.close();
+          finish(ROOM_CLOSED_CODE, "room-closed");
+          return;
+        }
         if (message.type === "heartbeat") return;
         options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
       },
@@ -187,7 +197,7 @@ export function connect<Receive extends { type: string }, Send>(
         clearInterval(heartbeat);
         heartbeat = undefined;
         if (state.status === "closed") return;
-        if (finalRejection || code === REPLACED) finish(code, reason);
+        if (finalRejection || code === REPLACED || code === ROOM_CLOSED_CODE) finish(code, reason);
         else scheduleReconnect();
       },
     });

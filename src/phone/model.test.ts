@@ -248,3 +248,18 @@ describe("reconnectRemainingSeconds", () => {
     expect(reconnectRemainingSeconds(0, 90_000)).toBe(0);
   });
 });
+
+it("ルーム終了でおわりになり、遅い通知でも参加中に戻らない", () => {
+  const state = run([...joinedEvents, message({ type: "room-closed" })]);
+  expect(state).toEqual({ kind: "ended", joint: "leftKnee" });
+  expect(reduce(state, connection({ status: "closed", code: 4003, reason: "room-closed" }))).toBe(
+    state,
+  );
+  expect(reduce(state, message({ type: "joined", joint: "rightHip" }))).toBe(state);
+});
+
+it("ルーム終了の通知が欠けても4003でおわりになる", () => {
+  expect(
+    run([...joinedEvents, connection({ status: "closed", code: 4003, reason: "room-closed" })]),
+  ).toEqual({ kind: "ended", joint: "leftKnee" });
+});

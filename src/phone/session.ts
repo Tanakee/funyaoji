@@ -60,6 +60,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
         joined = false;
         if (state.status === "closed") {
           stopCountdown();
+          stopReading();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         }

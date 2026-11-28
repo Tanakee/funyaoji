@@ -1,0 +1,28 @@
+[project]
+name = "funyaoji-rl"
+version = "0.0.0"
+description = "ふにゃおじの強化学習（docs/ml.md）"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "cma>=3.3",
+  "gymnasium>=1.0",
+  "imageio>=2.34",
+  "imageio-ffmpeg>=0.5",
+  "mlflow>=3",
+  "numpy>=1.26",
+  "pillow>=10",
+  "stable-baselines3>=2.4",
+  "torch>=2.4",
+]
+
+[tool.uv]
+package = false
+
+# 学習は CPU で動く。Linux（CI）で GPU 用の大きい PyTorch を入れないように、CPU 用の置き場所から取る
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
