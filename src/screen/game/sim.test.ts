@@ -1,8 +1,9 @@
-import { beforeAll, describe, expect, test } from "vite-plus/test";
-import type { Joint } from "../../shared/messages.ts";
+import RAPIER from "@dimforge/rapier2d-compat";
+import { beforeAll, describe, expect, test, vi } from "vite-plus/test";
+import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { DEMO_GAIT, type Gait, gaitRecord } from "./ai/gait.ts";
 import { replay } from "./ai/record.ts";
-import { NEUTRAL_INPUTS, STEP_S } from "./body.ts";
+import { BODY_MASS, HARD_MOTOR, MOTOR, NEUTRAL_INPUTS, STEP_S } from "./body.ts";
 import { demoGait as gait } from "./demo.ts";
 import { moveInputs } from "./keyboard.ts";
 import { SIT_MS, Sim, initPhysics } from "./sim.ts";
@@ -244,19 +245,48 @@ describe("ハードの Sim", () => {
     expect(hard, `ノーマル ${normal} rad、ハード ${hard} rad`).toBeGreaterThan(normal * 2);
   });
 
-  test("練習で脚を振ると、モーターの力が弱いので、ノーマルより動きが遅い", () => {
-    const swing = (hard: boolean) => {
-      const sim = new Sim({ practice: true, hard });
-      const before = sim.readout().joints.rightHip.angle;
-      sim.advance({ ...NEUTRAL, rightHip: 1 }, 0.15);
-      const after = sim.readout().joints.rightHip.angle;
-      sim.free();
-      return after - before;
-    };
-    const normal = swing(false);
-    const hard = swing(true);
-    expect(hard).toBeGreaterThan(0);
-    expect(hard, `ノーマル ${normal} rad、ハード ${hard} rad`).toBeLessThan(normal * 0.9);
+  test.each([
+    { hard: false, motor: MOTOR },
+    { hard: true, motor: HARD_MOTOR },
+  ])(
+    "プレイ中、4つの関節すべてに、モーターの値を毎ステップ設定する（hard: $hard）",
+    ({ hard, motor }) => {
+      // Rapier の関節からは力の上限を読めないので、設定する呼び出しを横から見る。元の処理はそのまま呼ぶ
+      const maxForce = vi.spyOn(RAPIER.UnitImpulseJoint.prototype, "setMotorMaxForce");
+      const position = vi.spyOn(RAPIER.UnitImpulseJoint.prototype, "configureMotorPosition");
+      const steps = 3;
+      try {
+        const sim = new Sim({ hard });
+        sim.start();
+        maxForce.mockClear();
+        position.mockClear();
+        sim.advance(NEUTRAL, steps * STEP_S + STEP_S / 2);
+        expect(sim.state().elapsedMs).toBeCloseTo(steps * STEP_S * 1000, 6);
+        sim.free();
+
+        const handles = (contexts: unknown[]) =>
+          new Set(contexts.map((j) => (j as RAPIER.UnitImpulseJoint).handle));
+        expect(handles(maxForce.mock.contexts).size).toBe(JOINTS.length);
+        expect(handles(position.mock.contexts).size).toBe(JOINTS.length);
+        expect(maxForce.mock.calls).toEqual(
+          Array.from({ length: JOINTS.length * steps }, () => [
+            // 9.81 は sim.ts の重力。sim.ts と同じ順に掛ける
+            motor.maxForceBodyWeights * BODY_MASS * 9.81,
+          ]),
+        );
+        for (const [, stiffness, damping] of position.mock.calls) {
+          expect([stiffness, damping]).toEqual([motor.stiffness, motor.damping]);
+        }
+        expect(position.mock.calls).toHaveLength(JOINTS.length * steps);
+      } finally {
+        maxForce.mockRestore();
+        position.mockRestore();
+      }
+    },
+  );
+
+  test("ハードのモーターの力の上限は、ノーマルより小さい", () => {
+    expect(HARD_MOTOR.maxForceBodyWeights).toBeLessThan(MOTOR.maxForceBodyWeights);
   });
 
   test("お手本の歩き方は、ノーマルではゴールするが、ハードでは転ぶ", () => {
