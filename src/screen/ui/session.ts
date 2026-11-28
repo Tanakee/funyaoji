@@ -19,6 +19,7 @@ import {
   ROOM_CLOSED_CODE,
   type InputMethod,
   type Joint,
+  type Mode,
   type PhaseMessage,
   type RejectedMessage,
 } from "../../shared/messages.ts";
@@ -83,6 +84,8 @@ export interface ScreenView {
   /** つなぎ直しを待っている関節と、待つ残り秒数（切り上げ。1秒に1回だけ変わる） */
   absent: Readonly<Partial<Record<Joint, number>>>;
   game: GameState;
+  /** モード（docs/game.md の「モード」）。ロビーでだけ変えられ、プレイを始めるときの phase でスマホに知らせる */
+  mode: Mode;
   /** 操作方法（docs/game.md の「操作方法」）。ロビーでだけ変えられ、phase でスマホに知らせる */
   input: InputMethod;
   debug: DebugState;
@@ -141,6 +144,7 @@ export class ScreenSession {
     active: [],
     absent: {},
     game: "loading",
+    mode: "normal",
     input: "tilt",
     audio: { ready: false, muted: false, unavailable: false },
     recreation: { status: "idle" },
@@ -213,6 +217,15 @@ export class ScreenSession {
       teamNameError: result.success ? undefined : result.issues[0].message,
       teamName: result.success ? result.output : undefined,
     });
+  }
+
+  /**
+   * モードを変える。変えられるのはロビーだけ。スマホとサーバーには、プレイを始めるときの phase（playing）で届く。
+   * ロビーの phase には載せない（スマホはロビーでモードを使わない）
+   */
+  setMode(mode: Mode): void {
+    if (this.view.flow.kind !== "lobby" || mode === this.view.mode) return;
+    this.update({ mode });
   }
 
   /**
@@ -725,7 +738,7 @@ export class ScreenSession {
           Object.assign(this.inputs, NEUTRAL_INPUTS);
           // 前の走りで離したキーの戻りも持ち越さない。押したままのキーは、次のフレームからまた効く
           this.keyboard?.reset();
-          this.game?.reset();
+          this.game?.reset(this.view.mode);
           const kind = next.countdownKind;
           const { durationMs } = COUNTDOWNS[kind];
           const delayMs = event.delayMs ?? {};
@@ -735,7 +748,7 @@ export class ScreenSession {
           this.send({
             type: "phase",
             phase: "playing",
-            mode: "10m",
+            mode: this.view.mode,
             input: this.view.input,
             countdown: { kind, durationMs, remainingMs: leadMs + durationMs, delayMs },
           });
@@ -755,7 +768,7 @@ export class ScreenSession {
         if (next.result.outcome === "goal" && this.view.teamName) {
           this.update({ ranking: { status: "loading" } });
           void submitRanking({
-            mode: "10m",
+            mode: this.view.mode,
             input: this.view.input,
             teamName: this.view.teamName,
             timeMs: next.result.timeMs,

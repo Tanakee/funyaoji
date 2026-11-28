@@ -70,8 +70,10 @@ TODO：会場の Wi-Fi の名前と、スマホをどの回線につなぐかを
 4. 会場の回線から、ランキングが空なのを確かめる
 
 ```sh
-curl --fail --show-error 'https://funyaoji.team-sweater.workers.dev/api/rankings?mode=10m'
-# {"mode":"10m","rankings":[]} なら空
+for mode in normal hard; do for input in tilt camera; do
+  curl --fail --show-error "https://funyaoji.team-sweater.workers.dev/api/rankings?mode=$mode&input=$input"; echo
+done; done
+# 4行とも {"mode":"normal","input":"tilt","rankings":[]} のように rankings が空なら空
 ```
 
 - 前のシーズンの記録は消えずに、前の名前の Durable Object に残る。値を戻せば、また見える

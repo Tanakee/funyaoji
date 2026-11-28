@@ -240,7 +240,7 @@ kbd {
 }
 .team-name-field {
   display: grid;
-  grid-template-columns: auto minmax(0, calc(400 * var(--u)));
+  grid-template-columns: auto minmax(0, calc(320 * var(--u)));
   align-items: center;
   gap: calc(4 * var(--u)) calc(16 * var(--u));
   padding: calc(4 * var(--u)) calc(8 * var(--u));
@@ -275,7 +275,7 @@ kbd {
 .team-name-field:has([aria-invalid="true"]) p {
   color: var(--color-ink);
 }
-/* 操作方法。傾きとカメラを、2つのボタンが並んだ形で選ぶ。チーム名の欄と同じ板に載せる */
+/* モードと操作方法。2つのボタンが並んだ形で選ぶ。チーム名の欄と同じ板に載せる */
 .input-field {
   display: grid;
   grid-template-columns: auto auto auto;
@@ -294,6 +294,7 @@ kbd {
   float: left;
   margin-right: 4px;
   padding: 0;
+  white-space: nowrap;
 }
 .input-option {
   position: relative;
@@ -309,6 +310,7 @@ kbd {
   border-radius: 999px;
   background: var(--color-surface);
   cursor: pointer;
+  white-space: nowrap;
 }
 .input-option input:checked + span {
   border-color: var(--color-ink);

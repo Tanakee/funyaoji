@@ -1,5 +1,5 @@
 // ゲームの組み立て。物理（Sim）を固定の刻みで進め、描画（View）に渡し、終わりを 1 回だけ知らせる
-import type { Joint } from "../../shared/messages.ts";
+import type { Joint, Mode } from "../../shared/messages.ts";
 import type { Pose } from "./body.ts";
 import type { Scene } from "./camera.ts";
 import { Sim, initPhysics } from "./sim.ts";
@@ -19,6 +19,8 @@ declare global {
       scene: Scene;
       /** ロビーの練習で吊っているか */
       practice: boolean;
+      /** いまの走りのモード。練習のあいだは、最後に走ったモード */
+      mode: Mode;
       torso: Pose;
       /** 関節の角度（rad） */
       joints: Record<Joint, number>;
@@ -31,6 +33,8 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   const view = await createView(container);
   let sim = new Sim();
   let practicing = false;
+  // いまの走りのモード。物理演算（Sim）にはまだ渡していない。ハードの物理ができたら、reset で渡す
+  let mode: Mode = "normal";
   let reported = false;
   let stopped = false;
   let destroyed = false;
@@ -54,6 +58,7 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
         ended: state.status === "ended",
         scene,
         practice: practicing,
+        mode,
         torso: state.poses.torso,
         joints: Object.fromEntries(
           Object.entries(sim.readout().joints).map(([joint, { angle }]) => [joint, angle]),
@@ -68,7 +73,8 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   });
 
   return {
-    reset() {
+    reset(nextMode) {
+      mode = nextMode;
       sim.free();
       sim = new Sim();
       practicing = false;
