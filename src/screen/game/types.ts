@@ -1,6 +1,7 @@
 // スクリーンのゲーム（物理演算と描画）と、その外（React の UI・通信）のあいだの形（docs/design.md の「ディレクトリ構成」）
 import type { Joint, Mode, PlayResult } from "../../shared/messages.ts";
 import type { UncleArt } from "./art.ts";
+import type { BubbleStyle } from "./speech.ts";
 
 /**
  * 関節ごとの入力。0〜1 の目標の位置。
@@ -20,8 +21,12 @@ export type SeatState =
 
 export interface SeatView {
   state: SeatState;
-  /** 札の近くに部位の名前を出す（ロビー） */
+  /** 札の近くに部位の名前を出す（ロビーと遊び方） */
   showName: boolean;
+  /** 遊び方で準備OKになった部位に OK! を出す */
+  ready: boolean;
+  /** 遊び方で動かした部位の横に名前を出す */
+  moveName: boolean;
   /** キーボードで動かしているときの、キーの表示 */
   key?: string;
 }
@@ -40,6 +45,8 @@ export interface GameOptions {
   onEnd: (result: GameResult) => void;
   /** おじさんの部位画像。省略時は UNCLE_ART を使う */
   art?: UncleArt;
+  /** デバッグで吹き出しの形を切り替える。省略時は SPEECH.defaultStyle */
+  bubbleStyle?: BubbleStyle;
 }
 
 export interface Game {

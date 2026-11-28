@@ -5,6 +5,7 @@ import type { Pose } from "./body.ts";
 import type { Scene } from "./camera.ts";
 import { UncleExpression } from "./expression.ts";
 import { Sim, initPhysics } from "./sim.ts";
+import { SPEECH, SpeechPicker, speechTrigger } from "./speech.ts";
 import type { Game, GameOptions } from "./types.ts";
 import { UNCLE_ART } from "./uncle-art/uncle-art.ts";
 import { createView } from "./view.ts";
@@ -19,6 +20,7 @@ declare global {
       distanceM: number;
       elapsedMs: number;
       ended: boolean;
+      speech?: string;
       scene: Scene;
       /** ロビーの練習で吊っているか */
       practice: boolean;
@@ -31,9 +33,17 @@ declare global {
   }
 }
 
-export async function createGame({ container, inputs, onEnd, art }: GameOptions): Promise<Game> {
+export async function createGame({
+  container,
+  inputs,
+  onEnd,
+  art,
+  bubbleStyle,
+}: GameOptions): Promise<Game> {
   await initPhysics();
-  const view = await createView(container, art ?? UNCLE_ART);
+  const view = await createView(container, art ?? UNCLE_ART, { bubbleStyle });
+  const picker = new SpeechPicker();
+  let spoken = false;
   let sim = new Sim();
   let practicing = false;
   // いまの走りのモード。物理演算（Sim）にはまだ渡していない。ハードの物理ができたら、reset で渡す
@@ -69,12 +79,20 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
     if (!stopped) {
       setExpression(uncleExpression.update(inputs, performance.now(), state.result?.outcome));
     }
+    if (state.result && !spoken) {
+      spoken = true;
+      const trigger = speechTrigger(state.result, sim.readout().sittingMs);
+      if (SPEECH.showOn[trigger]) view.say(picker.next(trigger));
+    }
     view.render(state, inputs, dtSec);
     if (import.meta.env.DEV) {
       window.__funyaojiGame = {
         distanceM: state.distanceM,
         elapsedMs: state.elapsedMs,
         ended: state.status === "ended",
+        get speech() {
+          return view.speech;
+        },
         scene,
         practice: practicing,
         mode,
@@ -104,6 +122,8 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
       reported = false;
       stopped = false;
       resetExpression();
+      spoken = false;
+      view.say(undefined);
       setScene("countdown");
     },
     start() {
@@ -117,6 +137,8 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
       reported = false;
       stopped = false;
       resetExpression();
+      spoken = false;
+      view.say(undefined);
       setScene("lobby");
     },
     stop(options) {

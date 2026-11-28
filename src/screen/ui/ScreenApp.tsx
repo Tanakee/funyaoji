@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { COUNTDOWN_GUIDANCE } from "../../shared/countdown.ts";
 import { DebugControls } from "./DebugControls.tsx";
 import { DebugPanel } from "./DebugPanel.tsx";
+import { HowTo } from "./HowTo.tsx";
 import { RestartHint } from "./Hud.tsx";
 import { Lobby } from "./Lobby.tsx";
 import { OperatorControls } from "./OperatorControls.tsx";
@@ -19,6 +20,7 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
   return (
     <>
       {flow.kind === "lobby" && <Lobby session={session} view={view} />}
+      {flow.kind === "howto" && <HowTo view={view} ready={flow.ready} />}
       {flow.kind === "countdown" && (
         // key で、数字が変わるたびにアニメーションをやり直す
         <div className="overlay countdown" aria-live="assertive">

@@ -90,6 +90,57 @@ kbd {
   text-align: center;
 }
 
+/* 遊び方 */
+.howto {
+  position: absolute;
+  left: calc(50% + 100 * var(--u));
+  top: calc(var(--safe-y) + 8 * var(--u));
+  white-space: nowrap;
+}
+.howto h1 {
+  margin: 0;
+  font: 900 calc(36 * var(--u)) var(--font-display);
+}
+.howto p,
+.howto-skip {
+  margin: 0;
+}
+.howto-instruction,
+.howto-count {
+  font-size: calc(24 * var(--u));
+}
+.howto .howto-count {
+  margin-top: calc(12 * var(--u));
+}
+.howto-count strong {
+  font: 900 calc(48 * var(--u)) var(--font-display);
+}
+.howto-instruction,
+.howto-time {
+  color: var(--color-ink-soft);
+}
+.howto-time,
+.howto-skip {
+  font-size: var(--font-size-body);
+}
+/* 運営のボタン（.operator-controls）の左に、縦の中心をそろえて置く。地面の目盛りに重なるので下地を敷く */
+.howto-skip {
+  position: fixed;
+  right: calc(max(env(safe-area-inset-right), min(4.21875vw, 81px)) + var(--operator-space));
+  bottom: calc(
+    max(env(safe-area-inset-bottom), min(5.55556vh, 60px)) + clamp(40px, 4.375vw, 84px) / 2
+  );
+  transform: translateY(50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
 /* ロビー */
 .lobby {
   display: flex;

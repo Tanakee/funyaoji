@@ -17,7 +17,7 @@ const ENDS: Record<Joint, { top: string; bottom: string }> = {
  * 関節ごとのつまみは、指（マウス）の高さがそのまま入力。スマホのいる関節は、読むだけ
  */
 export function DebugControls({ session, view }: { session: ScreenSession; view: ScreenView }) {
-  if (!view.debug.enabled || view.flow.kind === "lobby") return null;
+  if (!view.debug.enabled || view.flow.kind === "lobby" || view.flow.kind === "howto") return null;
   const { players } = view.flow;
   // つまみの上に出す、いまその関節を動かしているもの
   const driver = (joint: Joint): string =>

@@ -30,9 +30,12 @@ import {
   type ShapeSpec,
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
+import { createHowtoLabels } from "./howto-labels.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
 import { bottomRightControlsLeft, SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
+import { SPEECH, SPEECH_CHARS, type BubbleStyle } from "./speech.ts";
+import { createSpeechBubble, DISPLAY_FONT_FAMILY } from "./speech-bubble.ts";
 import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
 import type { JointInputs, Seats, SeatState } from "./types.ts";
 
@@ -82,7 +85,6 @@ const LAYOUT = {
     "'Zen Kaku Gothic New', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif",
 };
 
-const DISPLAY_FONT_FAMILY = "'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif";
 type FontState = "loaded" | "fallback";
 const HUD_FONT_NAME: Record<FontState, string> = {
   loaded: "funyaoji-hud",
@@ -105,12 +107,16 @@ function hudFontName(state: FontState): string {
   return name;
 }
 
+// Canvas に Zen Kaku Gothic New で描く字をすべて入れる。フォントは字の範囲ごとのファイルに分かれていて、
+// document.fonts.load は渡した字を含むファイルしか読まない。ここに無い字は、代替フォントで描かれることがある
+const GOTHIC_CHARS = "0123456789 mQWOPスタートゴール左右ひざももあと秒OK!";
+
 async function loadViewFonts(): Promise<boolean> {
   try {
     const faces = await Promise.all([
-      document.fonts.load('900 64px "Zen Old Mincho"', "0123456789.m秒"),
-      document.fonts.load('700 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
-      document.fonts.load('900 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
+      document.fonts.load('900 64px "Zen Old Mincho"', `0123456789.m秒${SPEECH_CHARS}`),
+      document.fonts.load('700 24px "Zen Kaku Gothic New"', GOTHIC_CHARS),
+      document.fonts.load('900 24px "Zen Kaku Gothic New"', GOTHIC_CHARS),
     ]);
     return faces.every((face) => face.length > 0);
   } catch {
@@ -125,6 +131,9 @@ export interface View {
   onFrame(callback: (dtSec: number) => void): void;
   setSeats(seats: Seats): void;
   setExpression(expression: Expression): void;
+  /** おじさんの台詞を出す。undefined なら消す */
+  say(text: string | undefined): void;
+  readonly speech: string | undefined;
   render(state: SimState, inputs: JointInputs, dtSec: number): void;
   destroy(): void;
 }
@@ -300,7 +309,11 @@ function drawString(
     .stroke({ width: 2, color: COLORS.seatOutline, alpha: look.alpha });
 }
 
-export async function createView(container: HTMLElement, art: UncleArt = {}): Promise<View> {
+export async function createView(
+  container: HTMLElement,
+  art: UncleArt = {},
+  options: { bubbleStyle?: BubbleStyle } = {},
+): Promise<View> {
   const loaded = await loadUncleArt(art);
   const app = new Application();
   await app.init({
@@ -326,7 +339,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   observer.observe(container);
 
   const backdrop = createBackdrop(app.renderer);
-  // 重なりの順：ルーラー（地面と目盛り）→ おじさん → 糸と札 → HUD
+  // 重なりの順：ルーラー（地面と目盛り）→ おじさん → 糸と札 → 吹き出し → HUD
   const ruler = new Graphics();
   const labelLayer = new Container();
   const rulerLabels = new Map<string, Text>();
@@ -431,6 +444,9 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   const markers = new Container();
   const tags = new Container();
   seatLayer.addChild(strings, markers, tags);
+  const howtoLabels = createHowtoLabels(seatLayer, COLORS, (text, color) =>
+    label(text, 20, color, true),
+  );
   const tiltGlow = new TiltGlow();
   const seatCaption = (text: string) => {
     const caption = label(text, 20, COLORS.seatText, true);
@@ -488,6 +504,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     };
   });
 
+  const bubble = createSpeechBubble(options.bubbleStyle ?? SPEECH.defaultStyle);
   app.stage.addChild(
     backdrop.back,
     backdrop.ground,
@@ -495,6 +512,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     labelLayer,
     world,
     seatLayer,
+    bubble.container,
     hud,
     route,
   );
@@ -549,6 +567,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       graphics.captions.addChild(graphics.detail);
     });
     if (currentSeats) setSeats(currentSeats);
+    howtoLabels.rebuildTexts();
   }
   if (fontState === "timeout") {
     void fontsLoaded.then((loaded) => {
@@ -587,6 +606,17 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       parts[name].node.position.set(pose.x, pose.y);
       parts[name].node.rotation = pose.rot;
     }
+    const torso = state.poses.torso;
+    const headOffset = TORSO_SIZE.hh + TORSO_SIZE.headR;
+    bubble.update({
+      headX: screenX(torso.x - headOffset * Math.sin(torso.rot)),
+      headY: groundY - (torso.y + headOffset * Math.cos(torso.rot)) * pxPerM,
+      headRadius: TORSO_SIZE.headR * pxPerM,
+      width: w,
+      height: h,
+      ui,
+      nowMs: performance.now(),
+    });
 
     seatLayer.scale.set(ui);
     seatLayer.x = w / 2;
@@ -610,6 +640,16 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       const pose = state.poses[STRING_ANCHORS[joint].part];
       const input = seat.kind === "joined" ? inputs[joint] : undefined;
       const glow = tiltGlow.update(joint, input, dtSec);
+      howtoLabels.update(
+        joint,
+        currentSeats?.[joint],
+        {
+          x: (screenX(pose.x) - seatLayer.x) / ui,
+          y: (groundY - pose.y * pxPerM) / ui,
+        },
+        glow,
+        dtSec,
+      );
       partGlow.visible = glow > 0;
       partGlow.alpha = glow * line.alpha;
 
@@ -623,6 +663,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       drawString(line, cx, x, y, color, glowColor, stringLook(input ?? 0), glow);
       marker.position.set(x, y);
     });
+    howtoLabels.finishFrame();
 
     // 1m ごとの杭は backdrop が描く。数字はプレイ中だけ、紙色の下地を敷いて出す
     ruler.clear();
@@ -699,9 +740,17 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     render,
     setSeats,
     setExpression,
+    say(text) {
+      bubble.say(text, performance.now());
+    },
+    get speech() {
+      return bubble.text;
+    },
     destroy() {
       observer.disconnect();
+      bubble.destroy();
       backdrop.destroy();
+      howtoLabels.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };
