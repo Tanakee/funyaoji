@@ -18,8 +18,9 @@ sequenceDiagram
   S-->>P: joined
   S-->>C: room
   Note over C: 4人が参加し、PC で開始
-  C->>S: phase（playing）
-  S-->>P: phase（playing）
+  C->>S: phase（playing、countdown 付き）
+  S-->>P: phase（playing、countdown 付き）
+  Note over P,C: スマホは自分の関節の片道の遅延を残り時間から引く
   loop 毎秒30回
     P->>S: tilt
     S-->>C: tilt（joint を付与）
@@ -74,7 +75,7 @@ sequenceDiagram
 
 ### GET /api/rooms/&lt;ルームコード&gt;/ws
 
-WebSocket で接続する。クエリパラメータ `role` に、スクリーンは `screen`、スマホは `phone` を指定する。スマホは、クエリパラメータ `client` に自分の ID を付けられる（「スマホの ID と関節の予約」を参照）。接続後、スマホは `joined` か `rejected` を、スクリーンは `room` か `rejected` を受信する。サーバーが `phase` を保持していれば、スマホは `joined` のあと、スクリーンは `room` のあとに、最後の `phase` を受信する。スマホは、`joined`・`phase`（保持していれば）・`room` の順に受信する。
+WebSocket で接続する。クエリパラメータ `role` に、スクリーンは `screen`、スマホは `phone` を指定する。スマホは、クエリパラメータ `client` に自分の ID を付けられる（「スマホの ID と関節の予約」を参照）。接続後、スマホは `joined` か `rejected` を、スクリーンは `room` か `rejected` を受信する。サーバーが `phase` を保持していれば、スマホは `joined` のあと、スクリーンは `room` のあとに、最後の `phase` を受信する。スマホは、`joined`・`phase`（保持していれば）・`room` の順に受信する。スマホに送るときは、カウントダウンの残り時間を計算し直す（「phase」を参照）。
 
 - ルームが無いとき、スマホもスクリーンも `rejected`（`no-room`）を受信し、接続が閉じる
 - プレイ中（サーバーが最後に受信した `phase` が `playing`）のとき、スマホは `rejected`（`playing`）を受信し、接続が閉じる。`phase` が `result` か `lobby` に変わると、また参加できる。ただし、戻ってきたスマホ（下の「スマホの ID と関節の予約」）は断らない
@@ -228,16 +229,30 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `phase` | `string` | `lobby`：ロビー。`playing`：プレイ中。`result`：結果 |
+| `phase` | `string` | `lobby`：ロビー。`playing`：カウントダウンかプレイ中。`result`：結果 |
 | `mode` | `string` | `playing` のときだけ。現在は `10m` のみ |
+| `countdown` | `object` | `playing` のときだけ。無ければプレイ中 |
+| `countdown.kind` | `string` | `count` は「3・2・1、GO!」、`readyGo` は「よーい、ドン！」 |
+| `countdown.durationMs` | `number` | カウントダウンの長さ。`count` は3000ms、`readyGo` は1500ms |
+| `countdown.remainingMs` | `number` | 送信時点で開始までに残っている時間（ミリ秒） |
+| `countdown.delayMs` | `Partial<Record<Joint, number>>` | 関節ごとの片道の遅延（ミリ秒、0以上の整数）。計測できていない関節は省く |
 | `result.outcome` | `string` | `result` のときだけ。`goal`：ゴール。`fell`：転倒。`disconnected`：切断（切れたスマホが60秒の予約のうちにつなぎ直さなかった） |
 | `result.distanceM` | `number` | 進んだ距離（m）。後ろに進むと負の値 |
 | `result.timeMs` | `number` | ゴールまでの時間（ミリ秒）。`goal` のときだけ |
 
 ```json
+{ "type": "phase", "phase": "playing", "mode": "10m",
+  "countdown": { "kind": "count", "durationMs": 3000, "remainingMs": 3130,
+                 "delayMs": { "rightHip": 42, "leftKnee": 130 } } }
 { "type": "phase", "phase": "playing", "mode": "10m" }
 { "type": "phase", "phase": "result", "result": { "outcome": "goal", "distanceM": 10, "timeMs": 32500 } }
 ```
+
+- スクリーンはカウントダウンを始めるとき、`delayMs` に、その時点で分かっている `ping`・`pong` の片道の遅延を入れる。中央値を使い、無ければ直近の値を使う
+- スクリーンは、`delayMs` のいちばん大きい値（1000ms まで）だけ待ってから、最初の表示（「3」「よーい」）を出す。`remainingMs` は、その待つ時間に `durationMs` を足した値。待たないと、遅いスマホは `phase` が届くまで最初の表示を出せず、そのぶん遅れる
+- `durationMs` と `remainingMs` は、どちらも0〜10000の有限の数を受け付ける
+- サーバーはこの `phase` をそのままスマホに中継する。サーバーの受信時刻に `remainingMs` を足し、カウントダウンの終了時刻として `phase` とともに保存する。ほかの `phase` が届いたら、保存した終了時刻を消す
+- スマホは、`remainingMs` から自分の関節の `delayMs`（0〜1000ms に収め、値が無ければ0）を引き、受信時刻に足して開始時刻を決める。`durationMs` と開始までの時間から、いまの表示を選ぶ。開始時刻から `durationMs` を引いた時刻（最初の表示）より前は、数字を出さない。開始時刻を過ぎて届いたときは、すぐにプレイ中の画面を出す。受信してからの時間をスマホ自身の時計で数えるので、端末どうしで時計を合わせる必要はない
 
 ### tilt
 
@@ -331,6 +346,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 - スマホの `tilt` のシーケンス番号は、ページを開いた時刻（ミリ秒）から数え始める（`createTiltSeq()`）。読み込み直しても、前の番号より必ず大きくなる。毎秒30しか増えないので、時計を追い越さない
 - スクリーンは、関節ごとの受信済みのシーケンス番号を、抜けた関節のぶんは `room` を受け取ったときに忘れ、つなぎ直したら全部忘れる。切れているあいだに関節の担当が入れ替わると、その関節は `room` から一度も抜けないことがあるため
 - スクリーンは、つなぎ直したら、遅延の計測（関節ごとの値と、返事を待っている `ping`）を全部忘れる。理由はシーケンス番号と同じ
+- スマホがつなぎ直したとき、サーバーは保存したカウントダウンの終了時刻から現在時刻を引く。残りが0より大きければ、ミリ秒の値を整数に丸めて `countdown.remainingMs` に入れ、ほかのフィールドはそのまま送る。スマホは再送でも同じ遅延を引く。保存した終了時刻には、最初のメッセージがスクリーンからサーバーに届くまでの時間も含まれるため。残りが0以下なら、`countdown` を省いた `phase`（`playing`）を送る。スクリーンには保存した `phase` をそのまま送る
 - プレイ中に切れたスクリーンは、つなぎ直して `phase`（`playing`）を受け取ったら、`phase`（`lobby`）を送り直す。プレイを途中から続けることはしない。ただし、結果の画面を出していれば（切れていて `phase`（`result`）を送れなかったとき）、`phase`（`result`）を送り直す
 
 閉じ方ごとのクライアントの動き：
@@ -386,7 +402,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | 戻ってきたスマホは、プレイ中でも断らない | 新しく参加するのではなく、同じ担当に戻るだけなので、「プレイの途中で担当が変わらない」に反しない |
 | ID を確かめない | ID を知っていれば、ほかの人がその関節を横取りできる。ハッカソンでは問題にしない |
 | プレイ中は参加を受け付けない | プレイの途中で担当が変わらない |
-| 接続したスマホとスクリーンに、最後の `phase` を送る | 途中で参加したスマホと、同じルームにつなぎ直したスクリーンが、ルームの状態を知れる。スクリーンが接続のたびに `phase` を送り直す案もあるが、送り忘れるとスマホが止まる |
+| 接続したスマホとスクリーンに、最後の `phase` を送る。スマホ向けのカウントダウンは残り時間を更新する | 途中で参加したスマホと、同じルームにつなぎ直したスクリーンが、ルームの状態を知れる。カウントダウン中に戻ったスマホは、残り時間に合う表示から再開できる |
 | プレイ中にスクリーンが切れても、サーバーは `phase` を変えない | 状態はスクリーンが決める。同じルームにつなぎ直したスクリーンが、受け取った `phase` を見て決める（今は、プレイ中だったら `lobby` を送り直す。「つなぎ直し」を参照）。新しいルームを作ったときは、古いルームは誰もいなくなって10分たつと消える |
 | 切れた接続は、ハートビートが届かなくなったことで見分ける | 画面のロックや電波切れでは、close が届かない。関節を持ったまま残ると、次の人が参加できない |
 | ハートビートはサーバーのランタイムが自動で返す | ハートビートのたびに Durable Object を起こさない |

@@ -39,6 +39,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
     room,
     {
       onMessage(message) {
+        const at = performance.now();
         if (message.type === "joined") {
           joined = true;
           holdingJoint = true;
@@ -52,7 +53,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         }
-        emit({ type: "message", message });
+        emit({ type: "message", message, at });
       },
       onStateChange(state) {
         stopSending?.();
