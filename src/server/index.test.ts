@@ -174,6 +174,23 @@ describe("GET /api/ping", () => {
   });
 });
 
+describe("GET /api/rooms/:roomCode", () => {
+  test("存在・小文字・不正なコード・終了済みを区別し、参加枠を取らない", async () => {
+    const roomCode = await createRoom();
+    const check = (code: string) => fetch(new URL(`/api/rooms/${code}`, serverUrl));
+    const response = await check(roomCode.toLowerCase());
+    expect(response.status).toBe(204);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect((await check("INVALID")).status).toBe(404);
+    const screen = new Client(roomCode, "screen");
+    expect(await screen.next()).toEqual({ type: "room", roomCode, joints: [] });
+    await screen.send(JSON.stringify({ type: "close-room" }));
+    expect(await screen.next()).toEqual({ type: "room-closed" });
+    expect((await check(roomCode)).status).toBe(404);
+    await screen.close();
+  });
+});
+
 describe("GET /api/rooms/:roomCode/ws", () => {
   test("Upgrade のヘッダーが無ければ 426 を返す", async () => {
     const roomCode = await createRoom();
