@@ -18,10 +18,11 @@ export interface ModeSettings {
 
 /**
  * モードごとの設定。キーはゲームのモード（src/shared/messages.ts の MODES）と同じ値。
- * まだ物理の無いモードは載せない（ハードは物理ができてから足す）
+ * まだ物理の無いモードは載せない
  */
 export const MODE_SETTINGS = {
   normal: { sim: {} },
+  hard: { sim: { hard: true } },
 } as const satisfies Partial<Record<Mode, ModeSettings>>;
 
 /** 一覧に載っているモード */
