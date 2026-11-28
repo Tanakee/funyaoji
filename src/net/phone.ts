@@ -25,6 +25,21 @@ export function phoneClientId(storage: KeyValueStorage | undefined = session()):
   return clientId;
 }
 
+/**
+ * スマホの ID を作り直す。次の phoneClientId() から新しい ID を返す。
+ * 順番待ちを、サーバーに届けられないまま（切れているあいだに）やめたときに使う。
+ * サーバーに残った列の位置を、次に参加したときに引き継がないため
+ */
+export function renewPhoneClientId(storage: KeyValueStorage | undefined = session()): string {
+  clientId = crypto.randomUUID();
+  try {
+    storage?.setItem(CLIENT_ID_KEY, clientId);
+  } catch {
+    // 覚えられなくても、このページを開いているあいだは、モジュールに覚えた ID を使う
+  }
+  return clientId;
+}
+
 /** このページで一度決めた ID */
 let clientId: string | undefined;
 

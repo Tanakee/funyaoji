@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import type { TransportHandlers } from "../net/transport.ts";
 import type { PhoneEvent } from "./model.ts";
+import { phoneClientId } from "../net/phone.ts";
 import { startSession } from "./session.ts";
 
 const opened: { handlers: TransportHandlers; closed: boolean; sent: string[] }[] = [];
@@ -263,6 +264,28 @@ test.each(["full", "playing"])(
     expect(opened).toHaveLength(13);
   },
 );
+
+test("切れているあいだに順番待ちをやめると、leave を送れないので ID を作り直す", () => {
+  const before = phoneClientId();
+  const session = startSession("K7Q2", () => {});
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onMessage(JSON.stringify({ type: "queued", reason: "full" }));
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  session.withdraw();
+  expect(opened[0]!.sent).toEqual([]);
+  expect(phoneClientId()).not.toBe(before);
+  vi.advanceTimersByTime(60_000);
+  expect(opened).toHaveLength(1);
+});
+
+test("つながっているあいだに順番待ちをやめたら、ID は変えない", () => {
+  const before = phoneClientId();
+  const session = startSession("K7Q2", () => {});
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onMessage(JSON.stringify({ type: "queued", reason: "full" }));
+  session.withdraw();
+  expect(phoneClientId()).toBe(before);
+});
 
 test("列で待っているあいだに joined が届いたら、同じ接続で送れるようになる", () => {
   const session = startSession("K7Q2", () => {});

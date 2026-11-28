@@ -1,6 +1,6 @@
 // ルームにつないでいるあいだ、React の外でやること：接続、入力（傾きかカメラ）の読み取りと tilt の送信、画面を消さないこと
 import { connectPhone } from "../net/client.ts";
-import { createTiltSeq, phoneClientId } from "../net/phone.ts";
+import { createTiltSeq, phoneClientId, renewPhoneClientId } from "../net/phone.ts";
 import type {
   InputMethod,
   Joint,
@@ -19,7 +19,10 @@ const ALIVE_INTERVAL_MS = 1_000;
 interface PhoneSession {
   stop(): void;
   leave(): void;
-  /** 順番待ちをやめる。参加列から抜けたことをサーバーに知らせてから閉じる。列の位置を予約させない */
+  /**
+   * 順番待ちをやめる。参加列から抜けたことをサーバーに知らせてから閉じる。列の位置を予約させない。
+   * 切れていて知らせられなければ、ID を作り直す。サーバーに残った列の位置を、次に参加したときに引き継がない
+   */
   withdraw(): void;
   send(message: StartMessage | RetryMessage | ReadyMessage): boolean;
   /** 操作方法を切り替える。スクリーンが phase で知らせてくる。同じものなら何もしない */
@@ -176,7 +179,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
       stopReading();
     },
     withdraw() {
-      connection.send({ type: "leave" });
+      if (!connection.send({ type: "leave" })) renewPhoneClientId();
       this.stop();
     },
     leave() {
