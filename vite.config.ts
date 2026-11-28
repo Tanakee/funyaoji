@@ -34,7 +34,8 @@ export default defineConfig({
     ],
   },
   fmt: {
-    ignorePatterns: ["**/*.md", ".github/**"],
+    // theory.json は学習の道具（ml/）が書き出す。数の列なので、1行のままにする
+    ignorePatterns: ["**/*.md", ".github/**", "src/screen/game/ai/theory.json"],
   },
   lint: {
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
