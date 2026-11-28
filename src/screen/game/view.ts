@@ -6,10 +6,13 @@ import {
   CanvasTextMetrics,
   Container,
   Graphics,
+  Sprite,
   Text,
   type ColorSource,
 } from "pixi.js";
 import { JOINT_DISPLAY, SEATS } from "../../shared/joints.ts";
+import { loadUncleArt, type LoadedImage } from "./art-load.ts";
+import { imageTransform, type ArtSlot, type Expression, type UncleArt } from "./art.ts";
 import { BACKDROP_COLORS, createBackdrop } from "./backdrop.ts";
 import {
   INITIAL_POSES,
@@ -53,6 +56,13 @@ const LABEL_LINE = 28;
 
 // 左の脚を奥に、右の脚を手前に描く
 const DRAW_ORDER: PartName[] = ["leftThigh", "leftShin", "torso", "rightThigh", "rightShin"];
+const PART_ART_SLOTS: Record<PartName, Exclude<ArtSlot, "head">> = {
+  torso: "torso",
+  leftThigh: "thigh",
+  rightThigh: "thigh",
+  leftShin: "shin",
+  rightShin: "shin",
+};
 
 const LAYOUT = {
   /** 画面の幅に入れたい長さ（m）。高さが足りないときは縮む */
@@ -105,6 +115,7 @@ export interface View {
   /** 描画のたびに呼ばれる。dtSec は前のフレームからの実時間 */
   onFrame(callback: (dtSec: number) => void): void;
   setSeats(seats: Seats): void;
+  setExpression(expression: Expression): void;
   render(state: SimState, inputs: JointInputs, dtSec: number): void;
   destroy(): void;
 }
@@ -128,25 +139,49 @@ function drawShape(g: Graphics, shape: ShapeSpec): Graphics {
 function drawPart(g: Graphics, name: PartName, limbColor: ColorSource = COLORS.emptyLimb): void {
   g.clear();
   for (const shape of PART_SHAPES[name]) {
-    const color =
-      shape.tag === "foot"
-        ? COLORS.foot
-        : shape.tag === "head"
-          ? COLORS.head
-          : name === "torso"
-            ? COLORS.torso
-            : limbColor;
+    if (shape.tag === "head") continue;
+    const color = shape.tag === "foot" ? COLORS.foot : name === "torso" ? COLORS.torso : limbColor;
     drawShape(g, shape).fill(color).stroke({ width: 1.4, color: COLORS.outline });
   }
-  if (name === "torso") {
-    // 顔。進む向き（右）を向いている
-    const headY = (TORSO_SIZE.hh + TORSO_SIZE.headR) * CM;
-    g.circle(5, headY + 3, 1.6).fill(COLORS.face);
-    g.moveTo(9, headY - 1)
-      .lineTo(14, headY - 4)
-      .lineTo(9, headY - 6)
-      .stroke({ width: 1.4, color: COLORS.face });
+}
+
+function drawHead(g: Graphics): void {
+  for (const shape of PART_SHAPES.torso) {
+    if (shape.tag === "head") {
+      drawShape(g, shape).fill(COLORS.head).stroke({ width: 1.4, color: COLORS.outline });
+    }
   }
+  // 顔。進む向き（右）を向いている
+  const headY = (TORSO_SIZE.hh + TORSO_SIZE.headR) * CM;
+  g.circle(5, headY + 3, 1.6).fill(COLORS.face);
+  g.moveTo(9, headY - 1)
+    .lineTo(14, headY - 4)
+    .lineTo(9, headY - 6)
+    .stroke({ width: 1.4, color: COLORS.face });
+}
+
+function placeImage(sprite: Sprite, { image, texture }: LoadedImage, slot: ArtSlot): void {
+  const t = imageTransform(image, texture, slot);
+  sprite.anchor.set(t.anchorX, t.anchorY);
+  sprite.position.set(t.x, t.y);
+  sprite.scale.set(t.scaleX, t.scaleY);
+  sprite.rotation = t.rotation;
+}
+
+function createPartNode(image: LoadedImage | undefined, slot: ArtSlot): Graphics | Sprite {
+  if (image) {
+    const sprite = new Sprite(image.texture);
+    placeImage(sprite, image, slot);
+    return sprite;
+  }
+  const graphics = new Graphics();
+  graphics.scale.set(1 / CM);
+  return graphics;
+}
+
+function paintPart(node: Graphics | Sprite, name: PartName, color = COLORS.emptyLimb): void {
+  if (node instanceof Graphics) drawPart(node, name, color);
+  else if (name !== "torso") node.tint = color;
 }
 
 function label(text: string, size: number, color: ColorSource, bold = false): Text {
@@ -230,7 +265,8 @@ function drawString(
     .stroke({ width: 2, color: COLORS.seatOutline, alpha: look.alpha });
 }
 
-export async function createView(container: HTMLElement): Promise<View> {
+export async function createView(container: HTMLElement, art: UncleArt = {}): Promise<View> {
+  const loaded = await loadUncleArt(art);
   const app = new Application();
   await app.init({
     resizeTo: container,
@@ -272,15 +308,20 @@ export async function createView(container: HTMLElement): Promise<View> {
 
   // 世界の座標（m、上が +y）で動かす。原点の位置と拡大は、描くたびに決める
   const world = new Container();
-  const partGraphics = {} as Record<PartName, Graphics>;
+  const parts = {} as Record<PartName, { node: Container; body: Graphics | Sprite }>;
   for (const name of DRAW_ORDER) {
-    const g = new Graphics();
-    g.scale.set(1 / CM);
-    drawPart(g, name);
-    g.position.set(INITIAL_POSES[name].x, INITIAL_POSES[name].y);
-    partGraphics[name] = g;
-    world.addChild(g);
+    const node = new Container();
+    const slot = PART_ART_SLOTS[name];
+    const body = createPartNode(loaded[slot], slot);
+    paintPart(body, name);
+    node.position.set(INITIAL_POSES[name].x, INITIAL_POSES[name].y);
+    node.addChild(body);
+    parts[name] = { node, body };
+    world.addChild(node);
   }
+  const head = createPartNode(loaded.head?.normal, "head");
+  if (head instanceof Graphics) drawHead(head);
+  parts.torso.node.addChild(head);
 
   const hud = new Container();
   const distanceText = new BitmapText({
@@ -317,7 +358,7 @@ export async function createView(container: HTMLElement): Promise<View> {
     for (const shape of PART_SHAPES[part]) {
       if (shape.tag === "limb") drawShape(partGlow, shape).stroke({ width: 12, color: glowColor });
     }
-    world.addChildAt(partGlow, world.getChildIndex(partGraphics[part]));
+    world.addChildAt(partGlow, world.getChildIndex(parts[part].node));
     const line = new Graphics();
     const marker = new Graphics()
       .circle(0, 0, 14)
@@ -368,7 +409,7 @@ export async function createView(container: HTMLElement): Promise<View> {
       if (occupied !== (graphics.state.kind !== "empty")) {
         const color = occupied ? graphics.color : undefined;
         const { part } = STRING_ANCHORS[joint];
-        drawPart(partGraphics[part], part, color);
+        paintPart(parts[part].body, part, color);
         drawTag(graphics.tag, color);
       }
       graphics.state = state;
@@ -437,8 +478,8 @@ export async function createView(container: HTMLElement): Promise<View> {
     world.scale.set(pxPerM, -pxPerM);
     for (const name of PART_NAMES) {
       const pose = state.poses[name];
-      partGraphics[name].position.set(pose.x, pose.y);
-      partGraphics[name].rotation = pose.rot;
+      parts[name].node.position.set(pose.x, pose.y);
+      parts[name].node.rotation = pose.rot;
     }
 
     seatLayer.scale.set(ui);
@@ -537,6 +578,13 @@ export async function createView(container: HTMLElement): Promise<View> {
     },
     render,
     setSeats,
+    setExpression(expression) {
+      if (head instanceof Sprite && loaded.head) {
+        const image = loaded.head[expression];
+        head.texture = image.texture;
+        placeImage(head, image, "head");
+      }
+    },
     destroy() {
       observer.disconnect();
       backdrop.destroy();

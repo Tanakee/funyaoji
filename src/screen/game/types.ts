@@ -1,5 +1,6 @@
 // スクリーンのゲーム（物理演算と描画）と、その外（React の UI・通信）のあいだの形（docs/design.md の「ディレクトリ構成」）
 import type { Joint, Mode, PlayResult } from "../../shared/messages.ts";
+import type { UncleArt } from "./art.ts";
 
 /**
  * 関節ごとの入力。0〜1 の目標の位置。
@@ -37,6 +38,8 @@ export interface GameOptions {
   inputs: JointInputs;
   /** ゴール・転倒のどちらかで、1回の走りにつき1回だけ呼ぶ */
   onEnd: (result: GameResult) => void;
+  /** おじさんの部位画像。省略時は UNCLE_ART を使う */
+  art?: UncleArt;
 }
 
 export interface Game {

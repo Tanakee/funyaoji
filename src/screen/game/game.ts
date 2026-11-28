@@ -1,9 +1,11 @@
 // ゲームの組み立て。物理（Sim）を固定の刻みで進め、描画（View）に渡し、終わりを 1 回だけ知らせる
 import type { Joint, Mode } from "../../shared/messages.ts";
+import type { Expression } from "./art.ts";
 import type { Pose } from "./body.ts";
 import type { Scene } from "./camera.ts";
 import { Sim, initPhysics } from "./sim.ts";
 import type { Game, GameOptions } from "./types.ts";
+import { UNCLE_ART } from "./uncle-art/uncle-art.ts";
 import { createView } from "./view.ts";
 
 /** タブが裏に回ったあとなど、大きな間隔は物理に渡さない（1 フレームで進めすぎない） */
@@ -28,9 +30,9 @@ declare global {
   }
 }
 
-export async function createGame({ container, inputs, onEnd }: GameOptions): Promise<Game> {
+export async function createGame({ container, inputs, onEnd, art }: GameOptions): Promise<Game> {
   await initPhysics();
-  const view = await createView(container);
+  const view = await createView(container, art ?? UNCLE_ART);
   let sim = new Sim();
   let practicing = false;
   // いまの走りのモード。物理演算（Sim）にはまだ渡していない。ハードの物理ができたら、reset で渡す
@@ -38,6 +40,7 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   let reported = false;
   let stopped = false;
   let destroyed = false;
+  let expression: Expression = "normal";
   let scene: Scene = "lobby";
 
   function setScene(next: Scene): void {
@@ -50,6 +53,11 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   view.onFrame((dtSec) => {
     if (!stopped) sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
     const state = sim.state();
+    const nextExpression = state.result?.outcome === "fell" ? "fell" : "normal";
+    if (expression !== nextExpression) {
+      expression = nextExpression;
+      view.setExpression(expression);
+    }
     view.render(state, inputs, dtSec);
     if (import.meta.env.DEV) {
       window.__funyaojiGame = {
