@@ -42,7 +42,7 @@ export type PhoneState =
        * 切れてから、つなぎ直して joined を受け取るまでは reconnecting。
        * トランスポートが開いただけでは、まだ参加できていない（断られることもある）ので open にしない。
        * joined のあと、room を受け取るまでは rejoining。サーバーは joined → phase（あれば）→ room の順に送るので、
-       * room が届けばルームの状態はそろっている。phase だけを待つと、phase を一度も受け取っていないルームでは届かない。
+       * room が届けばルームの状態はそろっている。
        * reconnecting と rejoining のあいだも、関節などの表示は残す
        */
       link: "open" | "reconnecting" | "rejoining";
@@ -109,8 +109,7 @@ function onConnection(state: PhoneState, connection: ConnectionState, at: number
       // 参加し直せたかは joined で分かる
       return state;
     case "reconnecting":
-      // joined を受け取るまでに何回切れても、最初に切れた時刻を残す。
-      // joined のあとに切れたら数え直す。サーバーは joined で予約を使い、次に切れたときに新しく予約する
+      // reconnecting のあいだは、最初に切れた時刻を残す。rejoining で切れたら、サーバーが予約し直すので数え直す
       return state.kind === "joined" && state.link !== "reconnecting"
         ? { ...state, link: "reconnecting", reconnectingSince: at }
         : state;
@@ -128,8 +127,7 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
   switch (message.type) {
     case "joined":
       if (state.kind === "joined") {
-        // つなぎ直したとき。phase はこのあと届くので、届かなければロビーに戻す。
-        // つなぎ直しの画面は、room が届いてから閉じる
+        // つなぎ直したとき。phase はこのあと届くので、届かなければロビーに戻す
         return {
           ...state,
           joint: message.joint,

@@ -21,12 +21,9 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
    * 止まっているあいだもサーバーは関節を取っておく60秒を数えるので、つなぎ直しの残り秒数はこの時刻から数える
    */
   let aliveAt = Date.now();
-  /** サーバーに関節を渡されている（joined を受け取ってから、断られるまで）。切れたら、60秒のうちに戻る */
+  /** サーバーに関節を渡されている（joined を受け取ってから、断られるまで） */
   let holdingJoint = false;
-  /**
-   * つなぎ直しを数え始めた時刻。関節を渡されていて切れたときの aliveAt。joined を受け取るまで何回切れても変えない。
-   * ここから60秒たっても joined を受け取れなければ、つなぎ直しをやめる
-   */
+  /** つなぎ直しの残り秒数を数え始めた時刻。ここから60秒で諦める */
   let reconnectingSince: number | undefined;
   let giveUp: ReturnType<typeof setTimeout> | undefined;
 
@@ -68,8 +65,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
         }
         if (state.status === "reconnecting" && holdingJoint && reconnectingSince === undefined) {
           reconnectingSince = aliveAt;
-          // 60秒で、つなぎ直すのを待っていればやめる。残り秒数が 0 になるのと同じ時刻。
-          // 開いている途中の接続は切らない。サーバーが関節を返したあとに切ると、その関節をまた60秒予約させてしまう
+          // 残り秒数が 0 になる時刻に諦める。開いている途中は切らない（関節を返されたあとに切ると、また60秒予約させる）
           giveUp = setTimeout(
             () => connection.checkReconnect(),
             Math.max(0, reconnectingSince + RECONNECT_GRACE_MS - Date.now()),
@@ -87,8 +83,8 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
     {
       baseUrl: location.href,
       clientId: phoneClientId(),
-      // 予約が切れたあとにつなぐと、新しいスマホとして別の関節を取ることがあり、閉じるとその関節を60秒予約させてしまう。
-      // 止まっていたページが戻ったときは、上のタイマーより先につなぎ直すことがあるので、つなぐ前にも見る
+      // 予約が切れてからつなぐと別の関節を取り、閉じるとそれを60秒予約させる。
+      // 止まっていたページはタイマーより先につなぎ直すので、つなぐ前にも見る
       shouldReconnect: () => !deadlinePassed(),
     },
   );

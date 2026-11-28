@@ -138,7 +138,7 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
         <>
           <Joined state={state} inert={state.reconnectingSince !== undefined} />
           {state.reconnectingSince !== undefined ? (
-            // 出したまま数え直すことがある（joined のあと、room の前に切れたとき）。古い残り秒数を一度も出さないよう作り直す
+            // since が変わった直後に、古い残り秒数を出さないよう作り直す
             <Reconnecting
               key={state.reconnectingSince}
               joint={state.joint}

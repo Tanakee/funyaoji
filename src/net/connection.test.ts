@@ -154,7 +154,6 @@ test("shouldReconnect が false なら、トランスポートを開かずに閉
 
   opened[1]!.handlers.onClose({ code: 1006, reason: "" });
   expect(connection.state).toEqual({ status: "reconnecting", attempt: 2 });
-  // つなぎ直すのを待っているあいだに false になったら、待ち終わったときに開かずに閉じる
   allowed = false;
   vi.advanceTimersByTime(2000);
   expect(opened).toHaveLength(2);
@@ -162,13 +161,12 @@ test("shouldReconnect が false なら、トランスポートを開かずに閉
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test("shouldReconnect が false なら、切れたときに待たずに閉じる。checkReconnect は待っているときだけ閉じる", () => {
+test("checkReconnect は、開いている途中なら閉じず、切れたときに待たずに閉じる", () => {
   let allowed = true;
   const { connection, opened } = connectFake(() => allowed);
   opened[0]!.handlers.onOpen();
   opened[0]!.handlers.onClose({ code: 1006, reason: "" });
   vi.advanceTimersByTime(1000);
-  // 開いている途中は、checkReconnect で閉じない
   allowed = false;
   connection.checkReconnect();
   expect(opened[1]!.closed).toBe(false);
@@ -176,16 +174,17 @@ test("shouldReconnect が false なら、切れたときに待たずに閉じる
   opened[1]!.handlers.onClose({ code: 1006, reason: "" });
   expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
   expect(vi.getTimerCount()).toBe(0);
+});
 
-  // つなぎ直すのを待っているときは、checkReconnect で閉じる
-  allowed = true;
-  const waiting = connectFake(() => allowed);
-  waiting.opened[0]!.handlers.onOpen();
-  waiting.opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+test("checkReconnect は、つなぎ直すのを待っているなら閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
   allowed = false;
-  waiting.connection.checkReconnect();
-  expect(waiting.connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
-  expect(waiting.opened).toHaveLength(1);
+  connection.checkReconnect();
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(opened).toHaveLength(1);
   expect(vi.getTimerCount()).toBe(0);
 });
 

@@ -3,7 +3,6 @@ import type { TransportHandlers } from "../net/transport.ts";
 import type { PhoneEvent } from "./model.ts";
 import { startSession } from "./session.ts";
 
-/** 開いたトランスポートを順に覚える */
 const opened: { handlers: TransportHandlers; closed: boolean }[] = [];
 
 vi.mock("../net/client.ts", async (importOriginal) => {
@@ -44,7 +43,6 @@ afterEach(() => {
 
 const JOINED = JSON.stringify({ type: "joined", joint: "rightHip" });
 
-/** 参加して、切れたところまで進める */
 function joinThenDrop() {
   const events: PhoneEvent[] = [];
   const stop = startSession("K7Q2", (event) => events.push(event));
@@ -57,7 +55,7 @@ function joinThenDrop() {
 
 test("60秒たっても戻れなければ閉じる。そのあとはトランスポートを開かない", () => {
   const { stop, closed } = joinThenDrop();
-  // つなぎ直しは、どれも開かないまま10秒で切れる
+  // 開かないトランスポートは LIVENESS_TIMEOUT_MS で切れる
   vi.advanceTimersByTime(59_999);
   expect(closed()).toBe(false);
   vi.advanceTimersByTime(1);
@@ -70,7 +68,7 @@ test("60秒たっても戻れなければ閉じる。そのあとはトランス
 
 test("60秒より前に開き始めたトランスポートは、60秒で切らずに結果を待つ", () => {
   const { stop, closed } = joinThenDrop();
-  // つなぎ直しを待つ時間は 1・2・4・8・10・10…秒。8回目は 55秒に開き始める
+  // 8回目は55秒に開き始める
   vi.advanceTimersByTime(1_000);
   for (const [i, delay] of [2_000, 4_000, 8_000, 10_000, 10_000, 10_000, 10_000].entries()) {
     opened[i + 1]!.handlers.onClose({ code: 1006, reason: "" });
@@ -81,7 +79,6 @@ test("60秒より前に開き始めたトランスポートは、60秒で切ら�
   vi.advanceTimersByTime(5_500); // 60.5秒
   expect(last.closed).toBe(false);
   expect(closed()).toBe(false);
-  // サーバーは予約していた関節を返した
   last.handlers.onOpen();
   last.handlers.onMessage(JOINED);
   expect(closed()).toBe(false);

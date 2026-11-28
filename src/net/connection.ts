@@ -45,7 +45,7 @@ export interface ConnectOptions<Receive extends { type: string }> {
   onStateChange?: (state: ConnectionState) => void;
   /**
    * 切れてつなぎ直すときと、トランスポートを開く前に聞く。false なら開かずに閉じる（code は 1000）。
-   * 省くと、時間では諦めない。初めの接続では聞かない
+   * 省くと諦めない。初めの接続では聞かない
    */
   shouldReconnect?: () => boolean;
 }
@@ -148,7 +148,6 @@ export function connect<Receive extends { type: string }, Send>(
     setState({ status: "reconnecting", attempt });
   };
 
-  /** つなぎ直す。もうつなぎ直さないと言われたら、開かずに閉じる */
   const reopen = () => {
     if (options.shouldReconnect?.() === false) finish(NORMAL_CLOSURE, "");
     else open();
