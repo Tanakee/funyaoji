@@ -118,9 +118,10 @@ const frames = (n: number) => {
 const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "ABCD", joints });
 const inputs = (): JointInputs => game.inputs;
 
-async function open(audio?: ScreenAudio) {
+async function open(audio?: ScreenAudio, teamName = "テスト") {
   const { ScreenSession } = await import("./session.ts");
   const session = new ScreenSession({} as HTMLElement, false, audio);
+  if (teamName) session.setTeamName(teamName);
   session.open();
   await vi.advanceTimersByTimeAsync(10);
   handlers.onStateChange?.({ status: "open" });
@@ -128,6 +129,77 @@ async function open(audio?: ScreenAudio) {
 }
 
 describe("ScreenSession", () => {
+  it("未入力・空白だけ・不正な名前では、Space と Enter とボタンから開始できない", async () => {
+    const session = await open(undefined, "");
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    for (const name of ["", "　 ", "あ".repeat(11), "名前\n改行"]) {
+      session.setTeamName(name);
+      press("Space");
+      press("Enter");
+      session.start();
+      session.startDebug();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(session.getSnapshot().teamNameError).toBeDefined();
+    }
+    session.setTeamName("  ＡＢＣ  ");
+    press("Space");
+    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    session.dispose();
+  });
+
+  it("正規化済みのチーム名をゴール後に読めて、やり直しでも引き継ぐ", async () => {
+    const session = await open(undefined, "  ＡＢＣ  ");
+    press("Enter");
+    session.setTeamName("カウントダウン中の変更");
+    await vi.advanceTimersByTimeAsync(3000);
+    session.setTeamName("プレイ中の変更");
+    game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    session.setTeamName("結果での変更");
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    press("KeyR");
+    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    expect(session.getSnapshot().teamNameInput).toBe("  ＡＢＣ  ");
+    session.dispose();
+  });
+
+  it("チーム名は変換中の文字を保ち、共通スキーマで入力直後に検証する", async () => {
+    const session = await open();
+    session.setTeamName("  ＡＢＣ  ");
+    expect(session.getSnapshot().teamNameInput).toBe("  ＡＢＣ  ");
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    session.setTeamName("あ".repeat(11));
+    expect(session.getSnapshot().teamNameError).toBe("チーム名は10文字までです");
+    expect(session.getSnapshot().teamName).toBeUndefined();
+    session.setTeamName("家族👨‍👩‍👧‍👦");
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    session.setTeamName("\u200b");
+    expect(session.getSnapshot().teamNameError).toBeDefined();
+    session.setTeamName("名前\n改行");
+    expect(session.getSnapshot().teamNameError).toBeDefined();
+    session.dispose();
+  });
+
+  it("チーム名の入力欄で Space・Enter・R を押しても開始せず、文字を入力できる", async () => {
+    const session = await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    const target = Object.assign(new HTMLElement(), {
+      tagName: "INPUT",
+      closest: (selector: string) => (selector.includes("input") ? target : null),
+    });
+    const preventDefault = vi.fn();
+    for (const code of ["Space", "Enter", "KeyR"]) {
+      fire("keydown", code, { target, preventDefault });
+    }
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(preventDefault).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
   it("新ルームの接続と旧ルームの終了を確認するまで切り替えず、古い通知を捨てる", async () => {
     const session = await open();
     room(["rightHip"]);
