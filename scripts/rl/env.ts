@@ -165,11 +165,38 @@ export function demoRecord(seconds = 40): InputRecord {
 }
 
 /**
- * 物理の指紋（docs/ml.md の「物理の指紋」）。決まった入力の列（お手本の歩き方）を再生し、
- * 終わりの状態からハッシュを作る。実際に入っている Rapier の版も返す
+ * 関節を入力の両端（0 と 1）へ動かす、決まった入力の列。物理の指紋に使う。
+ * お手本の歩き方は入力の一部しか使わないので、入力の上限や関節の範囲を変えても、お手本だけでは指紋が変わらない。
+ * 転んで止まっても次の列は最初から再生されるよう、列ごとに分けて返す
+ */
+export function extremeRecords(): InputRecord[] {
+  const hold = (values: number[], seconds: number): number[][] =>
+    Array.from({ length: seconds * ACTION_HZ }, () => values);
+  // period 回ごとに、左右を入れ替えながら 0 と 1 を行き来する
+  const alternate = (period: number, seconds: number): number[][] =>
+    Array.from({ length: seconds * ACTION_HZ }, (_, k) => {
+      const a = Math.floor(k / period) % 2;
+      return [a, 1 - a, 1 - a, a];
+    });
+  const lists = [
+    hold([1, 1, 1, 1], 2),
+    hold([0, 0, 0, 0], 2),
+    hold([1, 1, 0, 0], 2),
+    hold([0, 0, 1, 1], 2),
+    [...hold([1, 0, 0, 1], 1), ...hold([0, 1, 1, 0], 1)],
+    alternate(15, 6),
+    alternate(4, 4),
+    alternate(1, 2),
+  ];
+  return lists.map((inputs) => ({ hz: ACTION_HZ, joints: JOINTS, inputs }));
+}
+
+/**
+ * 物理の指紋（docs/ml.md の「物理の指紋」）。決まった入力の列（お手本の歩き方と、関節を両端へ動かす列）を
+ * それぞれ再生し、終わりの状態からハッシュを作る。実際に入っている Rapier の版も返す
  */
 export function physicsFingerprint(): { fingerprint: string; rapier: string } {
-  const end = replay(demoRecord());
-  const h = createHash("sha256").update(JSON.stringify(end)).digest("hex").slice(0, 12);
+  const ends = [demoRecord(), ...extremeRecords()].map((r) => replay(r));
+  const h = createHash("sha256").update(JSON.stringify(ends)).digest("hex").slice(0, 12);
   return { fingerprint: h, rapier: RAPIER.version() };
 }
