@@ -1,6 +1,8 @@
 // スクリーンのページの React の外側。通信・入力・ゲームをつなぎ、進行（flow.ts）の遷移に合わせて副作用を起こす。
 // React には、画面を変える値（view）だけを渡す。tilt のたびに state は変えない（docs/design.md の「フロントエンド」）
+import * as v from "valibot";
 import { createRoom } from "../../net/api.ts";
+import { TeamName } from "../../shared/api.ts";
 import {
   connectScreen,
   type Connection,
@@ -77,6 +79,11 @@ export interface ScreenView {
   game: GameState;
   debug: DebugState;
   audio: AudioState;
+  /** 入力中のチーム名。正規化前の文字列を保ち、日本語の変換を妨げない */
+  teamNameInput: string;
+  teamNameError: string | undefined;
+  /** ランキング保存側が読める正規化済みの名前。入力が不正なら undefined */
+  teamName: string | undefined;
 }
 
 /** ゲームの用意ができていて、サーバーにつながっているときだけ、開始・やり直しを受け付ける */
@@ -120,6 +127,9 @@ export class ScreenSession {
     game: "loading",
     audio: { ready: false, muted: false, unavailable: false },
     debug: { enabled: false, autoplay: false },
+    teamNameInput: "",
+    teamNameError: undefined,
+    teamName: undefined,
   };
   private readonly listeners = new Set<() => void>();
   private game: Game | undefined;
@@ -166,6 +176,17 @@ export class ScreenSession {
     return () => this.listeners.delete(listener);
   };
   readonly getSnapshot = (): ScreenView => this.view;
+
+  /** 名前を編集できるのはロビーだけ。プレイ中と結果の名前は書き換えない */
+  setTeamName(teamNameInput: string): void {
+    if (this.view.flow.kind !== "lobby") return;
+    const result = v.safeParse(TeamName, teamNameInput);
+    this.update({
+      teamNameInput,
+      teamNameError: result.success ? undefined : result.issues[0].message,
+      teamName: result.success ? result.output : undefined,
+    });
+  }
 
   /** ルームを作ってつなぎ、ゲームを作る。ページに1回だけ呼ぶ */
   open(): void {
@@ -412,6 +433,11 @@ export class ScreenSession {
 
   private operate(event: FlowEvent): void {
     if (this.game === undefined || !canOperate(this.view)) return;
+    if (event.type === "start" && this.view.flow.kind === "lobby") {
+      // キーとボタン、デバッグ開始のどの経路でも、未入力・不正な名前では始めない。
+      this.setTeamName(this.view.teamNameInput);
+      if (this.view.teamName === undefined) return;
+    }
     this.dispatch(event);
   }
 
