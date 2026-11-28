@@ -46,7 +46,7 @@ export async function createGame({
   let spoken = false;
   let sim = new Sim();
   let practicing = false;
-  // いまの走りのモード。物理演算（Sim）にはまだ渡していない。ハードの物理ができたら、reset で渡す
+  // いまの走りのモード。reset で物理演算（Sim）に渡す。ロビーの練習は、モードによらずノーマルの物理で吊る
   let mode: Mode = "normal";
   let reported = false;
   let stopped = false;
@@ -117,7 +117,7 @@ export async function createGame({
     reset(nextMode) {
       mode = nextMode;
       sim.free();
-      sim = new Sim();
+      sim = new Sim({ hard: mode === "hard" });
       practicing = false;
       reported = false;
       stopped = false;
