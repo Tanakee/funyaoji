@@ -50,7 +50,7 @@ def model_name(mode: str = DEFAULT_MODE) -> str:
 
 
 def export_path(mode: str = DEFAULT_MODE) -> Path:
-    """モードの理論値の記録の場所。ゲームとテスト（theory.test.ts）はこれを読む"""
+    """モードの理論値の記録の場所。再生の一致のテスト（theory.test.ts）と fingerprint.ts が読む"""
     return EXPORT_DIR / f"{mode}.json"
 
 
