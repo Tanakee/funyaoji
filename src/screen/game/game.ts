@@ -1,4 +1,7 @@
 // ゲームの組み立て。物理（Sim）を固定の刻みで進め、描画（View）に渡し、終わりを 1 回だけ知らせる
+import type { Joint } from "../../shared/messages.ts";
+import type { Pose } from "./body.ts";
+import type { Scene } from "./camera.ts";
 import { Sim, initPhysics } from "./sim.ts";
 import type { Game, GameOptions } from "./types.ts";
 import { createView } from "./view.ts";
@@ -9,7 +12,17 @@ const MAX_FRAME_S = 0.1;
 declare global {
   interface Window {
     /** 自動の確認用。開発のときだけ、毎フレーム更新する */
-    __funyaojiGame?: { distanceM: number; elapsedMs: number; ended: boolean };
+    __funyaojiGame?: {
+      distanceM: number;
+      elapsedMs: number;
+      ended: boolean;
+      scene: Scene;
+      /** ロビーの練習で吊っているか */
+      practice: boolean;
+      torso: Pose;
+      /** 関節の角度（rad） */
+      joints: Record<Joint, number>;
+    };
   }
 }
 
@@ -17,9 +30,18 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   await initPhysics();
   const view = await createView(container);
   let sim = new Sim();
+  let practicing = false;
   let reported = false;
   let stopped = false;
   let destroyed = false;
+  let scene: Scene = "lobby";
+
+  function setScene(next: Scene): void {
+    scene = next;
+    view.setScene(scene);
+    // 自動の確認が、次のフレームを待たずに読めるように
+    if (import.meta.env.DEV && window.__funyaojiGame) window.__funyaojiGame.scene = scene;
+  }
 
   view.onFrame((dtSec) => {
     if (!stopped) sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
@@ -30,10 +52,17 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
         distanceM: state.distanceM,
         elapsedMs: state.elapsedMs,
         ended: state.status === "ended",
+        scene,
+        practice: practicing,
+        torso: state.poses.torso,
+        joints: Object.fromEntries(
+          Object.entries(sim.readout().joints).map(([joint, { angle }]) => [joint, angle]),
+        ) as Record<Joint, number>,
       };
     }
     if (state.result && !reported) {
       reported = true;
+      setScene("result");
       onEnd(state.result);
     }
   });
@@ -45,16 +74,29 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
     reset() {
       sim.free();
       sim = new Sim();
+      practicing = false;
       reported = false;
       stopped = false;
+      setScene("countdown");
     },
     start() {
       sim.start();
+      setScene("playing");
     },
-    stop() {
+    practice() {
+      sim.free();
+      sim = new Sim({ practice: true });
+      practicing = true;
+      reported = false;
+      stopped = false;
+      setScene("lobby");
+    },
+    stop(options) {
       // 描画は続けるので、止めた場所の絵が残る。終わりの知らせも出さない
       stopped = true;
       reported = true;
+      // ルームを閉じたときにも止めるので、結果の画面にするのは頼まれたときだけ
+      if (options?.showResult) setScene("result");
       return sim.state().distanceM;
     },
     destroy() {

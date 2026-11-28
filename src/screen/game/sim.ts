@@ -8,6 +8,7 @@ import {
   INITIAL_POSES,
   JOINT_SPECS,
   MOTOR,
+  NEUTRAL_INPUTS,
   PART_NAMES,
   PART_SHAPES,
   STEP_S,
@@ -27,6 +28,10 @@ export const SIT_HEIGHT_M = 1.0;
 export const SIT_MS = 3_000;
 
 const GRAVITY = 9.81;
+// 脚を振ると足の角が直立時より約 0.1 m 下まで届くので、地面に着かないよう余裕を取る
+const PRACTICE_LIFT_M = 0.2;
+// 吊った脚は、足の重みで少し傾いた所に約4秒で落ち着く。先に進めておき、練習の始めに動かしていない脚が揺れないようにする
+const PRACTICE_SETTLE_S = 5;
 // 体は地面とだけ当たる。左右の脚は互いにすり抜ける
 const GROUP_GROUND = (0x0001 << 16) | 0xffff;
 const GROUP_BODY = (0x0002 << 16) | 0x0001;
@@ -43,6 +48,45 @@ export interface SimState {
   result: GameResult | undefined;
 }
 
+/** 部位の位置・傾きと、速度・回る速さ（rad/s） */
+export interface PartMotion extends Pose {
+  vx: number;
+  vy: number;
+  w: number;
+}
+
+/** 関節の角度と回る速さ。子の部位の傾き − 親の部位の傾き（rad）。範囲は body.ts の range の向きのまま */
+export interface JointMotion {
+  angle: number;
+  speed: number;
+}
+
+/**
+ * 強化学習の観測に使う、物理の状態（docs/ml.md の「観測に要る値を読む」）。読むだけで、物理は変えない。
+ * 物理エンジンの型を含まない
+ */
+export interface SimReadout {
+  parts: Record<PartName, PartMotion>;
+  joints: Record<Joint, JointMotion>;
+  /** 足の裏の低い方の角が、地面から FOOT_CONTACT_M 以内にあるか */
+  footContact: { right: boolean; left: boolean };
+  /** 胴の中心が SIT_HEIGHT_M より低くなってからの時間（ミリ秒）。低くなければ 0 */
+  sittingMs: number;
+  distanceM: number;
+  elapsedMs: number;
+  status: RunStatus;
+}
+
+export interface SimOptions {
+  /** 物理の1ステップ（秒）。既定は STEP_S。ゲームは既定のまま使う。強化学習で刻みの影響を測るときだけ変える */
+  stepS?: number;
+  /** 胴を空中に留め、関節だけを動かす。タイムと終了判定は進めない */
+  practice?: boolean;
+}
+
+/** 足が地面に着いているとみなす高さ（m） */
+export const FOOT_CONTACT_M = 0.03;
+
 let initialized: Promise<void> | undefined;
 /** Rapier の WASM を読み込む。Sim を作る前に1回待つ（何度呼んでもよい） */
 export function initPhysics(): Promise<void> {
@@ -51,6 +95,26 @@ export function initPhysics(): Promise<void> {
 }
 
 const clamp01 = (u: number) => (Number.isFinite(u) ? Math.min(1, Math.max(0, u)) : 0);
+
+/** -π〜π に折り返す */
+function wrapAngle(a: number): number {
+  return a - 2 * Math.PI * Math.round(a / (2 * Math.PI));
+}
+
+/** すねの姿勢から、足の裏の低い方の角の高さを出す */
+function footBottom(shin: Pose): number {
+  const foot = PART_SHAPES.rightShin.find((s) => s.tag === "foot");
+  if (!foot || foot.kind !== "box") return Infinity;
+  const cos = Math.cos(shin.rot);
+  const sin = Math.sin(shin.rot);
+  let low = Infinity;
+  for (const sx of [-1, 1]) {
+    const x = foot.ox + sx * foot.hw;
+    const y = foot.oy - foot.hh;
+    low = Math.min(low, shin.y + x * sin + y * cos);
+  }
+  return low;
+}
 
 /** 胴の四隅か頭が地面に触れているか */
 function touchesGround(torso: Pose): boolean {
@@ -77,10 +141,14 @@ export class Sim {
 
   /** 胴が SIT_HEIGHT_M より低くなった時刻。低くなければ undefined */
   private sittingSinceMs: number | undefined;
+  private readonly stepS: number;
+  private readonly practice: boolean;
 
-  constructor() {
+  constructor(options: SimOptions = {}) {
+    this.stepS = options.stepS ?? STEP_S;
+    this.practice = options.practice ?? false;
     const world = new RAPIER.World({ x: 0, y: -GRAVITY });
-    world.timestep = STEP_S;
+    world.timestep = this.stepS;
     this.world = world;
 
     const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5));
@@ -91,9 +159,12 @@ export class Sim {
 
     for (const name of PART_NAMES) {
       const pose = INITIAL_POSES[name];
-      const body = world.createRigidBody(
-        RAPIER.RigidBodyDesc.dynamic().setTranslation(pose.x, pose.y),
-      );
+      const bodyDesc =
+        this.practice && name === "torso"
+          ? RAPIER.RigidBodyDesc.fixed()
+          : RAPIER.RigidBodyDesc.dynamic();
+      const y = this.practice ? pose.y + PRACTICE_LIFT_M : pose.y;
+      const body = world.createRigidBody(bodyDesc.setTranslation(pose.x, y));
       for (const s of PART_SHAPES[name]) {
         const desc =
           s.kind === "box" ? RAPIER.ColliderDesc.cuboid(s.hw, s.hh) : RAPIER.ColliderDesc.ball(s.r);
@@ -120,11 +191,14 @@ export class Sim {
       j.setLimits(Math.min(...spec.range), Math.max(...spec.range));
       this.motors[joint] = j;
     }
+    if (this.practice) {
+      for (let i = 0; i < PRACTICE_SETTLE_S / this.stepS; i++) this.step(NEUTRAL_INPUTS);
+    }
   }
 
-  /** 物理演算とタイムを進め始める。ready のときだけ効く */
+  /** 物理演算とタイムを進め始める。練習以外で ready のときだけ効く */
   start(): void {
-    if (this.status === "ready") this.status = "running";
+    if (!this.practice && this.status === "ready") this.status = "running";
   }
 
   /**
@@ -132,11 +206,11 @@ export class Sim {
    * 余りは次に回すので、フレームレートが違っても物理は変わらない
    */
   advance(inputs: JointInputs, dtSec: number): void {
-    if (this.status !== "running") return;
+    if (!this.practice && this.status !== "running") return;
     this.pending += dtSec;
-    while (this.pending >= STEP_S && this.status === "running") {
+    while (this.pending >= this.stepS && (this.practice || this.status === "running")) {
       this.step(inputs);
-      this.pending -= STEP_S;
+      this.pending -= this.stepS;
     }
   }
 
@@ -152,9 +226,10 @@ export class Sim {
       motor.configureMotorPosition(target, MOTOR.stiffness, MOTOR.damping);
       motor.setMotorMaxForce(MOTOR.maxForceBodyWeights * BODY_MASS * GRAVITY);
     }
-    this.assistTorso();
+    if (!this.practice) this.assistTorso();
 
     this.world.step();
+    if (this.practice) return;
     this.steps++;
 
     const { poses, distanceM, elapsedMs } = this.readPose();
@@ -180,8 +255,8 @@ export class Sim {
     const inertia = Math.max(1e-6, torso.principalInertia());
     const w = torso.angvel();
     const torque =
-      -(kp * (torso.rotation() + STEP_S * w) + kd * w) /
-      (1 + (STEP_S * (kd + kp * STEP_S)) / inertia);
+      -(kp * (torso.rotation() + this.stepS * w) + kd * w) /
+      (1 + (this.stepS * (kd + kp * this.stepS)) / inertia);
     torso.addTorque(torque, true);
   }
 
@@ -199,12 +274,44 @@ export class Sim {
     return {
       poses,
       distanceM: poses.torso.x,
-      elapsedMs: this.steps * STEP_S * 1000,
+      elapsedMs: this.steps * this.stepS * 1000,
     };
   }
 
   state(): SimState {
     return { ...this.readPose(), status: this.status, result: this.result };
+  }
+
+  /** 強化学習の観測に使う値を読む。物理は変えない */
+  readout(): SimReadout {
+    const { distanceM, elapsedMs } = this.readPose();
+    const parts = {} as Record<PartName, PartMotion>;
+    for (const name of PART_NAMES) {
+      const b = this.bodies[name];
+      const t = b.translation();
+      const v = b.linvel();
+      parts[name] = { x: t.x, y: t.y, rot: b.rotation(), vx: v.x, vy: v.y, w: b.angvel() };
+    }
+    const joints = {} as Record<Joint, JointMotion>;
+    for (const joint of JOINTS) {
+      const { parent, child } = JOINT_SPECS[joint];
+      joints[joint] = {
+        angle: wrapAngle(parts[child].rot - parts[parent].rot),
+        speed: parts[child].w - parts[parent].w,
+      };
+    }
+    return {
+      parts,
+      joints,
+      footContact: {
+        right: footBottom(parts.rightShin) < FOOT_CONTACT_M,
+        left: footBottom(parts.leftShin) < FOOT_CONTACT_M,
+      },
+      sittingMs: this.sittingSinceMs === undefined ? 0 : elapsedMs - this.sittingSinceMs,
+      distanceM,
+      elapsedMs,
+      status: this.status,
+    };
   }
 
   /** WASM 側のメモリを返す。このあと使わない */

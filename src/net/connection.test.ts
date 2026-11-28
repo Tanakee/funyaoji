@@ -38,7 +38,7 @@ test("開いているあいだ5秒ごとにハートビートを送り、閉じ�
 });
 
 /** 開いたトランスポートを順に覚える、偽のトランスポート */
-function connectFake() {
+function connectFake(shouldReconnect?: () => boolean) {
   const opened: { handlers: TransportHandlers; closed: boolean }[] = [];
   const received: unknown[] = [];
   const connection = connect<ServerToPhoneMessage, PhoneToServerMessage>({
@@ -54,6 +54,7 @@ function connectFake() {
     },
     schema: ServerToPhoneMessage,
     onMessage: (message) => received.push(message),
+    shouldReconnect,
   });
   return { connection, opened, received };
 }
@@ -90,40 +91,48 @@ test("思いがけず切れたら、1秒・2秒と待ってつなぎ直し、つ
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test("こちらから閉じたとき・no-room か full で断られたとき・4000 で閉じたときは、つなぎ直さない。playing で断られたときは、つなぎ直す", () => {
+test("こちらから閉じたとき・no-room で断られたとき・4000 で閉じたときは、つなぎ直さない", () => {
   const byClose = connectFake();
   byClose.opened[0]!.handlers.onOpen();
   byClose.connection.close();
   byClose.opened[0]!.handlers.onClose({ code: 1000, reason: "" });
   expect(byClose.connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
 
-  const results = [byClose];
-  for (const reason of ["no-room", "full"]) {
-    const rejected = connectFake();
-    rejected.opened[0]!.handlers.onOpen();
-    rejected.opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
-    rejected.opened[0]!.handlers.onClose({ code: 4001, reason: "" });
-    expect(rejected.connection.state).toEqual({ status: "closed", code: 4001, reason: "" });
-    results.push(rejected);
-  }
+  const rejected = connectFake();
+  rejected.opened[0]!.handlers.onOpen();
+  rejected.opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "no-room" }));
+  rejected.opened[0]!.handlers.onClose({ code: 4001, reason: "" });
+  expect(rejected.connection.state).toEqual({ status: "closed", code: 4001, reason: "" });
 
   const replaced = connectFake();
   replaced.opened[0]!.handlers.onOpen();
   replaced.opened[0]!.handlers.onClose({ code: 4000, reason: "" });
   expect(replaced.connection.state).toEqual({ status: "closed", code: 4000, reason: "" });
-  results.push(replaced);
-
-  const playing = connectFake();
-  playing.opened[0]!.handlers.onOpen();
-  playing.opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
-  playing.opened[0]!.handlers.onClose({ code: 4001, reason: "" });
 
   vi.advanceTimersByTime(60_000);
-  for (const { opened } of results) expect(opened).toHaveLength(1);
-  expect(playing.opened.length).toBeGreaterThan(1);
-  playing.connection.close();
+  for (const { opened } of [byClose, rejected, replaced]) expect(opened).toHaveLength(1);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test.each(["full", "playing"])(
+  "%s で断られたときは、待つ時間を延ばしながらつなぎ直す",
+  (reason) => {
+    const { connection, opened } = connectFake();
+    for (const [index, delay] of [1_000, 2_000, 4_000, 8_000, 10_000, 10_000].entries()) {
+      const { handlers } = opened[index]!;
+      handlers.onOpen();
+      handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
+      handlers.onClose({ code: 4001, reason: "" });
+      expect(connection.state).toEqual({ status: "reconnecting", attempt: index + 1 });
+      vi.advanceTimersByTime(delay - 1);
+      expect(opened).toHaveLength(index + 1);
+      vi.advanceTimersByTime(1);
+      expect(opened).toHaveLength(index + 2);
+    }
+    connection.close();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
 
 test("ハートビートの返事もほかのメッセージも10秒届かなければ、閉じてつなぎ直す", () => {
   const { connection, opened } = connectFake();
@@ -141,4 +150,107 @@ test("ハートビートの返事もほかのメッセージも10秒届かなけ
   vi.advanceTimersByTime(1000);
   expect(opened).toHaveLength(2);
   connection.close();
+});
+
+test("shouldReconnect が false なら、トランスポートを開かずに閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1000);
+  expect(opened).toHaveLength(2);
+
+  opened[1]!.handlers.onClose({ code: 1006, reason: "" });
+  expect(connection.state).toEqual({ status: "reconnecting", attempt: 2 });
+  allowed = false;
+  vi.advanceTimersByTime(2000);
+  expect(opened).toHaveLength(2);
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("checkReconnect は、開いている途中なら閉じず、切れたときに待たずに閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1000);
+  allowed = false;
+  connection.checkReconnect();
+  expect(opened[1]!.closed).toBe(false);
+  expect(connection.state).toEqual({ status: "reconnecting", attempt: 1 });
+  opened[1]!.handlers.onClose({ code: 1006, reason: "" });
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("checkReconnect は、つなぎ直すのを待っているなら閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  allowed = false;
+  connection.checkReconnect();
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(opened).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("表に戻って待たずにつなぎ直すときも、shouldReconnect を聞く", async () => {
+  const listeners = new Set<() => void>();
+  const page = {
+    visibilityState: "hidden",
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  };
+  // connection.ts は読み込んだときに document を覚えるので、差し替えてから読み込み直す
+  vi.stubGlobal("document", page);
+  vi.resetModules();
+  try {
+    const { connect: connectWithPage } = await import("./connection.ts");
+    const opened: TransportHandlers[] = [];
+    let allowed = true;
+    const connection = connectWithPage<ServerToPhoneMessage, PhoneToServerMessage>({
+      open(handlers) {
+        opened.push(handlers);
+        return { send: () => true, close: () => {} };
+      },
+      schema: ServerToPhoneMessage,
+      onMessage: () => {},
+      shouldReconnect: () => allowed,
+    });
+    opened[0]!.onOpen();
+    opened[0]!.onClose({ code: 1006, reason: "" });
+    expect(connection.state).toEqual({ status: "reconnecting", attempt: 1 });
+    allowed = false;
+
+    page.visibilityState = "visible";
+    for (const listener of listeners) listener();
+    expect(opened).toHaveLength(1);
+    expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+    expect(listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test.each([
+  { type: "room-closed", code: 4003 },
+  { type: "left", code: 4004 },
+])("$type で全タイマーを止め、通知が欠けても $code で再接続をやめる", ({ type, code }) => {
+  for (const notification of [true, false]) {
+    const { connection, opened, received } = connectFake();
+    opened[0]!.handlers.onOpen();
+    if (notification) opened[0]!.handlers.onMessage(JSON.stringify({ type }));
+    else opened[0]!.handlers.onClose({ code, reason: type });
+    expect(connection.state).toEqual({ status: "closed", code, reason: type });
+    if (notification) {
+      expect(received).toEqual([{ type }]);
+      expect(opened[0]!.closed).toBe(true);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(opened).toHaveLength(1);
+  }
 });

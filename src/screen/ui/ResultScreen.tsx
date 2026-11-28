@@ -37,19 +37,6 @@ export function ResultScreen({
             <span className="eyebrow-line" />
             PLAY RESULT
           </div>
-          <div className="result-illustration" aria-hidden="true">
-            <div className="illustration-sun" />
-            <div className="illustration-track track-back" />
-            <div className="illustration-track track-front" />
-            <div className="illustration-person">
-              <span className="person-head" />
-              <span className="person-body" />
-              <span className="person-arm arm-left" />
-              <span className="person-arm arm-right" />
-              <span className="person-leg leg-left" />
-              <span className="person-leg leg-right" />
-            </div>
-          </div>
           <div className="result-heading">
             <span className="result-label">{copy.label}</span>
             <h1 id="result-title">{copy.title}</h1>
@@ -77,6 +64,24 @@ export function ResultScreen({
                 {(result.timeMs / 1000).toFixed(2)}
                 <small>秒</small>
               </div>
+            </div>
+          )}
+          {outcome === "goal" && (
+            <div className="result-ranking" aria-live="polite">
+              {view.ranking.status === "loading" && <p>ランキングを保存中…</p>}
+              {view.ranking.status === "failed" && <p>ランキングを保存できませんでした</p>}
+              {view.ranking.status === "ready" && (
+                <>
+                  <p>今回の順位：{view.ranking.data.entry.rank}位</p>
+                  <ol aria-label="ランキング上位10件">
+                    {view.ranking.data.rankings.map((entry, index) => (
+                      <li key={`${entry.createdAt}-${index}`}>
+                        {entry.rank}位 {entry.teamName} {(entry.timeMs / 1000).toFixed(2)}秒
+                      </li>
+                    ))}
+                  </ol>
+                </>
+              )}
             </div>
           )}
           <div className="panel-footer">みんなで動かした、ひとつの記録。</div>

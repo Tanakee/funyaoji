@@ -1,17 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { ScreenReceived, ScreenSent } from "../../net/client.ts";
+import { createRoom, submitRanking } from "../../net/api.ts";
+import type { ConnectionState, Latency, ScreenReceived, ScreenSent } from "../../net/client.ts";
+import { GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import type { Joint } from "../../shared/messages.ts";
 import type { Game, GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
 import { ScreenSession, seatsOf, type ScreenView } from "./session.ts";
 
 const sent: ScreenSent[] = [];
+const FOUR: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
+const connections: {
+  roomCode: string;
+  handlers: typeof handlers;
+  sent: ScreenSent[];
+  closed: boolean;
+}[] = [];
 let connectionOpen = true;
-let handlers: { onMessage: (m: ScreenReceived) => void; onStateChange?: (s: unknown) => void };
+let handlers: {
+  onMessage: (m: ScreenReceived) => void;
+  onStateChange?: (s: unknown) => void;
+  onLatency: (latency: Partial<Record<Joint, Latency>>) => void;
+};
 let game: GameOptions;
 const calls: string[] = [];
 const setSeats = vi.fn<Game["setSeats"]>();
 let stopDistance = 3.2;
+/** game.stop() に渡したもの。結果の画面にするかを見る */
+const stopOptions: unknown[] = [];
 type Listener = (e: Partial<KeyboardEvent>) => void;
 /** window に付いたリスナー。セッションのキー操作と、キーボード操作（keyboard.ts）の両方が付く */
 const listeners: Record<string, Listener[]> = {};
@@ -20,13 +35,28 @@ let keyboardControls: (joint: Joint) => boolean = () => false;
 let nextFrame: FrameRequestCallback | undefined;
 let frameTime = 0;
 
-vi.mock("../../net/api.ts", () => ({ createRoom: async () => "ABCD" }));
+vi.mock("../../net/api.ts", () => ({
+  createRoom: vi.fn(async () => "ABCD"),
+  submitRanking: vi.fn(),
+}));
 vi.mock("../../net/client.ts", () => ({
-  connectScreen: (_room: string, h: typeof handlers) => {
+  connectScreen: (roomCode: string, h: typeof handlers) => {
     handlers = h;
+    const record = { roomCode, handlers: h, sent: [] as ScreenSent[], closed: false };
+    connections.push(record);
     return {
-      send: (m: ScreenSent) => connectionOpen && sent.push(m) > 0,
-      close() {},
+      send: (m: ScreenSent) => {
+        if (!connectionOpen || record.closed) return false;
+        record.sent.push(m);
+        return sent.push(m) > 0;
+      },
+      close() {
+        record.closed = true;
+        h.onStateChange?.({ status: "closed", code: 1000, reason: "" });
+      },
+      get state(): ConnectionState {
+        return record.closed ? { status: "closed", code: 1000, reason: "" } : { status: "open" };
+      },
     };
   },
 }));
@@ -49,8 +79,10 @@ vi.mock("../game/index.ts", async () => {
         setSeats,
         reset: () => calls.push("reset"),
         start() {},
-        stop: () => {
+        practice: () => calls.push("practice"),
+        stop: (options?: { showResult?: boolean }) => {
           calls.push("stop");
+          stopOptions.push(options);
           return stopDistance;
         },
         destroy() {},
@@ -62,6 +94,15 @@ vi.mock("../game/index.ts", async () => {
 beforeEach(() => {
   vi.useFakeTimers();
   sent.length = 0;
+  stopOptions.length = 0;
+  connections.length = 0;
+  vi.mocked(createRoom).mockReset().mockResolvedValue("ABCD");
+  vi.mocked(submitRanking)
+    .mockReset()
+    .mockResolvedValue({
+      entry: { rank: 1, teamName: "テスト", timeMs: 4000, createdAt: 1 },
+      rankings: [],
+    });
   calls.length = 0;
   setSeats.mockClear();
   connectionOpen = true;
@@ -102,8 +143,9 @@ const frames = (n: number) => {
 const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "ABCD", joints });
 const inputs = (): JointInputs => game.inputs;
 
-async function open(audio?: ScreenAudio) {
+async function open(audio?: ScreenAudio, teamName = "テスト") {
   const session = new ScreenSession({} as HTMLElement, false, audio);
+  if (teamName) session.setTeamName(teamName);
   session.open();
   await vi.advanceTimersByTimeAsync(10);
   handlers.onStateChange?.({ status: "open" });
@@ -121,6 +163,11 @@ describe("seatsOf", () => {
     game: "ready",
     debug: { enabled: false, autoplay: false },
     audio: { ready: false, muted: false, unavailable: false },
+    recreation: { status: "idle" },
+    ranking: { status: "idle" },
+    teamNameInput: "",
+    teamNameError: undefined,
+    teamName: undefined,
   };
 
   it("ロビーでは空席・入力中・入力なし・予約中の各席に部位名を出す", () => {
@@ -203,6 +250,386 @@ describe("ScreenSession", () => {
     session.dispose();
   });
 
+  it("ロビーでゲームができると練習を始め、スマホの傾きを受け取る", async () => {
+    const session = await open();
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(calls).toEqual(["practice"]);
+    room(["rightHip"]);
+    handlers.onMessage({ type: "tilt", joint: "rightHip", seq: 1, angle: 90 });
+    expect(inputs().rightHip).toBe(1);
+    session.dispose();
+  });
+
+  it("スタートで姿勢を戻し、結果からロビーへ戻ると練習を始める", async () => {
+    const { NEUTRAL_INPUTS } = await import("../game/body.ts");
+    const session = await open();
+    room(["rightHip", "leftKnee"]);
+    press("Enter");
+    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(calls).toEqual(["practice", "reset"]);
+    await vi.advanceTimersByTimeAsync(3000);
+    fire("keydown", "KeyW");
+    frames(1);
+    fire("keyup", "KeyW");
+    expect(inputs().leftHip).toBeGreaterThan(NEUTRAL_INPUTS.leftHip);
+    handlers.onMessage({ type: "tilt", joint: "rightHip", seq: 1, angle: 90 });
+    game.onEnd({ outcome: "fell", distanceM: 1 });
+    expect(session.getSnapshot().flow.kind).toBe("result");
+    room(["rightHip"]);
+
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(calls).toEqual(["practice", "reset", "practice"]);
+    expect(inputs()).toEqual({ ...NEUTRAL_INPUTS, rightHip: 1 });
+    session.dispose();
+  });
+
+  it("つなぎ直しを待つ関節があるままロビーに戻っても、その関節は立った姿勢の入力に戻る", async () => {
+    const { NEUTRAL_INPUTS } = await import("../game/body.ts");
+    const session = await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    press("Space");
+    await vi.advanceTimersByTimeAsync(3000);
+    room(["leftHip", "rightKnee", "leftKnee"]);
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m" });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(inputs().rightHip).toBe(NEUTRAL_INPUTS.rightHip);
+    session.dispose();
+  });
+
+  describe("スマホからの開始・やり直し", () => {
+    const four: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
+    const three = four.slice(0, 3);
+    const start = () => handlers.onMessage({ type: "start", joint: "rightHip" });
+    const retry = (joint: Joint = "rightHip") => handlers.onMessage({ type: "retry", joint });
+    const phases = () => sent.filter((message) => message.type === "phase");
+    const playing = { type: "phase", phase: "playing", mode: "10m" };
+
+    it("4人いるロビーで start を受け取ると、一度だけカウントダウンを始める", async () => {
+      const session = await open();
+      room(four);
+      start();
+      start();
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        countdownKind: "count",
+        players: four,
+      });
+      expect(phases()).toMatchObject([playing]);
+      session.dispose();
+    });
+
+    it("3人のロビーでは start を無視する", async () => {
+      const session = await open();
+      room(three);
+      start();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(phases()).toEqual([]);
+      session.dispose();
+    });
+
+    it("スクリーンがつなぎ直している間は start を無視する", async () => {
+      const session = await open();
+      room(four);
+      handlers.onStateChange?.({ status: "reconnecting" });
+      start();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(phases()).toEqual([]);
+      session.dispose();
+    });
+
+    it("4人いる結果で retry が連続して届いても、一度だけカウントダウンを始める", async () => {
+      const session = await open();
+      room(four);
+      press("Space");
+      await vi.advanceTimersByTimeAsync(3000);
+      game.onEnd({ outcome: "fell", distanceM: 1 });
+      sent.length = 0;
+      expect(session.getSnapshot().flow.kind).toBe("result");
+
+      start();
+      expect(session.getSnapshot().flow.kind).toBe("result");
+      expect(phases()).toEqual([]);
+      retry();
+      retry("leftHip");
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        countdownKind: "readyGo",
+        players: four,
+      });
+      expect(phases()).toMatchObject([playing]);
+      session.dispose();
+    });
+
+    it("3人でデバッグプレイを終えた結果では retry を無視する", async () => {
+      const session = await open();
+      room(three);
+      press("Enter");
+      await vi.advanceTimersByTimeAsync(3000);
+      game.onEnd({ outcome: "fell", distanceM: 1 });
+      sent.length = 0;
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("result");
+      expect(phases()).toEqual([]);
+      session.dispose();
+    });
+
+    it("ロビー・カウントダウン・プレイ中は retry を無視する", async () => {
+      const session = await open();
+      room(four);
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(phases()).toEqual([]);
+
+      press("Space");
+      await vi.advanceTimersByTimeAsync(1000);
+      retry();
+      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", step: { label: "2" } });
+      await vi.advanceTimersByTimeAsync(2000);
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("playing");
+      expect(phases()).toMatchObject([playing]);
+      session.dispose();
+    });
+  });
+
+  it("未入力・空白だけ・不正な名前では、Space と Enter とボタンから開始できない", async () => {
+    const session = await open(undefined, "");
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    for (const name of ["", "　 ", "あ".repeat(11), "名前\n改行"]) {
+      session.setTeamName(name);
+      press("Space");
+      press("Enter");
+      session.start();
+      session.startDebug();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(session.getSnapshot().teamNameError).toBeDefined();
+    }
+    session.setTeamName("  ＡＢＣ  ");
+    press("Space");
+    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    session.dispose();
+  });
+
+  it("正規化済みのチーム名をゴール後に読めて、やり直しでも引き継ぐ", async () => {
+    const session = await open(undefined, "  ＡＢＣ  ");
+    press("Enter");
+    session.setTeamName("カウントダウン中の変更");
+    await vi.advanceTimersByTimeAsync(3000);
+    session.setTeamName("プレイ中の変更");
+    game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    expect(submitRanking).toHaveBeenCalledExactlyOnceWith({
+      mode: "10m",
+      teamName: "ABC",
+      timeMs: 4000,
+    });
+    session.setTeamName("結果での変更");
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    press("KeyR");
+    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    expect(session.getSnapshot().teamNameInput).toBe("  ＡＢＣ  ");
+    session.dispose();
+  });
+
+  it("チーム名は変換中の文字を保ち、共通スキーマで入力直後に検証する", async () => {
+    const session = await open();
+    session.setTeamName("  ＡＢＣ  ");
+    expect(session.getSnapshot().teamNameInput).toBe("  ＡＢＣ  ");
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    expect(session.getSnapshot().teamName).toBe("ABC");
+    session.setTeamName("あ".repeat(11));
+    expect(session.getSnapshot().teamNameError).toBe("チーム名は10文字までです");
+    expect(session.getSnapshot().teamName).toBeUndefined();
+    session.setTeamName("家族👨‍👩‍👧‍👦");
+    expect(session.getSnapshot().teamNameError).toBeUndefined();
+    session.setTeamName("\u200b");
+    expect(session.getSnapshot().teamNameError).toBeDefined();
+    session.setTeamName("名前\n改行");
+    expect(session.getSnapshot().teamNameError).toBeDefined();
+    session.dispose();
+  });
+
+  it("チーム名の入力欄で Space・Enter・R を押しても開始せず、文字を入力できる", async () => {
+    const session = await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    const target = Object.assign(new HTMLElement(), {
+      tagName: "INPUT",
+      closest: (selector: string) => (selector.includes("input") ? target : null),
+    });
+    const preventDefault = vi.fn();
+    for (const code of ["Space", "Enter", "KeyR"]) {
+      fire("keydown", code, { target, preventDefault });
+    }
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(preventDefault).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("ルームを作り直すと、旧ルームで抜けた席の予約を消す", async () => {
+    const session = await open();
+    room(["leftKnee"]);
+    room([]);
+    expect(session.getSnapshot().reserved).toEqual({ leftKnee: 60 });
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    connections[0]!.handlers.onMessage({ type: "room-closed" });
+    await pending;
+    expect(session.getSnapshot().reserved).toEqual({});
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
+    session.dispose();
+  });
+
+  it("新ルームの接続と旧ルームの終了を確認するまで切り替えず、古い通知を捨てる", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    const old = connections[0]!;
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.closed).toBe(false);
+    expect(session.getSnapshot().flow.kind).toBe("playing");
+    expect(old.sent).not.toContainEqual({ type: "close-room" });
+    const next = connections[1]!;
+    next.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.sent).toContainEqual({ type: "close-room" });
+    expect(session.getSnapshot().room).toMatchObject({ roomCode: "ABCD" });
+    old.handlers.onMessage({ type: "room-closed" });
+    await pending;
+    expect(old.closed).toBe(true);
+    expect(calls).toEqual(["practice", "reset", "stop", "practice"]);
+    // ルームを閉じて止めるときは、結果の画面にしない
+    expect(stopOptions).toEqual([undefined]);
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "WXYZ" },
+      flow: { kind: "lobby" },
+      joints: [],
+      active: [],
+      recreation: { status: "idle" },
+    });
+    old.handlers.onMessage({ type: "room", roomCode: "ABCD", joints: ["leftHip"] });
+    old.handlers.onStateChange?.({ status: "reconnecting", attempt: 1 });
+    old.handlers.onMessage({ type: "tilt", joint: "leftHip", seq: 1, angle: 90 });
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "WXYZ", connection: { status: "open" } },
+      joints: [],
+    });
+    expect(session.debug.tilts).toEqual({});
+    session.dispose();
+  });
+
+  it("429 で新ルームを作れなければ、前のプレイと参加者を維持する", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    vi.mocked(createRoom).mockRejectedValueOnce(new Error("今日はもう作れません"));
+    await session.recreateRoom();
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "ABCD" },
+      flow: { kind: "playing" },
+      joints: ["rightHip"],
+      recreation: { status: "failed", message: "今日はもう作れません" },
+    });
+    expect(connections).toHaveLength(1);
+    expect(connections[0]!.closed).toBe(false);
+    expect(sent).not.toContainEqual({ type: "close-room" });
+    session.dispose();
+  });
+
+  it("新ルームにつながらなければ旧ルームを閉じず、作成の連打も受け付けない", async () => {
+    const session = await open();
+    const old = connections[0]!;
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "rejected", reason: "no-room" });
+    await pending;
+    expect(createRoom).toHaveBeenCalledTimes(2);
+    expect(old.closed).toBe(false);
+    expect(old.sent).not.toContainEqual({ type: "close-room" });
+    expect(session.getSnapshot().recreation.status).toBe("failed");
+    session.dispose();
+  });
+
+  it("旧ルーム終了の返事が無いときは新ルームを破棄し、エラーを出す", async () => {
+    const session = await open();
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await pending;
+    expect(connections[1]!.sent).toContainEqual({ type: "close-room" });
+    expect(connections[1]!.closed).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "ABCD" },
+      recreation: { status: "failed" },
+    });
+    // タイムアウト後に終了の返事が遅れても、閉じたルームでゲームを続けない。
+    connections[0]!.handlers.onMessage({ type: "room-closed" });
+    connections[0]!.handlers.onStateChange?.({
+      status: "closed",
+      code: 4003,
+      reason: "room-closed",
+    });
+    expect(calls.filter((c) => c === "stop")).toHaveLength(1);
+    expect(session.getSnapshot().room).toMatchObject({ connection: { status: "closed" } });
+    session.dispose();
+  });
+
+  it("作成中に画面を閉じたら、遅い結果で新ルームへ切り替えない", async () => {
+    const session = await open();
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    session.dispose();
+    await pending;
+    expect(connections.every((c) => c.closed)).toBe(true);
+    expect(session.getSnapshot().room).toMatchObject({ roomCode: "ABCD" });
+  });
+
+  it("4人そろっていても、ボタンのSpaceとメニュー・確認画面のキーは開始ややり直しに使わない", async () => {
+    const session = await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    const button = Object.assign(new HTMLElement(), {
+      tagName: "BUTTON",
+      closest: (selector: string): HTMLElement | null => (selector === "button" ? button : null),
+    });
+    fire("keydown", "Space", { target: button });
+    fire("keyup", "Space", { target: button });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    const menu = Object.assign(new HTMLElement(), {
+      tagName: "BUTTON",
+      closest: (selector: string): HTMLElement | null =>
+        selector.includes("[role=menu]") ? menu : null,
+    });
+    fire("keydown", "Enter", { target: menu });
+    fire("keyup", "Enter", { target: menu });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    press("Space");
+    await vi.advanceTimersByTimeAsync(3000);
+    const dialog = Object.assign(new HTMLElement(), {
+      tagName: "BUTTON",
+      closest: (selector: string): HTMLElement | null =>
+        selector.includes("dialog") ? dialog : null,
+    });
+    fire("keydown", "KeyR", { target: dialog });
+    fire("keyup", "KeyR", { target: dialog });
+    expect(session.getSnapshot().flow.kind).toBe("playing");
+    session.dispose();
+  });
+
   it("M キーで全音を切り替え、キーの長押しでは切り替えを繰り返さない", async () => {
     const audio = {
       unlock: vi.fn(),
@@ -258,12 +685,13 @@ describe("ScreenSession", () => {
     expect(audio.setPlaying).toHaveBeenLastCalledWith(true);
     press("KeyR");
     expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(audio.play.mock.calls.slice(-2)).toEqual([["countdown"], ["start"]]);
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
     expect(audio.play).toHaveBeenLastCalledWith("goal");
     expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
     press("KeyR");
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1500);
     game.onEnd({ outcome: "fell", distanceM: 1 });
     expect(audio.play).toHaveBeenLastCalledWith("fell");
     session.dispose();
@@ -434,7 +862,6 @@ describe("ScreenSession", () => {
   });
 
   describe("プレイ中に切れたスマホ", () => {
-    const FOUR: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
     async function startPlaying() {
       const session = await open();
       room(FOUR);
@@ -482,6 +909,7 @@ describe("ScreenSession", () => {
       await vi.advanceTimersByTimeAsync(1_000);
 
       expect(calls).toContain("stop");
+      expect(stopOptions).toEqual([{ showResult: true }]);
       expect(session.getSnapshot().flow).toMatchObject({
         kind: "result",
         result: { outcome: "disconnected", distanceM: 4.5 },
@@ -513,23 +941,129 @@ describe("ScreenSession", () => {
       calls.length = 0;
       press("KeyR");
 
-      expect(session.getSnapshot().flow).toEqual({ kind: "countdown", count: 3, players: FOUR });
+      expect(session.getSnapshot().flow).toEqual({
+        kind: "countdown",
+        countdownKind: "readyGo",
+        step: { label: "よーい" },
+        players: FOUR,
+      });
       expect(calls).toEqual(["reset"]);
       expect(session.getSnapshot().absent).toEqual({ leftKnee: 60 });
-      await vi.advanceTimersByTimeAsync(3_000 + 30_000);
+      await vi.advanceTimersByTimeAsync(1_500 + 30_000);
       expect(session.getSnapshot().flow.kind).toBe("playing");
     });
 
-    it("カウントダウン中のやり直しも、カウントを 3 からやり直す", async () => {
+    it("カウントダウン中のやり直しでは、元のタイマーを止めて「よーい」から始める", async () => {
       const session = await open();
       room(FOUR);
       press("Space");
       await vi.advanceTimersByTimeAsync(2_000);
-      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 1 });
+      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", step: { label: "1" } });
       press("Space");
-      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 3 });
-      await vi.advanceTimersByTimeAsync(2_500);
-      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 1 });
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        step: { label: "よーい" },
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(session.getSnapshot()).toMatchObject({
+        flow: { kind: "playing" },
+        startLabel: "ドン！",
+      });
     });
+  });
+
+  it("開始とやり直しのたびに、その時点の関節ごとの片道の遅延を送る", async () => {
+    const session = await open();
+    handlers.onLatency({
+      rightHip: { median: 42.4, latest: 50, missed: 0 },
+      leftKnee: { median: null, latest: 129.7, missed: 0 },
+      leftHip: { median: null, latest: null, missed: 1 },
+    });
+    session.startDebug();
+    handlers.onLatency({});
+    session.restart();
+    expect(sent.filter((message) => message.type === "phase")).toEqual([
+      {
+        type: "phase",
+        phase: "playing",
+        mode: "10m",
+        countdown: {
+          kind: "count",
+          durationMs: 3_000,
+          // いちばん遅い leftKnee の 130ms だけ、最初の表示を待つ
+          remainingMs: 3_130,
+          delayMs: { rightHip: 42, leftKnee: 130 },
+        },
+      },
+      {
+        type: "phase",
+        phase: "playing",
+        mode: "10m",
+        countdown: { kind: "readyGo", durationMs: 1_500, remainingMs: 1_500, delayMs: {} },
+      },
+    ]);
+  });
+
+  it("いちばん遅いスマホの遅延のぶん、最初の数字と音を待つ", async () => {
+    const audio = {
+      unlock: vi.fn(),
+      play: vi.fn(),
+      setPlaying: vi.fn(),
+      setMuted: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = await open(audio);
+    handlers.onLatency({ rightHip: { median: 200, latest: 200, missed: 0 } });
+    session.startDebug();
+    expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", step: { label: "" } });
+    expect(audio.play).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(199);
+    expect(session.getSnapshot().flow).toMatchObject({ step: { label: "" } });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getSnapshot().flow).toMatchObject({ step: { label: "3" } });
+    expect(audio.play.mock.calls).toEqual([["countdown"]]);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(session.getSnapshot().flow.kind).toBe("playing");
+  });
+
+  it("カウントダウン中にスマホが1台切れても、数え続けて GO! を出す", async () => {
+    const session = await open();
+    room(FOUR);
+    session.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    room(FOUR.filter((joint) => joint !== "leftKnee"));
+    expect(session.getSnapshot().flow).toMatchObject({
+      kind: "countdown",
+      step: { label: "2" },
+      players: FOUR,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(session.getSnapshot()).toMatchObject({
+      flow: { kind: "playing", players: FOUR },
+      startLabel: "GO!",
+      absent: { leftKnee: 58 },
+    });
+    await vi.advanceTimersByTimeAsync(GO_DISPLAY_MS - 1);
+    expect(session.getSnapshot().startLabel).toBe("GO!");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getSnapshot().startLabel).toBeUndefined();
+  });
+
+  it("タイマーが遅れても、次の数字と開始は最初の時刻から数える", async () => {
+    const session = await open();
+    session.startDebug();
+    const now = performance.now.bind(performance);
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + 250);
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(session.getSnapshot().flow).toMatchObject({ step: { label: "2" } });
+      await vi.advanceTimersByTimeAsync(750);
+      expect(session.getSnapshot().flow).toMatchObject({ step: { label: "1" } });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(session.getSnapshot().flow.kind).toBe("playing");
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

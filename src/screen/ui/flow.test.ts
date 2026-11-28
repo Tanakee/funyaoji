@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { countdownStep } from "../../shared/countdown.ts";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
 
@@ -13,7 +14,8 @@ describe("reduce", () => {
   it("4台そろえば、スペースで開始できる", () => {
     expect(run([{ type: "start", joints: all, debug: false }])).toEqual({
       kind: "countdown",
-      count: 3,
+      countdownKind: "count",
+      step: { label: "3", untilMs: 1_000 },
       players: all,
     });
   });
@@ -28,11 +30,24 @@ describe("reduce", () => {
   it("3・2・1 のあとプレイになり、ゴールで結果になる", () => {
     const flow = run([
       { type: "start", joints: all, debug: false },
-      { type: "tick" },
-      { type: "tick" },
+      { type: "tick", elapsedMs: 1_000 },
+      { type: "tick", elapsedMs: 2_000 },
     ]);
-    expect(flow).toEqual({ kind: "countdown", count: 1, players: all });
-    expect(run([{ type: "tick" }, { type: "ended", result: goal }], flow)).toEqual({
+    expect(flow).toEqual({
+      kind: "countdown",
+      countdownKind: "count",
+      step: { label: "1" },
+      players: all,
+    });
+    expect(
+      run(
+        [
+          { type: "tick", elapsedMs: 3_000 },
+          { type: "ended", result: goal },
+        ],
+        flow,
+      ),
+    ).toEqual({
       kind: "result",
       result: goal,
       players: all,
@@ -45,9 +60,16 @@ describe("reduce", () => {
 
   it("結果からやり直すと、同じ players でカウントダウンになる", () => {
     const result: Flow = { kind: "result", result: goal, players: ["leftHip"] };
-    expect(run([{ type: "restart" }], result)).toEqual({
+    const ready = run([{ type: "restart" }], result);
+    expect(ready).toEqual({
       kind: "countdown",
-      count: 3,
+      countdownKind: "readyGo",
+      step: { label: "よーい" },
+      players: ["leftHip"],
+    });
+    expect(run([{ type: "tick", elapsedMs: 1_499 }], ready)).toBe(ready);
+    expect(run([{ type: "tick", elapsedMs: 1_500 }], ready)).toEqual({
+      kind: "playing",
       players: ["leftHip"],
     });
   });
@@ -55,7 +77,12 @@ describe("reduce", () => {
   it("プレイ中とカウントダウン中は、players の誰かが抜けても戻さない（つなぎ直しを待つ）", () => {
     const joints = all.filter((joint) => joint !== "leftKnee");
     const states: Flow[] = [
-      { kind: "countdown", count: 2, players: all },
+      {
+        kind: "countdown",
+        countdownKind: "count",
+        step: countdownStep("count", 1_000),
+        players: all,
+      },
       { kind: "playing", players: all },
     ];
     for (const state of states) {
@@ -73,9 +100,14 @@ describe("reduce", () => {
     const players = ["leftHip"] as const;
     for (const state of [
       { kind: "playing", players },
-      { kind: "countdown", count: 1, players },
+      { kind: "countdown", countdownKind: "count", step: countdownStep("count", 2_000), players },
     ] satisfies Flow[]) {
-      expect(run([{ type: "restart" }], state)).toEqual({ kind: "countdown", count: 3, players });
+      expect(run([{ type: "restart" }], state)).toEqual({
+        kind: "countdown",
+        countdownKind: "readyGo",
+        step: { label: "よーい" },
+        players,
+      });
     }
     expect(run([{ type: "restart" }])).toEqual(INITIAL_FLOW);
   });

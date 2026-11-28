@@ -1,6 +1,9 @@
 // スクリーンのページの React の外側。通信・入力・ゲームをつなぎ、進行（flow.ts）の遷移に合わせて副作用を起こす。
 // React には、画面を変える値（view）だけを渡す。tilt のたびに state は変えない（docs/design.md の「フロントエンド」）
-import { createRoom } from "../../net/api.ts";
+import * as v from "valibot";
+import { createRoom, submitRanking } from "../../net/api.ts";
+import type { SubmitRankingResponse } from "../../shared/api.ts";
+import { TeamName } from "../../shared/api.ts";
 import {
   connectScreen,
   type Connection,
@@ -8,9 +11,12 @@ import {
   type Latency,
   type ScreenReceived,
   type ScreenSent,
+  type ScreenHandlers,
 } from "../../net/client.ts";
+import { COUNTDOWNS, countdownLeadMs, GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import {
   JOINTS,
+  ROOM_CLOSED_CODE,
   type Joint,
   type PhaseMessage,
   type RejectedMessage,
@@ -30,7 +36,8 @@ import {
   type Seats,
   type SeatView,
 } from "../game/types.ts";
-import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
+import { INITIAL_FLOW, isFull, reduce, type Flow, type FlowEvent } from "./flow.ts";
+import { prepareScreen } from "./roomConnection.ts";
 import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
 
 /** この時間のうちに tilt が届いた関節を、入力が効いている（active）とする（docs/api.md の status） */
@@ -39,8 +46,6 @@ export const ACTIVE_WINDOW_MS = 500;
 const STATUS_INTERVAL_MS = 1_000;
 /** active の集合が変わったかを調べる間隔 */
 const ACTIVE_CHECK_MS = 100;
-/** カウントダウンの1つぶん */
-const COUNT_MS = 1_000;
 /**
  * 抜けたスマホを待つ時間。サーバーが関節を予約する60秒と同じ（docs/game.md の「切断と、つなぎ直し」）。
  * サーバーは予約が切れたことを知らせないので、スクリーンが、関節が room から抜けたときから数える
@@ -75,6 +80,8 @@ export interface DebugState {
 export interface ScreenView {
   room: RoomState;
   flow: Flow;
+  /** プレイが始まった直後だけ重ねる合図 */
+  startLabel?: string;
   /** 接続中のスマホの関節（room の joints） */
   joints: readonly Joint[];
   /** 直近 0.5 秒に tilt が届いた関節 */
@@ -86,12 +93,25 @@ export interface ScreenView {
   game: GameState;
   debug: DebugState;
   audio: AudioState;
+  /** 入力中のチーム名。正規化前の文字列を保ち、日本語の変換を妨げない */
+  ranking:
+    | { status: "idle" | "loading" | "failed" }
+    | { status: "ready"; data: SubmitRankingResponse };
+  teamNameInput: string;
+  teamNameError: string | undefined;
+  /** ランキング保存側が読める正規化済みの名前。入力が不正なら undefined */
+  teamName: string | undefined;
+  recreation: { status: "idle" | "creating" | "closing" } | { status: "failed"; message: string };
 }
 
 /** ゲームの用意ができていて、サーバーにつながっているときだけ、開始・やり直しを受け付ける */
 export function canOperate(view: ScreenView): boolean {
   return (
-    view.game === "ready" && view.room.status === "ready" && view.room.connection.status === "open"
+    view.game === "ready" &&
+    view.room.status === "ready" &&
+    view.room.connection.status === "open" &&
+    view.recreation.status !== "creating" &&
+    view.recreation.status !== "closing"
   );
 }
 
@@ -172,17 +192,28 @@ export class ScreenSession {
     reserved: {},
     game: "loading",
     audio: { ready: false, muted: false, unavailable: false },
+    recreation: { status: "idle" },
     debug: { enabled: false, autoplay: false },
+    ranking: { status: "idle" },
+    teamNameInput: "",
+    teamNameError: undefined,
+    teamName: undefined,
   };
   private readonly listeners = new Set<() => void>();
   private game: Game | undefined;
   private seats: Seats | undefined;
   private connection: Connection<ScreenSent> | undefined;
+  private roomGeneration = 0;
+  private roomEnded = false;
+  private readonly lifetime = new AbortController();
+  private roomClose: { resolve: () => void; reject: (error: Error) => void } | undefined;
   /** 関節ごとに最後に tilt が届いた時刻（performance.now()） */
   private readonly lastTiltAt = new Map<Joint, number>();
   /** room の joints から抜けた関節と、抜けた時刻（performance.now()）。RECONNECT_WAIT_MS のあいだ持つ */
   private readonly left = new Map<Joint, number>();
   private countdownTimer: ReturnType<typeof setTimeout> | undefined;
+  /** カウントダウンの最初の表示（「3」「よーい」）を出す時刻（performance.now()） */
+  private countdownStartedAt = 0;
   /**
    * プレイを始めた関節のうち、room から抜けて、つなぎ直しを待っているもの。
    * since は抜けたとき（performance.now()）、timer は RECONNECT_WAIT_MS 後に結果を出す予約
@@ -223,6 +254,17 @@ export class ScreenSession {
   };
   readonly getSnapshot = (): ScreenView => this.view;
 
+  /** 名前を編集できるのはロビーだけ。プレイ中と結果の名前は書き換えない */
+  setTeamName(teamNameInput: string): void {
+    if (this.view.flow.kind !== "lobby") return;
+    const result = v.safeParse(TeamName, teamNameInput);
+    this.update({
+      teamNameInput,
+      teamNameError: result.success ? undefined : result.issues[0].message,
+      teamName: result.success ? result.output : undefined,
+    });
+  }
+
   /** ルームを作ってつなぎ、ゲームを作る。ページに1回だけ呼ぶ */
   open(): void {
     this.keyboard = attachKeyboard(this.inputs, this.isKeyboardControlled);
@@ -240,6 +282,8 @@ export class ScreenSession {
 
   dispose(): void {
     this.disposed = true;
+    this.lifetime.abort();
+    this.roomClose?.reject(new Error("画面を閉じました"));
     this.keyboard?.detach();
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("click", this.unlockAudio, true);
@@ -262,6 +306,7 @@ export class ScreenSession {
       });
       if (this.disposed) return game.destroy();
       this.game = game;
+      if (this.view.flow.kind === "lobby") game.practice();
       this.update({ game: "ready" });
     } catch (error) {
       console.error("ゲームを作れませんでした", error);
@@ -272,8 +317,9 @@ export class ScreenSession {
   private async openRoom(): Promise<void> {
     let roomCode: string;
     try {
-      roomCode = await createRoom();
+      roomCode = await createRoom(this.lifetime.signal);
     } catch (error) {
+      if (this.disposed) return;
       this.update({
         room: { status: "failed", message: error instanceof Error ? error.message : String(error) },
       });
@@ -281,24 +327,140 @@ export class ScreenSession {
     }
     if (this.disposed) return;
     this.update({ room: { status: "ready", roomCode, connection: { status: "connecting" } } });
-    this.connection = connectScreen(
-      roomCode,
-      {
-        onStateChange: (connection) =>
-          // つなぎ直したら、前に断られた理由は消す
-          this.updateRoom(
-            connection.status === "open" ? { connection, rejected: undefined } : { connection },
-          ),
-        onLatency: (latency) => (this.debug.latency = latency),
-        onMessage: (message) => this.onMessage(message),
+    const generation = ++this.roomGeneration;
+    this.connection = connectScreen(roomCode, this.roomHandlers(generation), {
+      baseUrl: location.href,
+    });
+  }
+
+  /** 古い接続の遅い通知が、新ルームの状態を上書きしないようにする。 */
+  private roomHandlers(generation: number): ScreenHandlers {
+    const current = () => !this.disposed && generation === this.roomGeneration;
+    return {
+      onStateChange: (connection) => {
+        if (!current()) return;
+        if (connection.status === "closed" && connection.code === ROOM_CLOSED_CODE)
+          this.onRoomClosed();
+        this.updateRoom(
+          connection.status === "open" ? { connection, rejected: undefined } : { connection },
+        );
       },
-      { baseUrl: location.href },
-    );
+      onLatency: (latency) => {
+        if (current()) this.debug.latency = latency;
+      },
+      onMessage: (message) => {
+        if (current()) this.onMessage(message);
+      },
+    };
+  }
+
+  /** 作成・接続に失敗したら旧ルームを続ける。終了の受け付けを確かめてから切り替える。 */
+  async recreateRoom(): Promise<void> {
+    if (
+      this.disposed ||
+      this.view.room.status !== "ready" ||
+      this.view.room.connection.status !== "open" ||
+      this.view.recreation.status === "creating" ||
+      this.view.recreation.status === "closing"
+    )
+      return;
+    this.update({ recreation: { status: "creating" } });
+    let prepared: Awaited<ReturnType<typeof prepareScreen>> | undefined;
+    try {
+      const roomCode = await createRoom(this.lifetime.signal);
+      if (this.disposed) return;
+      prepared = await prepareScreen(roomCode, this.lifetime.signal);
+      if (this.disposed) {
+        prepared.discard();
+        return;
+      }
+      if (prepared.connection.state.status !== "open")
+        throw new Error("新しいルームとの接続が切れました。もう一度操作してください");
+      this.update({ recreation: { status: "closing" } });
+      await this.closeCurrentRoom();
+      if (this.disposed) {
+        prepared.discard();
+        return;
+      }
+      const generation = ++this.roomGeneration;
+      this.roomEnded = false;
+      this.connection?.close();
+      this.connection = prepared.connection;
+      clearTimeout(this.countdownTimer);
+      this.clearAbsent();
+      this.left.clear();
+      this.lastTiltAt.clear();
+      this.debug.tilts = {};
+      this.debug.latency = {};
+      this.grabbed.clear();
+      Object.assign(this.inputs, NEUTRAL_INPUTS);
+      this.keyboard?.reset();
+      this.game?.practice();
+      this.audio.setPlaying(false);
+      this.lastStatus = { key: "", at: -Infinity };
+      this.update({
+        room: { status: "ready", roomCode, connection: prepared.connection.state },
+        flow: INITIAL_FLOW,
+        joints: [],
+        active: [],
+        absent: {},
+        reserved: {},
+        debug: { ...this.view.debug, autoplay: false },
+        recreation: { status: "idle" },
+      });
+      prepared.activate(this.roomHandlers(generation));
+    } catch (error) {
+      prepared?.discard();
+      if (!this.disposed)
+        this.update({
+          recreation: {
+            status: "failed",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+    }
+  }
+
+  private onRoomClosed(): void {
+    if (!this.roomEnded) {
+      this.roomEnded = true;
+      clearTimeout(this.countdownTimer);
+      this.clearAbsent();
+      this.game?.stop();
+      this.audio.setPlaying(false);
+    }
+    this.roomClose?.resolve();
+  }
+
+  private async closeCurrentRoom(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.roomClose = { resolve, reject };
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "旧ルームの終了を確認できませんでした。接続を確認して、もう一度操作してください",
+              ),
+            ),
+          10_000,
+        );
+        if (!this.connection?.send({ type: "close-room" }))
+          reject(new Error("旧ルームにつながっていません。接続を待って、もう一度操作してください"));
+      });
+    } finally {
+      clearTimeout(timer);
+      this.roomClose = undefined;
+    }
   }
 
   // 受信。tilt の順番の整理（TiltSequencer）は connectScreen がしてから渡す
   private onMessage(message: ScreenReceived): void {
     switch (message.type) {
+      case "room-closed":
+        this.onRoomClosed();
+        break;
       case "room":
         this.onRoom(message.joints);
         break;
@@ -306,7 +468,15 @@ export class ScreenSession {
         this.onPhase(message);
         break;
       case "rejected":
+        // 終了通知の前に回線が切れても、再接続で no-room になれば終了済みと分かる。
+        if (message.reason === "no-room") this.roomClose?.resolve();
         this.updateRoom({ rejected: message.reason });
+        break;
+      case "start":
+        if (this.view.flow.kind === "lobby" && isFull(this.view.joints)) this.start();
+        break;
+      case "retry":
+        if (this.view.flow.kind === "result" && isFull(this.view.joints)) this.restart();
         break;
       case "tilt":
         // 待っている関節に古い tilt が遅れて届いても、入力は 0 のまま
@@ -364,8 +534,12 @@ export class ScreenSession {
   // 操作。スペースで開始・やり直し、Enter でデバッグの開始、R でやり直し。画面のボタンも同じメソッドを呼ぶ
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     this.unlockAudio();
-    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) {
+    if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey)
+      return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("input, textarea, select, dialog, [role=menu]")
+    ) {
       return;
     }
     // ボタンの Space / Enter はブラウザのクリックに任せ、開始・やり直しを二重に起こさない。
@@ -403,17 +577,38 @@ export class ScreenSession {
 
   /** 4人そろっているときの開始 */
   start(): void {
-    this.operate({ type: "start", joints: this.view.joints, debug: false });
+    this.operate({
+      type: "start",
+      joints: this.view.joints,
+      debug: false,
+      delayMs: this.measuredDelays(),
+    });
   }
 
   /** いるスマホだけで始める。いない関節は、キーボードか画面のつまみで動かす */
   startDebug(): void {
-    this.operate({ type: "start", joints: this.view.joints, debug: true });
+    this.operate({
+      type: "start",
+      joints: this.view.joints,
+      debug: true,
+      delayMs: this.measuredDelays(),
+    });
   }
 
   /** 同じ担当でもう一度。結果の画面からも、動けなくなったプレイ中・カウントダウン中からも */
   restart(): void {
-    this.operate({ type: "restart" });
+    this.operate({ type: "restart", delayMs: this.measuredDelays() });
+  }
+
+  /** 関節ごとの、いま分かっている片道の遅延（整数のミリ秒）。中央値、無ければ直近の値。計測できていない関節は含めない */
+  private measuredDelays(): Partial<Record<Joint, number>> {
+    const delayMs: Partial<Record<Joint, number>> = {};
+    for (const joint of JOINTS) {
+      const latency = this.debug.latency[joint];
+      const delay = latency?.median ?? latency?.latest;
+      if (delay != null) delayMs[joint] = Math.round(delay);
+    }
+    return delayMs;
   }
 
   /** お手本の自動操作を入れる・切る。スマホのいない関節だけが動く */
@@ -475,6 +670,11 @@ export class ScreenSession {
 
   private operate(event: FlowEvent): void {
     if (this.game === undefined || !canOperate(this.view)) return;
+    if (event.type === "start" && this.view.flow.kind === "lobby") {
+      // キーとボタン、デバッグ開始のどの経路でも、未入力・不正な名前では始めない。
+      this.setTeamName(this.view.teamNameInput);
+      if (this.view.teamName === undefined) return;
+    }
     this.dispatch(event);
   }
 
@@ -482,8 +682,12 @@ export class ScreenSession {
     const prev = this.view.flow;
     const next = reduce(prev, event);
     if (next === prev) return;
-    this.update({ flow: next });
-    this.runEffects(prev, next);
+    const startLabel =
+      prev.kind === "countdown" && next.kind === "playing"
+        ? COUNTDOWNS[prev.countdownKind].startLabel
+        : undefined;
+    this.update({ flow: next, startLabel });
+    this.runEffects(next, event);
     this.syncAbsent();
     this.checkSeatTimers(performance.now());
   }
@@ -551,18 +755,18 @@ export class ScreenSession {
   /** 待ちきれなかった。ゲームを今の場所で止め、距離だけの結果を出す */
   private giveUp(): void {
     if (this.view.flow.kind !== "playing" || this.game === undefined) return;
-    const distanceM = this.game.stop();
+    const distanceM = this.game.stop({ showResult: true });
     this.dispatch({ type: "ended", result: { outcome: "disconnected", distanceM } });
   }
 
-  /** 遷移（prev → next）に合わせた副作用 */
-  private runEffects(prev: Flow, next: Flow): void {
+  /** 遷移に合わせた副作用 */
+  private runEffects(next: Flow, event: FlowEvent): void {
     this.audio.setPlaying(next.kind === "playing");
     switch (next.kind) {
       case "countdown":
-        this.audio.play("countdown");
-        // 始まりは、ロビー・結果・やり直し（count が 3 に戻る）。tick は 2・1 にしか進まない
-        if (prev.kind !== "countdown" || next.count === 3) {
+        // 最初の表示の前（遅いスマホに届くのを待つあいだ）は鳴らさない
+        if (next.step.label !== "") this.audio.play("countdown");
+        if (event.type === "start" || event.type === "restart") {
           // 始めに phase を送り、スマホの画面を切り替えて、途中参加を断る
           // 前の走りのキーボードの入力を持ち越さない。スマホの関節は、次の tilt で上書きされる
           clearTimeout(this.countdownTimer);
@@ -572,16 +776,48 @@ export class ScreenSession {
           // 前の走りで離したキーの戻りも持ち越さない。押したままのキーは、次のフレームからまた効く
           this.keyboard?.reset();
           this.game?.reset();
-          this.send({ type: "phase", phase: "playing", mode: "10m" });
+          const kind = next.countdownKind;
+          const { durationMs } = COUNTDOWNS[kind];
+          const delayMs = event.delayMs ?? {};
+          // いちばん遅いスマホに phase が届くまで、最初の表示を待つ。スマホは遅延を引くので、同じ時に出る
+          const leadMs = countdownLeadMs(delayMs);
+          this.countdownStartedAt = performance.now() + leadMs;
+          this.send({
+            type: "phase",
+            phase: "playing",
+            mode: "10m",
+            countdown: { kind, durationMs, remainingMs: leadMs + durationMs, delayMs },
+          });
+          this.scheduleCountdown();
         }
-        this.countdownTimer = setTimeout(() => this.dispatch({ type: "tick" }), COUNT_MS);
         break;
       case "playing":
         this.audio.play("start");
         this.playStartedAt = performance.now();
+        this.countdownTimer = setTimeout(
+          () => this.update({ startLabel: undefined }),
+          GO_DISPLAY_MS,
+        );
         this.game?.start();
         break;
       case "result":
+        if (next.result.outcome === "goal" && this.view.teamName) {
+          this.update({ ranking: { status: "loading" } });
+          void submitRanking({
+            mode: "10m",
+            teamName: this.view.teamName,
+            timeMs: next.result.timeMs,
+          })
+            .then((data) => {
+              if (this.view.flow === next) this.update({ ranking: { status: "ready", data } });
+            })
+            .catch(() => {
+              if (this.view.flow === next) this.update({ ranking: { status: "failed" } });
+            });
+        } else {
+          this.update({ ranking: { status: "idle" } });
+        }
+        clearTimeout(this.countdownTimer);
         if (next.result.outcome === "goal" || next.result.outcome === "fell") {
           this.audio.play(next.result.outcome);
         }
@@ -591,10 +827,31 @@ export class ScreenSession {
         clearTimeout(this.countdownTimer);
         // ロビーではつまみが消え、つかんだまま消えると離したことが届かない。次のプレイに持ち越さない
         this.grabbed.clear();
-        this.game?.reset();
+        // 待ちが残ると、checkActive がその関節の入力を 0 に戻し、吊った脚が後ろに振れたままになる
+        this.clearAbsent();
+        for (const joint of JOINTS) {
+          if (!this.view.joints.includes(joint)) this.inputs[joint] = NEUTRAL_INPUTS[joint];
+        }
+        this.keyboard?.reset();
+        this.game?.practice();
         this.send({ type: "phase", phase: "lobby" });
         break;
     }
+  }
+
+  private scheduleCountdown(): void {
+    const { flow } = this.view;
+    if (flow.kind !== "countdown") return;
+    const untilMs = flow.step.untilMs ?? COUNTDOWNS[flow.countdownKind].durationMs;
+    // タイマーが遅れても、次の表示は最初の表示の時刻から数える
+    const delay = Math.ceil(this.countdownStartedAt + untilMs - performance.now());
+    this.countdownTimer = setTimeout(
+      () => {
+        this.dispatch({ type: "tick", elapsedMs: performance.now() - this.countdownStartedAt });
+        this.scheduleCountdown();
+      },
+      Math.max(0, delay),
+    );
   }
 
   // 入力の状態。変わったとき、または1秒に1回、status を送る
