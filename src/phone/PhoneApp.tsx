@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { Countdown } from "./Countdown.tsx";
 import { Entry } from "./Entry.tsx";
+import { HowTo } from "./HowTo.tsx";
 import { JointBand } from "./JointBand.tsx";
 import { Lobby } from "./Lobby.tsx";
-import { initialState, reduce, type PhoneState, type RejectReason } from "./model.ts";
+import { initialState, isHowtoReady, reduce, type PhoneState, type RejectReason } from "./model.ts";
 import { Playing } from "./Playing.tsx";
 import { Reconnecting } from "./Reconnecting.tsx";
 import { Result } from "./Result.tsx";
@@ -65,6 +66,10 @@ export function PhoneApp({ room }: { room: string | undefined }) {
   const retry = useCallback(() => {
     session.current?.send({ type: "retry" });
   }, []);
+  const ready = useCallback(() => {
+    dispatch({ type: "tap-ready" });
+    session.current?.send({ type: "ready" });
+  }, []);
 
   const join = async () => {
     if (room === undefined) return;
@@ -89,7 +94,14 @@ export function PhoneApp({ room }: { room: string | undefined }) {
           {room !== undefined ? <span className="room">ルームコード {room}</span> : null}
         </header>
       ) : null}
-      <Body state={state} room={room} onJoin={join} onStart={start} onRetry={retry} />
+      <Body
+        state={state}
+        room={room}
+        onJoin={join}
+        onStart={start}
+        onRetry={retry}
+        onReady={ready}
+      />
     </main>
   );
 }
@@ -100,12 +112,14 @@ function Body({
   onJoin,
   onStart,
   onRetry,
+  onReady,
 }: {
   state: PhoneState;
   room: string | undefined;
   onJoin: () => void;
   onStart: () => void;
   onRetry: () => void;
+  onReady: () => void;
 }) {
   switch (state.kind) {
     case "invalid-room":
@@ -149,7 +163,16 @@ function Body({
         <>
           <div className="joined" inert={state.reconnectingSince !== undefined}>
             {state.phase.kind === "lobby" ? (
-              <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
+              state.phase.howto === undefined ? (
+                <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
+              ) : (
+                <HowTo
+                  room={room}
+                  joint={state.joint}
+                  ready={isHowtoReady(state)}
+                  onReady={onReady}
+                />
+              )
             ) : state.phase.kind === "playing" ? (
               state.phase.countdown === undefined ? (
                 <Playing joint={state.joint} active={state.active} />

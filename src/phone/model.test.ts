@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   initialState,
+  isHowtoReady,
   parseRoom,
   reconnectRemainingSeconds,
   reduce,
@@ -76,6 +77,78 @@ describe("JumpFilter", () => {
 describe("reduce", () => {
   const playing = { type: "phase", phase: "playing", mode: "10m" } as const;
   const countdown = { kind: "count", durationMs: 3_000, remainingMs: 2_000 } as const;
+
+  it("遊び方の間だけ準備OKを押せる。howto を受け取っても active は変わらない", () => {
+    const tap = { type: "tap-ready" } as const;
+    const initial = initialState("K7Q2");
+    expect(reduce(initial, tap)).toBe(initial);
+    const lobby = run(joinedEvents);
+    expect(lobby).toMatchObject({ readyPressed: false });
+    expect(reduce(lobby, tap)).toBe(lobby);
+    const howto = run(
+      [
+        message({ type: "status", active: ["leftKnee"] }),
+        message({ type: "howto", ready: ["rightHip"] }),
+      ],
+      lobby,
+    );
+    expect(howto).toMatchObject({
+      phase: { kind: "lobby", howto: { ready: ["rightHip"] } },
+      active: true,
+    });
+    expect(howto.kind === "joined" && isHowtoReady(howto)).toBe(false);
+    const confirmed = reduce(howto, message({ type: "howto", ready: ["leftKnee"] }));
+    expect(confirmed).toMatchObject({ readyPressed: false });
+    expect(confirmed.kind === "joined" && isHowtoReady(confirmed)).toBe(true);
+
+    const pressed = reduce(howto, tap);
+    expect(pressed).toMatchObject({ readyPressed: true });
+    expect(pressed.kind === "joined" && isHowtoReady(pressed)).toBe(true);
+    const next = reduce(pressed, message({ ...playing, countdown: { ...countdown, delayMs: {} } }));
+    expect(next).toMatchObject({
+      readyPressed: false,
+      phase: { kind: "playing", countdown: { kind: "count", durationMs: 3_000, endsAt: 2_000 } },
+    });
+  });
+
+  it("同じ関節に戻り howto が届けばタップを残す。関節が変わるか howto がなければ消す", () => {
+    const disconnected = run([
+      ...joinedEvents,
+      message({ type: "howto", ready: [] }),
+      { type: "tap-ready" },
+      connection({ status: "reconnecting", attempt: 1 }),
+    ]);
+    const rejoining = reduce(disconnected, message({ type: "joined", joint: "leftKnee" }));
+    expect(rejoining).toMatchObject({
+      link: "rejoining",
+      phase: { kind: "lobby" },
+      readyPressed: true,
+    });
+    const room = message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] });
+    expect(reduce(rejoining, room)).toMatchObject({ link: "open", readyPressed: false });
+    expect(run([message({ type: "howto", ready: [] }), room], rejoining)).toMatchObject({
+      link: "open",
+      readyPressed: true,
+    });
+    // つなぎ直したときにサーバーが送り直す lobby では消さず、そのあとの howto で残す
+    expect(
+      run(
+        [message({ type: "phase", phase: "lobby" }), message({ type: "howto", ready: [] }), room],
+        rejoining,
+      ),
+    ).toMatchObject({ link: "open", readyPressed: true });
+    expect(run([message({ type: "phase", phase: "lobby" }), room], rejoining)).toMatchObject({
+      readyPressed: false,
+    });
+    // つながっているときの lobby は、遊び方の終わり
+    const open = run([message({ type: "howto", ready: [] }), room], rejoining);
+    expect(reduce(open, message({ type: "phase", phase: "lobby" }))).toMatchObject({
+      readyPressed: false,
+    });
+    expect(reduce(disconnected, message({ type: "joined", joint: "rightHip" }))).toMatchObject({
+      readyPressed: false,
+    });
+  });
 
   it("自分の関節の遅延だけを引き、新しい countdown が来たら開始時刻を置き換える", () => {
     const state = run([
