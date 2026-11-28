@@ -24,6 +24,7 @@ import {
 } from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
 import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
+import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
 
 /** この時間のうちに tilt が届いた関節を、入力が効いている（active）とする（docs/api.md の status） */
 export const ACTIVE_WINDOW_MS = 500;
@@ -75,6 +76,7 @@ export interface ScreenView {
   absent: Readonly<Partial<Record<Joint, number>>>;
   game: GameState;
   debug: DebugState;
+  audio: AudioState;
 }
 
 /** ゲームの用意ができていて、サーバーにつながっているときだけ、開始・やり直しを受け付ける */
@@ -116,6 +118,7 @@ export class ScreenSession {
     active: [],
     absent: {},
     game: "loading",
+    audio: { ready: false, muted: false, unavailable: false },
     debug: { enabled: false, autoplay: false },
   };
   private readonly listeners = new Set<() => void>();
@@ -145,12 +148,15 @@ export class ScreenSession {
   private frame = 0;
 
   private readonly stage: HTMLElement;
+  private readonly audio: ScreenAudio;
 
   constructor(
     stage: HTMLElement,
     debugEnabled = new URLSearchParams(location.search).has("debug"),
+    audio?: ScreenAudio,
   ) {
     this.stage = stage;
+    this.audio = audio ?? new SynthAudio((state) => this.update({ audio: state }));
     this.view = { ...this.view, debug: { enabled: debugEnabled, autoplay: false } };
   }
 
@@ -165,6 +171,7 @@ export class ScreenSession {
   open(): void {
     this.keyboard = attachKeyboard(this.inputs, this.isKeyboardControlled);
     window.addEventListener("keydown", this.onKeyDown);
+    window.addEventListener("click", this.unlockAudio, true);
     this.statusTimer = setInterval(this.checkActive, ACTIVE_CHECK_MS);
     if (this.view.debug.enabled) {
       // CSS が、ゲームの下にデバッグの操作の場所を空ける
@@ -179,6 +186,8 @@ export class ScreenSession {
     this.disposed = true;
     this.keyboard?.detach();
     window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("click", this.unlockAudio, true);
+    this.audio.dispose();
     clearInterval(this.statusTimer);
     clearTimeout(this.countdownTimer);
     this.clearAbsent();
@@ -254,6 +263,9 @@ export class ScreenSession {
   }
 
   private onRoom(joints: readonly Joint[]): void {
+    for (const joint of joints) {
+      if (!this.view.joints.includes(joint)) this.audio.play("join");
+    }
     // 抜けたスマホの入力と角度を残さない。次に同じ関節に入ったスマホに、前の値を見せない。
     // 抜けた関節だけを戻す。もともとスマホのいない関節はキーボードが動かしているので、触らない
     for (const joint of this.view.joints) {
@@ -288,12 +300,22 @@ export class ScreenSession {
 
   // 操作。スペースで開始・やり直し、Enter でデバッグの開始、R でやり直し。画面のボタンも同じメソッドを呼ぶ
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    this.unlockAudio();
     if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) {
       return;
     }
+    // ボタンの Space / Enter はブラウザのクリックに任せ、開始・やり直しを二重に起こさない。
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("button") &&
+      (event.code === "Space" || event.code === "Enter")
+    )
+      return;
     const { flow } = this.view;
-    if (event.code === "Space") {
+    if (event.code === "KeyM") {
+      this.toggleMute();
+    } else if (event.code === "Space") {
       event.preventDefault();
       if (flow.kind === "lobby") this.start();
       else this.restart();
@@ -303,6 +325,18 @@ export class ScreenSession {
       this.restart();
     }
   };
+
+  private readonly unlockAudio = (): void => {
+    this.audio.unlock();
+  };
+
+  /** M キーと画面のボタンで、効果音・BGM をまとめて切り替える。 */
+  toggleMute(): void {
+    this.unlockAudio();
+    const muted = !this.view.audio.muted;
+    this.audio.setMuted(muted);
+    this.update({ audio: { ...this.view.audio, muted } });
+  }
 
   /** 4人そろっているときの開始 */
   start(): void {
@@ -445,8 +479,10 @@ export class ScreenSession {
 
   /** 遷移（prev → next）に合わせた副作用 */
   private runEffects(prev: Flow, next: Flow): void {
+    this.audio.setPlaying(next.kind === "playing");
     switch (next.kind) {
       case "countdown":
+        this.audio.play("countdown");
         // 始まりは、ロビー・結果・やり直し（count が 3 に戻る）。tick は 2・1 にしか進まない
         if (prev.kind !== "countdown" || next.count === 3) {
           // 始めに phase を送り、スマホの画面を切り替えて、途中参加を断る
@@ -463,10 +499,14 @@ export class ScreenSession {
         this.countdownTimer = setTimeout(() => this.dispatch({ type: "tick" }), COUNT_MS);
         break;
       case "playing":
+        this.audio.play("start");
         this.playStartedAt = performance.now();
         this.game?.start();
         break;
       case "result":
+        if (next.result.outcome === "goal" || next.result.outcome === "fell") {
+          this.audio.play(next.result.outcome);
+        }
         this.send({ type: "phase", phase: "result", result: next.result });
         break;
       case "lobby":

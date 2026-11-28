@@ -929,3 +929,38 @@ html[data-debug] .result-screen {
     font-size: clamp(52px, 11vw, 78px);
   }
 }
+
+/* ロビーで最初の操作を案内し、すべての画面で音を切り替えられる。 */
+.audio-controls {
+  position: fixed;
+  left: 12px;
+  bottom: 8px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 12px;
+  pointer-events: auto;
+}
+.audio-controls button {
+  padding: 5px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+html[data-debug] .audio-controls:not(.audio-controls--full) {
+  bottom: calc(var(--debug-h) + 8px);
+}
+@media (max-width: 600px) {
+  .audio-controls {
+    max-width: calc(100% - 24px);
+    font-size: 10px;
+  }
+}

@@ -5,5 +5,3 @@ export { attachKeyboard, KEYBOARD_KEYS, type KeyboardHandle } from "./keyboard.t
 export { NEUTRAL_INPUTS } from "./body.ts";
 // お手本の歩き方。デバッグ用の自動操作と、テストで使う
 export { demoGait } from "./demo.ts";
-// 関節ごとの色（ゲームの凡例と同じ）。デバッグのつまみも同じ色にする
-export { COLORS as GAME_COLORS } from "./view.ts";
