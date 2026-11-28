@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { createRoom, submitRanking } from "../../net/api.ts";
 import type { ConnectionState, Latency, ScreenReceived, ScreenSent } from "../../net/client.ts";
 import { GO_DISPLAY_MS } from "../../shared/countdown.ts";
-import type { Joint } from "../../shared/messages.ts";
+import type { Joint, Mode } from "../../shared/messages.ts";
 import type { Game, GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
 import { ScreenSession, seatsOf, type ScreenView } from "./session.ts";
@@ -23,6 +23,8 @@ let handlers: {
 };
 let game: GameOptions;
 const calls: string[] = [];
+/** game.reset() に渡したモード */
+const resetModes: Mode[] = [];
 const setSeats = vi.fn<Game["setSeats"]>();
 let stopDistance = 3.2;
 /** game.stop() に渡したもの。結果の画面にするかを見る */
@@ -77,7 +79,10 @@ vi.mock("../game/index.ts", async () => {
       game = options;
       return {
         setSeats,
-        reset: () => calls.push("reset"),
+        reset: (mode: Mode) => {
+          calls.push("reset");
+          resetModes.push(mode);
+        },
         start() {},
         practice: () => calls.push("practice"),
         stop: (options?: { showResult?: boolean }) => {
@@ -104,6 +109,7 @@ beforeEach(() => {
       rankings: [],
     });
   calls.length = 0;
+  resetModes.length = 0;
   setSeats.mockClear();
   connectionOpen = true;
   for (const type of Object.keys(listeners)) delete listeners[type];
@@ -168,6 +174,7 @@ describe("seatsOf", () => {
     teamNameInput: "",
     teamNameError: undefined,
     teamName: undefined,
+    mode: "normal",
     input: "tilt",
   };
 
@@ -291,6 +298,36 @@ describe("ScreenSession", () => {
     session.dispose();
   });
 
+  it("モードは初期値がノーマルで、ロビーでだけ変えられ、ゲームと phase とランキングに届く", async () => {
+    const session = await open();
+    expect(session.getSnapshot().mode).toBe("normal");
+    session.setMode("hard");
+    expect(session.getSnapshot().mode).toBe("hard");
+    // ロビーの phase には載せない
+    expect(sent.some((m) => m.type === "phase")).toBe(false);
+    press("Enter");
+    expect(resetModes).toEqual(["hard"]);
+    expect(sent.find((m) => m.type === "phase" && m.phase === "playing")).toMatchObject({
+      mode: "hard",
+      input: "tilt",
+    });
+    // プレイ中は変えられない
+    session.setMode("normal");
+    expect(session.getSnapshot().mode).toBe("hard");
+    // やり直しも同じモード
+    session.restart();
+    expect(resetModes).toEqual(["hard", "hard"]);
+    await vi.advanceTimersByTimeAsync(3000);
+    game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    expect(submitRanking).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "hard", input: "tilt" }),
+    );
+    // 結果でも変えられない
+    session.setMode("normal");
+    expect(session.getSnapshot().mode).toBe("hard");
+    session.dispose();
+  });
+
   it("つながっていないときに変えた操作方法は、つながったときに送り直す", async () => {
     const session = await open();
     connectionOpen = false;
@@ -348,7 +385,7 @@ describe("ScreenSession", () => {
     press("Space");
     await vi.advanceTimersByTimeAsync(3000);
     room(["leftHip", "rightKnee", "leftKnee"]);
-    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m", input: "tilt" });
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "normal", input: "tilt" });
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     await vi.advanceTimersByTimeAsync(2000);
     expect(inputs().rightHip).toBe(NEUTRAL_INPUTS.rightHip);
@@ -361,7 +398,7 @@ describe("ScreenSession", () => {
     const start = () => handlers.onMessage({ type: "start", joint: "rightHip" });
     const retry = (joint: Joint = "rightHip") => handlers.onMessage({ type: "retry", joint });
     const phases = () => sent.filter((message) => message.type === "phase");
-    const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
+    const playing = { type: "phase", phase: "playing", mode: "normal", input: "tilt" };
 
     it("4人いるロビーで start を受け取ると、一度だけカウントダウンを始める", async () => {
       const session = await open();
@@ -480,7 +517,7 @@ describe("ScreenSession", () => {
     session.setTeamName("プレイ中の変更");
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
     expect(submitRanking).toHaveBeenCalledExactlyOnceWith({
-      mode: "10m",
+      mode: "normal",
       input: "tilt",
       teamName: "ABC",
       timeMs: 4000,
@@ -788,7 +825,7 @@ describe("ScreenSession", () => {
     game.onEnd({ outcome: "fell", distanceM: 1 });
     connectionOpen = true;
     // つなぎ直すと、サーバーは持っている phase（playing のまま）を送ってくる
-    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m", input: "tilt" });
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "normal", input: "tilt" });
 
     expect(session.getSnapshot().flow.kind).toBe("result");
     expect(sent).toContainEqual({
@@ -900,7 +937,7 @@ describe("ScreenSession", () => {
     await vi.advanceTimersByTimeAsync(3000);
     session.grab("leftHip", true);
     // つなぎ直すと、サーバーが持つ playing が届き、ロビーに戻る。つまみは消え、離したことは届かない
-    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m", input: "tilt" });
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "normal", input: "tilt" });
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     press("Enter");
 
@@ -1046,7 +1083,7 @@ describe("ScreenSession", () => {
       {
         type: "phase",
         phase: "playing",
-        mode: "10m",
+        mode: "normal",
         input: "tilt",
         countdown: {
           kind: "count",
@@ -1059,7 +1096,7 @@ describe("ScreenSession", () => {
       {
         type: "phase",
         phase: "playing",
-        mode: "10m",
+        mode: "normal",
         input: "tilt",
         countdown: { kind: "readyGo", durationMs: 1_500, remainingMs: 1_500, delayMs: {} },
       },

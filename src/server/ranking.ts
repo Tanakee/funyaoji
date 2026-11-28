@@ -6,6 +6,7 @@ import {
   type SubmitRankingResponse,
 } from "../shared/api.ts";
 import type { InputMethod, Mode } from "../shared/messages.ts";
+import { setUpRankingTable } from "./ranking-table.ts";
 
 /** モードと操作方法の組ごとに残す件数。超えたら遅いものから消す */
 const MAX_ENTRIES_PER_MODE = 1000;
@@ -19,31 +20,8 @@ type Row = { id: number; team_name: string; time_ms: number; created_at: number 
 export class Ranking extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // 同じタイムは先に保存したもの（id が小さいもの）を上にする。並べる順と同じ索引を張る。
-    // id は残っている行のいちばん大きい id ＋ 1 になり、残っている行の中では保存した順に並ぶ。
-    // AUTOINCREMENT は、保存のたびに sqlite_sequence にも1行書くので使わない
-    // ランキングは、モードと操作方法（input）の組ごとに分かれる。
-    // input が無かったころの表には列を足す。それまでの記録は、すべて傾きで遊んだもの
     const sql = ctx.storage.sql;
-    sql.exec(`
-      CREATE TABLE IF NOT EXISTS rankings (
-        id INTEGER PRIMARY KEY,
-        mode TEXT NOT NULL,
-        input TEXT NOT NULL DEFAULT 'tilt',
-        team_name TEXT NOT NULL,
-        time_ms INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-    `);
-    const hasInput = sql
-      .exec<{ name: string }>("PRAGMA table_info(rankings)")
-      .toArray()
-      .some((column) => column.name === "input");
-    if (!hasInput) sql.exec("ALTER TABLE rankings ADD COLUMN input TEXT NOT NULL DEFAULT 'tilt'");
-    sql.exec(`
-      DROP INDEX IF EXISTS rankings_order;
-      CREATE INDEX IF NOT EXISTS rankings_order_by_input ON rankings (mode, input, time_ms, id);
-    `);
+    setUpRankingTable((query) => sql.exec(query).toArray());
   }
 
   /** 1件保存し、その順位と、保存したあとの上位を返す */

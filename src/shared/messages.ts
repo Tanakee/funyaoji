@@ -30,13 +30,17 @@ export const RoomMessage = v.object({
 });
 export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 
-/** 遊び方（モード）。今は 10m だけ */
-export const Mode = v.picklist(["10m"]);
+/**
+ * 遊び方（モード。docs/game.md の「モード」）。normal はノーマル（前の「10m モード」）、hard は転びやすいハード。
+ * スクリーンのロビーで選ぶ
+ */
+export const MODES = ["normal", "hard"] as const;
+export const Mode = v.picklist(MODES);
 export type Mode = v.InferOutput<typeof Mode>;
 
 /**
  * 操作方法。tilt はスマホの傾き、camera は前面カメラに映した人差し指の曲げ（docs/game.md の「操作方法」）。
- * 距離のモードとは別に、スクリーンのロビーで選ぶ
+ * モードとは別に、スクリーンのロビーで選ぶ
  */
 export const INPUT_METHODS = ["tilt", "camera"] as const;
 export const InputMethod = v.picklist(INPUT_METHODS);

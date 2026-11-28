@@ -1,5 +1,5 @@
 // スクリーンのゲーム（物理演算と描画）と、その外（React の UI・通信）のあいだの形（docs/design.md の「ディレクトリ構成」）
-import type { Joint, PlayResult } from "../../shared/messages.ts";
+import type { Joint, Mode, PlayResult } from "../../shared/messages.ts";
 
 /**
  * 関節ごとの入力。0〜1 の目標の位置。
@@ -42,8 +42,8 @@ export interface GameOptions {
 export interface Game {
   /** 席の状態を、札・糸・部位の色に出す */
   setSeats(seats: Seats): void;
-  /** おじさんをスタートラインに立たせ直し、止めて待つ。タイムは 0 に戻る */
-  reset(): void;
+  /** おじさんをスタートラインに立たせ直し、止めて待つ。タイムは 0 に戻る。mode はこの走りのモード */
+  reset(mode: Mode): void;
   /** 物理演算とタイムを進め始める。reset() のあとに呼ぶ */
   start(): void;
   /** おじさんを空中に吊り直して関節を動かす。距離とタイムは進めず、ゴールと転倒は判定しない */

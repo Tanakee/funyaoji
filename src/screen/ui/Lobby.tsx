@@ -1,16 +1,25 @@
 import type { ConnectionState } from "../../net/client.ts";
 import { TEAM_NAME_MAX_LENGTH } from "../../shared/api.ts";
-import { INPUT_METHODS, JOINTS, type InputMethod } from "../../shared/messages.ts";
+import {
+  INPUT_METHODS,
+  JOINTS,
+  MODES,
+  type InputMethod,
+  type Mode,
+} from "../../shared/messages.ts";
 import { isFull } from "./flow.ts";
 import { QrCode } from "./QrCode.tsx";
 import { canOperate, type RoomState, type ScreenSession, type ScreenView } from "./session.ts";
 
+/** モードの呼び名（docs/game.md の「モード」） */
+export const MODE_LABELS: Record<Mode, string> = { normal: "ノーマル", hard: "ハード" };
+
 /** 操作方法の呼び名（docs/game.md の「操作方法」） */
 export const INPUT_LABELS: Record<InputMethod, string> = { tilt: "傾き", camera: "カメラ" };
 
-/** ヘッダーに出す、モードと操作方法 */
-export function modeLabel(input: InputMethod): string {
-  return `10m モード・${INPUT_LABELS[input]}`;
+/** ヘッダーに出す、モードと操作方法（ランキングはこの組ごとに分かれる） */
+export function modeLabel(mode: Mode, input: InputMethod): string {
+  return `${MODE_LABELS[mode]}モード・${INPUT_LABELS[input]}`;
 }
 
 export function Lobby({ session, view }: { session: ScreenSession; view: ScreenView }) {
@@ -25,7 +34,7 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
           ふ
         </div>
         <div className="brand-name">ふにゃおじ</div>
-        <span className="header-mode">{modeLabel(view.input)}</span>
+        <span className="header-mode">{modeLabel(view.mode, view.input)}</span>
       </header>
 
       <div className="lobby-layout">
@@ -90,6 +99,22 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
             {view.teamNameError ?? `ランキングに使う名前（${TEAM_NAME_MAX_LENGTH}文字まで）`}
           </p>
         </div>
+        <fieldset className="input-field">
+          <legend>モード</legend>
+          {MODES.map((mode) => (
+            <label key={mode} className="input-option">
+              <input
+                type="radio"
+                name="mode"
+                value={mode}
+                checked={view.mode === mode}
+                onChange={() => session.setMode(mode)}
+              />
+              <span>{MODE_LABELS[mode]}</span>
+            </label>
+          ))}
+          <p>{view.mode === "normal" ? "いつものおじさん" : "転びやすいおじさん"}</p>
+        </fieldset>
         <fieldset className="input-field">
           <legend>操作方法</legend>
           {INPUT_METHODS.map((input) => (

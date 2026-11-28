@@ -65,7 +65,12 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
   },
   {
     name: "phase: playing",
-    message: { type: "phase", phase: "playing", mode: "10m", input: "tilt" },
+    message: { type: "phase", phase: "playing", mode: "normal", input: "tilt" },
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
+  },
+  {
+    name: "phase: playing（ハード）",
+    message: { type: "phase", phase: "playing", mode: "hard", input: "camera" },
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
@@ -200,8 +205,14 @@ const rejected: { name: string; message: unknown }[] = [
   { name: "未知の joint (howto)", message: { type: "howto", ready: ["rightHip", "head"] } },
   { name: "未知の reason", message: { type: "rejected", reason: "banned" } },
   { name: "phase が未知", message: { type: "phase", phase: "paused" } },
-  { name: "playing に mode が無い", message: { type: "phase", phase: "playing" } },
-  { name: "playing の mode が 10m 以外", message: { type: "phase", phase: "playing", mode: "5m" } },
+  {
+    name: "playing に mode が無い",
+    message: { type: "phase", phase: "playing", input: "tilt" },
+  },
+  {
+    name: "playing の mode が normal・hard 以外",
+    message: { type: "phase", phase: "playing", mode: "10m", input: "tilt" },
+  },
   { name: "result に result が無い", message: { type: "phase", phase: "result" } },
   {
     name: "goal に timeMs が無い",
@@ -226,7 +237,7 @@ describe("メッセージのスキーマ", () => {
     expect(acceptedBy({ ...room, vacated: "head" })).toEqual([]);
   });
 
-  const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
+  const playing = { type: "phase", phase: "playing", mode: "normal", input: "tilt" };
   const countdown = {
     kind: "count",
     durationMs: 3_000,
