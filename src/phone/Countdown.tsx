@@ -32,7 +32,8 @@ export function Countdown({
     if (finished) return;
     // React が描画した時刻からではなく、次の表示に切り替える時刻までを待つ
     const timer = setTimeout(
-      () => setNow(performance.now()),
+      // 時計の刻みが粗いブラウザでは、タイマーが鳴っても前と同じ時刻が返り、描き直されずに止まる。切り替える時刻まで進める
+      () => setNow(Math.max(performance.now(), nextAt)),
       Math.max(0, Math.ceil(nextAt - performance.now())),
     );
     return () => clearTimeout(timer);
