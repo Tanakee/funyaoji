@@ -61,7 +61,7 @@ sequenceDiagram
 | `POST /api/rooms` | スクリーン | ルームを作成する |
 | `GET /api/rooms/<ルームコード>/ws` | スクリーン、スマホ | WebSocket で接続する |
 | `POST /api/rankings` | スクリーン | ゴールしたタイムをランキングに保存する |
-| `GET /api/rankings?mode=<モード>` | スクリーン | ランキングの上位を取得する |
+| `GET /api/rankings?mode=<モード>&input=<操作方法>` | スクリーン | ランキングの上位を取得する |
 
 ### POST /api/rooms
 
@@ -136,13 +136,13 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `mode` | `string` | モード。現在は `10m` のみ |
+| `mode` | `string` | モード。`normal`（ノーマル）か `hard`（ハード） |
 | `input` | `string` | 操作方法。`tilt`（傾き）か `camera`（カメラ）。ランキングは、モードと操作方法の組ごとに分かれる |
 | `teamName` | `string` | チーム名。下の決まりで整えて保存する |
 | `timeMs` | `number` | ゴールまでの時間（ミリ秒）。`phase` の `result.timeMs` をそのまま送る |
 
 ```json
-{ "mode": "10m", "input": "tilt", "teamName": "ふにゃーず", "timeMs": 32500 }
+{ "mode": "normal", "input": "tilt", "teamName": "ふにゃーず", "timeMs": 32500 }
 ```
 
 - チーム名は、NFKC で正規化し（全角の英数字と空白を半角にする）、前後の空白を除いてから調べる。1〜10文字（絵文字や濁点の付いた文字も1文字と数える）。改行・タブなどの制御文字と、文字の向きを変える文字や幅のない空白などの書式の文字（Unicode の `Cf`）は使えない。ただし絵文字をつなぐ ZWJ（U+200D）は使える。空白と見えない文字（ZWJ や異体字セレクタなど）だけの名前は断る。整える前で100文字（UTF-16 のコード単位で数える）を超えるものと、孤立したサロゲートを含むものも断る
@@ -162,10 +162,10 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 
 ### GET /api/rankings?mode=&lt;モード&gt;&input=&lt;操作方法&gt;
 
-ランキングの上位10件を、速い順に返す。型定義は `src/shared/api.ts` の `RankingsResponse`。`mode` が無いか `10m` でないとき、`input` が無いか `tilt`・`camera` でないときは、400 を返す。
+ランキングの上位10件を、速い順に返す。型定義は `src/shared/api.ts` の `RankingsResponse`。`mode` が無いか `normal`・`hard` でないとき、`input` が無いか `tilt`・`camera` でないときは、400 を返す。
 
 ```json
-{ "mode": "10m", "input": "tilt", "rankings": [{ "rank": 1, "teamName": "FUNYA", "timeMs": 28000, "createdAt": 1795771597510 }] }
+{ "mode": "normal", "input": "tilt", "rankings": [{ "rank": 1, "teamName": "FUNYA", "timeMs": 28000, "createdAt": 1795771597510 }] }
 ```
 
 | フィールド | 型 | 説明 |
@@ -178,6 +178,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 - 同じタイムは、先に保存したものを上にする。順位は並べた順の番号で、同じタイムでも同じ順位にはしない
 - モードと操作方法の組ごとに1,000件まで残す。超えたら、いちばん遅いもの（同じタイムなら後に保存したもの）から消す
 - 1,000位より下は残らない。POST が `rank` 1001 以上を返した記録は、保存した直後に消えている
+- 「10m モード」のときの記録（`mode` が `10m`）は、ノーマルモード（`normal`）の記録として扱う。ランキングの Durable Object が起動したときに、保存してある `10m` を `normal` に書き換える
 - データはプレビューと本番で分かれる（[設計](design.md) の「ランキング」）
 - 同じチーム名でも、別の記録として保存する（チームごとにまとめない）。残す件数の上限は同じく効く
 - 自動ではリセットしない。発表の直前に、シーズン（Durable Object の名前）を変えて空にする（[設計](design.md) の「ランキング」）
@@ -258,7 +259,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `phase` | `string` | `lobby`：ロビー。`playing`：カウントダウンかプレイ中。`result`：結果 |
-| `mode` | `string` | `playing` のときだけ。現在は `10m` のみ |
+| `mode` | `string` | `playing` のときだけ。モード。`normal`（ノーマル）か `hard`（ハード）（[ゲームの進行](game.md)の「モード」） |
 | `input` | `string` | `lobby` と `playing` のとき。操作方法。`tilt`（傾き）か `camera`（カメラ）。スマホは受け取ると、その方法で読み始める（[ゲームの進行](game.md)の「操作方法」） |
 | `countdown` | `object` | `playing` のときだけ。無ければプレイ中 |
 | `countdown.kind` | `string` | `count` は「3・2・1、GO!」、`readyGo` は「よーい、ドン！」 |
@@ -271,10 +272,10 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 
 ```json
 { "type": "phase", "phase": "lobby", "input": "camera" }
-{ "type": "phase", "phase": "playing", "mode": "10m", "input": "tilt",
+{ "type": "phase", "phase": "playing", "mode": "normal", "input": "tilt",
   "countdown": { "kind": "count", "durationMs": 3000, "remainingMs": 3130,
                  "delayMs": { "rightHip": 42, "leftKnee": 130 } } }
-{ "type": "phase", "phase": "playing", "mode": "10m", "input": "tilt" }
+{ "type": "phase", "phase": "playing", "mode": "normal", "input": "tilt" }
 { "type": "phase", "phase": "result", "result": { "outcome": "goal", "distanceM": 10, "timeMs": 32500 } }
 ```
 
