@@ -26,6 +26,7 @@ export const RoomMessage = v.object({
   type: v.literal("room"),
   roomCode: v.string(),
   joints: v.array(Joint),
+  vacated: v.optional(Joint),
 });
 export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 
@@ -134,6 +135,15 @@ export const CloseRoomMessage = v.object({ type: v.literal("close-room") });
 export const RoomClosedMessage = v.object({ type: v.literal("room-closed") });
 /** このコードでも終了が分かるようにし、通知を受け取れなくても再接続しない。 */
 export const ROOM_CLOSED_CODE = 4003;
+/** 「抜ける」を受け付けて閉じたときの close コード。left が届かなくても、つなぎ直さない */
+export const LEFT_CODE = 4004;
+
+/** スマホの「抜ける」。left はサーバーの受け付けの返事 */
+export const LeaveMessage = v.object({ type: v.literal("leave") });
+export type LeaveMessage = v.InferOutput<typeof LeaveMessage>;
+
+export const LeftMessage = v.object({ type: v.literal("left") });
+export type LeftMessage = v.InferOutput<typeof LeftMessage>;
 
 export const ServerToPhoneMessage = v.variant("type", [
   JoinedMessage,
@@ -145,6 +155,7 @@ export const ServerToPhoneMessage = v.variant("type", [
   StatusMessage,
   PingMessage,
   HeartbeatMessage,
+  LeftMessage,
 ]);
 export type ServerToPhoneMessage = v.InferOutput<typeof ServerToPhoneMessage>;
 
@@ -172,6 +183,7 @@ export const PhoneToServerMessage = v.variant("type", [
   RetryMessage,
   ReadyMessage,
   HeartbeatMessage,
+  LeaveMessage,
 ]);
 export type PhoneToServerMessage = v.InferOutput<typeof PhoneToServerMessage>;
 

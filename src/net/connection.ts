@@ -2,6 +2,7 @@ import type * as v from "valibot";
 import {
   HEARTBEAT,
   ROOM_CLOSED_CODE,
+  LEFT_CODE,
   HEARTBEAT_INTERVAL_MS,
   type HeartbeatMessage,
   type RejectedMessage,
@@ -180,13 +181,14 @@ export function connect<Receive extends { type: string }, Send>(
           // full・playing で断られ続けているあいだは、待つ時間を延ばしていく
           attempt = 0;
         }
-        if (message.type === "room-closed") {
+        if (message.type === "room-closed" || message.type === "left") {
           finalRejection = true;
-          options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
           // close フレームを待たず、通知だけでも再接続とタイマーを止める。
+          stopTimers();
           generation++;
+          options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
           transport.close();
-          finish(ROOM_CLOSED_CODE, "room-closed");
+          finish(message.type === "left" ? LEFT_CODE : ROOM_CLOSED_CODE, message.type);
           return;
         }
         if (message.type === "heartbeat") return;
@@ -197,8 +199,16 @@ export function connect<Receive extends { type: string }, Send>(
         clearInterval(heartbeat);
         heartbeat = undefined;
         if (state.status === "closed") return;
-        if (finalRejection || code === REPLACED || code === ROOM_CLOSED_CODE) finish(code, reason);
-        else scheduleReconnect();
+        if (
+          finalRejection ||
+          code === REPLACED ||
+          code === ROOM_CLOSED_CODE ||
+          code === LEFT_CODE
+        ) {
+          finish(code, reason);
+        } else {
+          scheduleReconnect();
+        }
       },
     });
   };
