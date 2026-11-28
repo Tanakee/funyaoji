@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef } from "react";
 import { Countdown } from "./Countdown.tsx";
 import { Entry } from "./Entry.tsx";
+import { JointBand } from "./JointBand.tsx";
 import { Lobby } from "./Lobby.tsx";
 import { initialState, reduce, type PhoneState, type RejectReason } from "./model.ts";
 import { Playing } from "./Playing.tsx";
@@ -119,6 +120,17 @@ function Body({
       return <Waiting title="つないでいます" />;
     case "rejected":
       return <Notice {...REJECT_NOTICES[state.reason]} />;
+    case "ended":
+      return (
+        <>
+          {state.joint && <JointBand joint={state.joint} />}
+          <Notice
+            title="このルームは終了しました"
+            reason="遊んでくれてありがとう！"
+            next="また遊ぶときは、スクリーンのQRを読み取ってください。"
+          />
+        </>
+      );
     case "closed":
       return <Notice {...CLOSED[state.replaced ? "replaced" : "lost"]} />;
     case "joined":

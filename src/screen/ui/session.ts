@@ -8,10 +8,12 @@ import {
   type Latency,
   type ScreenReceived,
   type ScreenSent,
+  type ScreenHandlers,
 } from "../../net/client.ts";
 import { COUNTDOWNS, countdownLeadMs, GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import {
   JOINTS,
+  ROOM_CLOSED_CODE,
   type Joint,
   type PhaseMessage,
   type RejectedMessage,
@@ -25,6 +27,7 @@ import {
 } from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
 import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
+import { prepareScreen } from "./roomConnection.ts";
 import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
 
 /** この時間のうちに tilt が届いた関節を、入力が効いている（active）とする（docs/api.md の status） */
@@ -78,12 +81,17 @@ export interface ScreenView {
   game: GameState;
   debug: DebugState;
   audio: AudioState;
+  recreation: { status: "idle" | "creating" | "closing" } | { status: "failed"; message: string };
 }
 
 /** ゲームの用意ができていて、サーバーにつながっているときだけ、開始・やり直しを受け付ける */
 export function canOperate(view: ScreenView): boolean {
   return (
-    view.game === "ready" && view.room.status === "ready" && view.room.connection.status === "open"
+    view.game === "ready" &&
+    view.room.status === "ready" &&
+    view.room.connection.status === "open" &&
+    view.recreation.status !== "creating" &&
+    view.recreation.status !== "closing"
   );
 }
 
@@ -120,11 +128,16 @@ export class ScreenSession {
     absent: {},
     game: "loading",
     audio: { ready: false, muted: false, unavailable: false },
+    recreation: { status: "idle" },
     debug: { enabled: false, autoplay: false },
   };
   private readonly listeners = new Set<() => void>();
   private game: Game | undefined;
   private connection: Connection<ScreenSent> | undefined;
+  private roomGeneration = 0;
+  private roomEnded = false;
+  private readonly lifetime = new AbortController();
+  private roomClose: { resolve: () => void; reject: (error: Error) => void } | undefined;
   /** 関節ごとに最後に tilt が届いた時刻（performance.now()） */
   private readonly lastTiltAt = new Map<Joint, number>();
   private countdownTimer: ReturnType<typeof setTimeout> | undefined;
@@ -187,6 +200,8 @@ export class ScreenSession {
 
   dispose(): void {
     this.disposed = true;
+    this.lifetime.abort();
+    this.roomClose?.reject(new Error("画面を閉じました"));
     this.keyboard?.detach();
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("click", this.unlockAudio, true);
@@ -219,8 +234,9 @@ export class ScreenSession {
   private async openRoom(): Promise<void> {
     let roomCode: string;
     try {
-      roomCode = await createRoom();
+      roomCode = await createRoom(this.lifetime.signal);
     } catch (error) {
+      if (this.disposed) return;
       this.update({
         room: { status: "failed", message: error instanceof Error ? error.message : String(error) },
       });
@@ -228,24 +244,138 @@ export class ScreenSession {
     }
     if (this.disposed) return;
     this.update({ room: { status: "ready", roomCode, connection: { status: "connecting" } } });
-    this.connection = connectScreen(
-      roomCode,
-      {
-        onStateChange: (connection) =>
-          // つなぎ直したら、前に断られた理由は消す
-          this.updateRoom(
-            connection.status === "open" ? { connection, rejected: undefined } : { connection },
-          ),
-        onLatency: (latency) => (this.debug.latency = latency),
-        onMessage: (message) => this.onMessage(message),
+    const generation = ++this.roomGeneration;
+    this.connection = connectScreen(roomCode, this.roomHandlers(generation), {
+      baseUrl: location.href,
+    });
+  }
+
+  /** 古い接続の遅い通知が、新ルームの状態を上書きしないようにする。 */
+  private roomHandlers(generation: number): ScreenHandlers {
+    const current = () => !this.disposed && generation === this.roomGeneration;
+    return {
+      onStateChange: (connection) => {
+        if (!current()) return;
+        if (connection.status === "closed" && connection.code === ROOM_CLOSED_CODE)
+          this.onRoomClosed();
+        this.updateRoom(
+          connection.status === "open" ? { connection, rejected: undefined } : { connection },
+        );
       },
-      { baseUrl: location.href },
-    );
+      onLatency: (latency) => {
+        if (current()) this.debug.latency = latency;
+      },
+      onMessage: (message) => {
+        if (current()) this.onMessage(message);
+      },
+    };
+  }
+
+  /** 作成・接続に失敗したら旧ルームを続ける。終了の受け付けを確かめてから切り替える。 */
+  async recreateRoom(): Promise<void> {
+    if (
+      this.disposed ||
+      this.view.room.status !== "ready" ||
+      this.view.room.connection.status !== "open" ||
+      this.view.recreation.status === "creating" ||
+      this.view.recreation.status === "closing"
+    )
+      return;
+    this.update({ recreation: { status: "creating" } });
+    let prepared: Awaited<ReturnType<typeof prepareScreen>> | undefined;
+    try {
+      const roomCode = await createRoom(this.lifetime.signal);
+      if (this.disposed) return;
+      prepared = await prepareScreen(roomCode, this.lifetime.signal);
+      if (this.disposed) {
+        prepared.discard();
+        return;
+      }
+      if (prepared.connection.state.status !== "open")
+        throw new Error("新しいルームとの接続が切れました。もう一度操作してください");
+      this.update({ recreation: { status: "closing" } });
+      await this.closeCurrentRoom();
+      if (this.disposed) {
+        prepared.discard();
+        return;
+      }
+      const generation = ++this.roomGeneration;
+      this.roomEnded = false;
+      this.connection?.close();
+      this.connection = prepared.connection;
+      clearTimeout(this.countdownTimer);
+      this.clearAbsent();
+      this.lastTiltAt.clear();
+      this.debug.tilts = {};
+      this.debug.latency = {};
+      this.grabbed.clear();
+      Object.assign(this.inputs, NEUTRAL_INPUTS);
+      this.keyboard?.reset();
+      this.game?.reset();
+      this.audio.setPlaying(false);
+      this.lastStatus = { key: "", at: -Infinity };
+      this.update({
+        room: { status: "ready", roomCode, connection: prepared.connection.state },
+        flow: INITIAL_FLOW,
+        joints: [],
+        active: [],
+        absent: {},
+        debug: { ...this.view.debug, autoplay: false },
+        recreation: { status: "idle" },
+      });
+      prepared.activate(this.roomHandlers(generation));
+    } catch (error) {
+      prepared?.discard();
+      if (!this.disposed)
+        this.update({
+          recreation: {
+            status: "failed",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+    }
+  }
+
+  private onRoomClosed(): void {
+    if (!this.roomEnded) {
+      this.roomEnded = true;
+      clearTimeout(this.countdownTimer);
+      this.clearAbsent();
+      this.game?.stop();
+      this.audio.setPlaying(false);
+    }
+    this.roomClose?.resolve();
+  }
+
+  private async closeCurrentRoom(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.roomClose = { resolve, reject };
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "旧ルームの終了を確認できませんでした。接続を確認して、もう一度操作してください",
+              ),
+            ),
+          10_000,
+        );
+        if (!this.connection?.send({ type: "close-room" }))
+          reject(new Error("旧ルームにつながっていません。接続を待って、もう一度操作してください"));
+      });
+    } finally {
+      clearTimeout(timer);
+      this.roomClose = undefined;
+    }
   }
 
   // 受信。tilt の順番の整理（TiltSequencer）は connectScreen がしてから渡す
   private onMessage(message: ScreenReceived): void {
     switch (message.type) {
+      case "room-closed":
+        this.onRoomClosed();
+        break;
       case "room":
         this.onRoom(message.joints);
         break;
@@ -253,6 +383,8 @@ export class ScreenSession {
         this.onPhase(message);
         break;
       case "rejected":
+        // 終了通知の前に回線が切れても、再接続で no-room になれば終了済みと分かる。
+        if (message.reason === "no-room") this.roomClose?.resolve();
         this.updateRoom({ rejected: message.reason });
         break;
       case "tilt":
@@ -304,8 +436,12 @@ export class ScreenSession {
   // 操作。スペースで開始・やり直し、Enter でデバッグの開始、R でやり直し。画面のボタンも同じメソッドを呼ぶ
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     this.unlockAudio();
-    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select")) {
+    if (event.defaultPrevented || event.repeat || event.ctrlKey || event.metaKey || event.altKey)
+      return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("input, textarea, select, dialog, [role=menu]")
+    ) {
       return;
     }
     // ボタンの Space / Enter はブラウザのクリックに任せ、開始・やり直しを二重に起こさない。
