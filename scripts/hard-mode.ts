@@ -10,11 +10,14 @@ import { HARD_MOTOR, MOTOR } from "../src/screen/game/body.ts";
 import { initPhysics, type SimState } from "../src/screen/game/sim.ts";
 
 const { values: args } = parseArgs({
-  options: { n: { type: "string", default: "1500" }, seed: { type: "string", default: "7" } },
+  options: {
+    n: { type: "string", default: "1500" },
+    seed: { type: "string", default: "7" },
+  },
 });
 const LIMIT_S = 60;
 
-/** 比べるハードのモーターの候補。HARD_MOTOR を書き換えて再生する */
+/** 比べるハードのモーターの候補。1つ測るあいだだけ HARD_MOTOR を書き換え、測り終えたら戻す（withHardMotor） */
 const CANDIDATES: (typeof MOTOR)[] = [
   { ...MOTOR },
   { ...MOTOR, maxForceBodyWeights: 0.16 },
@@ -80,6 +83,17 @@ function row(name: string, hard: boolean): void {
   );
 }
 
+/** HARD_MOTOR を候補の値にして f を呼び、終わったら元の値に戻す。Sim はハードのとき HARD_MOTOR を読む */
+function withHardMotor<T>(motor: typeof MOTOR, f: () => T): T {
+  const original = { ...HARD_MOTOR };
+  Object.assign(HARD_MOTOR, motor);
+  try {
+    return f();
+  } finally {
+    Object.assign(HARD_MOTOR, original);
+  }
+}
+
 console.log(`歩き方 ${gaits.length} 通り（種 ${args.seed}）、${LIMIT_S} 秒まで`);
 console.log(
   "| 物理 | お手本 | ゴール | 転倒 | 転んだ時刻の中央値 | 進んだ距離の中央値 | いちばん速いゴール |",
@@ -87,9 +101,10 @@ console.log(
 console.log("|---|---|---|---|---|---|---|");
 row("ノーマル", false);
 for (const c of CANDIDATES) {
-  Object.assign(HARD_MOTOR, c);
-  row(
-    `ハード stiffness ${c.stiffness}・damping ${c.damping}・maxForce ${c.maxForceBodyWeights}`,
-    true,
+  withHardMotor(c, () =>
+    row(
+      `ハード stiffness ${c.stiffness}・damping ${c.damping}・maxForce ${c.maxForceBodyWeights}`,
+      true,
+    ),
   );
 }
