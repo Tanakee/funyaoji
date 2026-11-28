@@ -551,7 +551,18 @@ export class Room extends DurableObject<Env> {
     } else if (phase !== undefined) {
       send(ws, phase);
     }
-    if (howto !== undefined) send(ws, howto);
+    if (howto !== undefined) {
+      // 前の人が押した準備OK を、新しく席に入った人に引き継がない。スクリーンは、席に入ったのが同じスマホか分からない
+      if (!returning && howto.ready.includes(joint)) {
+        const ready = howto.ready.filter((j) => j !== joint);
+        const updated = { ...howto, ready } satisfies HowtoMessage;
+        void this.ctx.storage.put(HOWTO_KEY, updated);
+        this.sendToScreens(updated);
+        send(ws, updated);
+      } else {
+        send(ws, howto);
+      }
+    }
     // 置き換えのときは関節が変わらないが、新しい接続に room を届けるために送る
     this.broadcastRoom(roomCode);
   }

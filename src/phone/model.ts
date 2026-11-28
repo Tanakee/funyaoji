@@ -216,7 +216,8 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
           }
         : state;
     case "howto":
-      return state.kind === "joined"
+      // カウントダウンや結果のあとに遅れて届いたものでは、遊び方の画面に戻さない
+      return state.kind === "joined" && state.phase.kind === "lobby"
         ? { ...state, phase: { kind: "lobby", howto: { ready: message.ready } } }
         : state;
     case "status": {

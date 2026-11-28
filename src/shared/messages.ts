@@ -160,6 +160,7 @@ export const ServerToScreenMessage = v.variant("type", [
   RelayedStartMessage,
   RelayedRetryMessage,
   RelayedReadyMessage,
+  HowtoMessage,
   HeartbeatMessage,
 ]);
 export type ServerToScreenMessage = v.InferOutput<typeof ServerToScreenMessage>;

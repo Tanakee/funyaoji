@@ -88,7 +88,7 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
   {
     name: "howto",
     message: { type: "howto", ready: ["rightHip"] },
-    directions: ["ServerToPhoneMessage", "ScreenToServerMessage"],
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
     name: "ready (スマホの送信)",

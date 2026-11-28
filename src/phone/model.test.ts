@@ -111,6 +111,19 @@ describe("reduce", () => {
     });
   });
 
+  it("カウントダウンや結果のあとに届いた howto では、遊び方の画面に戻らない", () => {
+    const counting = run([
+      ...joinedEvents,
+      message({ ...playing, countdown: { ...countdown, delayMs: {} } }),
+    ]);
+    expect(reduce(counting, message({ type: "howto", ready: [] }))).toBe(counting);
+    const result = run([
+      ...joinedEvents,
+      message({ type: "phase", phase: "result", result: { outcome: "fell", distanceM: 1 } }),
+    ]);
+    expect(reduce(result, message({ type: "howto", ready: [] }))).toBe(result);
+  });
+
   it("同じ関節に戻り howto が届けばタップを残す。関節が変わるか howto がなければ消す", () => {
     const disconnected = run([
       ...joinedEvents,
