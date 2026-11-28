@@ -271,6 +271,14 @@ kbd {
 .input-option {
   position: relative;
 }
+/* モードは3つ並ぶので、1列ふやし、ボタンを少し詰める */
+.mode-field {
+  grid-template-columns: auto auto auto auto;
+  column-gap: calc(8 * var(--u));
+}
+.mode-field .input-option span {
+  padding-inline: calc(12 * var(--u));
+}
 .input-option input {
   position: absolute;
   opacity: 0;

@@ -12,10 +12,21 @@ import { QrCode } from "./QrCode.tsx";
 import { canOperate, type RoomState, type ScreenSession, type ScreenView } from "./session.ts";
 
 /** モードの呼び名（docs/game.md の「モード」） */
-export const MODE_LABELS: Record<Mode, string> = { normal: "ノーマル", hard: "ハード" };
+export const MODE_LABELS: Record<Mode, string> = {
+  normal: "ノーマル",
+  hard: "ハード",
+  obstacle: "障害物",
+};
 
 /** 操作方法の呼び名（docs/game.md の「操作方法」） */
 export const INPUT_LABELS: Record<InputMethod, string> = { tilt: "傾き", camera: "カメラ" };
+
+/** ロビーで、選んでいるモードの下に出す一言 */
+const MODE_DESCRIPTIONS: Record<Mode, string> = {
+  normal: "いつものおじさん",
+  hard: "転びやすいおじさん",
+  obstacle: "ハードルと階段を越える",
+};
 
 /** ヘッダーに出す、モードと操作方法（ランキングはこの組ごとに分かれる） */
 export function modeLabel(mode: Mode, input: InputMethod): string {
@@ -99,7 +110,7 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
             {view.teamNameError ?? `ランキングに使う名前（${TEAM_NAME_MAX_LENGTH}文字まで）`}
           </p>
         </div>
-        <fieldset className="input-field">
+        <fieldset className="input-field mode-field">
           <legend>モード</legend>
           {MODES.map((mode) => (
             <label key={mode} className="input-option">
@@ -113,7 +124,7 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
               <span>{MODE_LABELS[mode]}</span>
             </label>
           ))}
-          <p>{view.mode === "normal" ? "いつものおじさん" : "転びやすいおじさん"}</p>
+          <p>{MODE_DESCRIPTIONS[view.mode]}</p>
         </fieldset>
         <fieldset className="input-field">
           <legend>操作方法</legend>

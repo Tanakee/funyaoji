@@ -25,6 +25,7 @@ import {
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
+import { landmarks, type Block, type Landmark } from "./course.ts";
 import { bottomRightControlsLeft, SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
 import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
@@ -38,6 +39,11 @@ const COLORS = {
   outline: 0x1f3a68,
   goal: 0xa8282e,
   goalLabelBackground: 0xfbf8f0,
+  /** ハードルの紅白と、階段の木の色 */
+  hurdleRed: 0xa8282e,
+  hurdleWhite: 0xfbf8f0,
+  step: 0xd9c19a,
+  stepEdge: 0xc2a682,
   torso: 0xc2a682,
   head: 0xf2cfae,
   foot: 0xf4efe3,
@@ -119,6 +125,8 @@ export interface View {
   onFrame(callback: (dtSec: number) => void): void;
   setSeats(seats: Seats): void;
   setExpression(expression: Expression): void;
+  /** コースの障害物（course.ts）を描き直す。障害物の無いモードは空を渡す */
+  setCourse(course: readonly Block[]): void;
   render(state: SimState, inputs: JointInputs, dtSec: number): void;
   destroy(): void;
 }
@@ -185,6 +193,31 @@ function createPartNode(image: LoadedImage | undefined, slot: ArtSlot): Graphics
 function paintPart(node: Graphics | Sprite, name: PartName, color = COLORS.emptyLimb): void {
   if (node instanceof Graphics) drawPart(node, name, color);
   else if (name !== "torso") node.tint = color;
+}
+
+/** 障害物を描く。部位と同じく cm で描いて 0.01 倍にする。座標は世界の m（上が +y） */
+function drawCourse(g: Graphics, course: readonly Block[]): void {
+  g.clear();
+  const line = { width: 1.2, color: COLORS.outline };
+  for (const b of course) {
+    const x = b.x * CM;
+    const w = b.width * CM;
+    const h = b.height * CM;
+    if (b.kind === "step") {
+      // 上の面の縁を濃くして、段の切れ目を見せる
+      g.rect(x, 0, w, h).fill(COLORS.step).stroke(line);
+      g.rect(x, h - 1.5, w, 1.5).fill(COLORS.stepEdge);
+      continue;
+    }
+    // 紅白に塗り分けた、低いハードル
+    const bands = 3;
+    for (let i = 0; i < bands; i++) {
+      g.rect(x, (h * i) / bands, w, h / bands).fill(
+        i % 2 === 0 ? COLORS.hurdleRed : COLORS.hurdleWhite,
+      );
+    }
+    g.rect(x, 0, w, h).stroke(line);
+  }
 }
 
 function label(text: string, size: number, color: ColorSource, bold = false): Text {
@@ -311,6 +344,10 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
 
   // 世界の座標（m、上が +y）で動かす。原点の位置と拡大は、描くたびに決める
   const world = new Container();
+  // 障害物は、おじさんの奥に描く
+  const courseGraphics = new Graphics();
+  courseGraphics.scale.set(1 / CM);
+  world.addChild(courseGraphics);
   const parts = {} as Record<PartName, { node: Container; body: Graphics | Sprite }>;
   for (const name of DRAW_ORDER) {
     const node = new Container();
@@ -507,6 +544,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     });
   }
 
+  let courseMarks: Landmark[] = [];
   const camera = new Camera();
   let playing = false;
   function setScene(scene: Scene): void {
@@ -608,6 +646,14 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     startLabel.scale.set(ui);
     startLabel.position.set(startX, groundY - pxPerM * 2.6);
 
+    // 障害物の名前を、障害物のすぐ上に出す（低くて見落としやすいので）
+    for (const [i, mark] of courseMarks.entries()) {
+      const t = rulerLabel(`course${i}`, mark.name, 20, COLORS.goal, true);
+      t.visible = true;
+      t.scale.set(ui);
+      t.position.set(screenX(mark.x), groundY - (mark.height + 0.45) * pxPerM);
+    }
+
     const goalX = screenX(GOAL_M);
     const goalLabel = rulerLabel("goal", `ゴール ${GOAL_M}m`, 36, COLORS.text, true);
     goalLabel.visible = true;
@@ -651,6 +697,10 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     },
     render,
     setSeats,
+    setCourse(course) {
+      courseMarks = landmarks(course);
+      drawCourse(courseGraphics, course);
+    },
     setExpression(expression) {
       if (head instanceof Sprite && loaded.head) {
         const image = loaded.head[expression];
