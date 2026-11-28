@@ -224,6 +224,32 @@ body {
   gap: 24px;
   text-align: center;
 }
+.seat-waiting {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.seat-waiting .waiting {
+  min-height: 0;
+  gap: clamp(8px, 4dvh, 24px);
+}
+.seat-waiting .figure {
+  height: 170px;
+  min-height: 0;
+}
+.seat-waiting .figure-svg {
+  height: 100%;
+}
+.seat-waiting-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 700;
+}
+.seat-waiting .big-button {
+  flex-shrink: 0;
+}
 .figure-swing {
   transform-origin: 50% 0;
   animation: swing 2.4s ease-in-out infinite alternate;
