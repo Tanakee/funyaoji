@@ -163,6 +163,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--envs-per-worker", type=int, default=8)
     ap.add_argument("--n-steps", type=int, default=256)
+    ap.add_argument("--torch-threads", type=int, default=4, help="PyTorch のスレッドの数。何本も同時に流すときは減らす")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--ent", type=float, default=0.0)
     ap.add_argument("--log-std", type=float, default=-0.5)
@@ -180,7 +181,7 @@ def main() -> None:
     args = ap.parse_args()
 
     tracking.setup()
-    torch.set_num_threads(4)
+    torch.set_num_threads(args.torch_threads)
     name = args.name or f"ppo-{args.reward}-g{args.gamma}-s{args.seed}-{time.strftime('%m%d%H%M')}"
     out = Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
