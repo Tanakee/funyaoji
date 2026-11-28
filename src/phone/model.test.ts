@@ -234,16 +234,24 @@ describe("reduce", () => {
     expect(run([message(playing)], result)).toMatchObject({ input: "tilt" });
   });
 
-  it("参加していたスマホがつなぎ直して playing で断られたら、順番待ちになる", () => {
+  it("参加していたスマホがつなぎ直して playing で列に並べられたら、順番待ちになる", () => {
     const state = run([
       ...joinedEvents,
       message({ type: "phase", phase: "playing", mode: "normal", input: "tilt" }),
       connection({ status: "reconnecting", attempt: 1 }),
       connection({ status: "open" }),
-      message({ type: "rejected", reason: "playing" }),
+      message({ type: "queued", reason: "playing" }),
     ]);
-    expect(state).toEqual({ kind: "waiting" });
+    expect(state).toEqual({ kind: "waiting", reason: "playing" });
   });
+  it("順番待ちのあいだに待つ理由が変わったら、reason を置き換える", () => {
+    const waiting = run([...grantedEvents, message({ type: "queued", reason: "playing" })]);
+    expect(reduce(waiting, message({ type: "queued", reason: "full" }))).toEqual({
+      kind: "waiting",
+      reason: "full",
+    });
+  });
+
   it("ルームコードが無ければ invalid-room", () => {
     expect(initialState(undefined)).toEqual({ kind: "invalid-room" });
   });
@@ -284,15 +292,15 @@ describe("reduce", () => {
   });
 
   it.each(["full", "playing"] as const)(
-    "%s で順番待ちになり、参加できたら phase を反映する",
+    "queued（%s）で順番待ちになり、同じ接続に joined が届いたら phase を反映する",
     (reason) => {
-      const rejection = message({ type: "rejected", reason });
+      const rejection = message({ type: "queued", reason });
       const waiting = run([
         ...grantedEvents,
         rejection,
         connection({ status: "reconnecting", attempt: 1 }),
       ]);
-      expect(waiting).toEqual({ kind: "waiting" });
+      expect(waiting).toEqual({ kind: "waiting", reason });
       expect(reduce(waiting, rejection)).toBe(waiting);
       const joined = reduce(waiting, message({ type: "joined", joint: "rightHip" }));
       expect(joined).toMatchObject({ kind: "joined", joint: "rightHip", phase: { kind: "lobby" } });
@@ -305,7 +313,7 @@ describe("reduce", () => {
   it("順番待ちをやめると、接続終了の通知が来ても参加前の画面に戻り、もう一度参加できる", () => {
     const ready = run([
       ...grantedEvents,
-      message({ type: "rejected", reason: "full" }),
+      message({ type: "queued", reason: "full" }),
       { type: "cancel-wait" },
       connection({ status: "closed", code: 1000, reason: "" }),
     ]);
@@ -317,7 +325,7 @@ describe("reduce", () => {
   it("やめるを押したのと同時に joined が届いても、参加前の画面に戻る", () => {
     const ready = run([
       ...grantedEvents,
-      message({ type: "rejected", reason: "full" }),
+      message({ type: "queued", reason: "full" }),
       message({ type: "joined", joint: "rightHip" }),
       { type: "cancel-wait" },
       connection({ status: "closed", code: 1000, reason: "" }),
@@ -326,7 +334,7 @@ describe("reduce", () => {
   });
 
   it("順番待ちのあと、接続を終了した理由に合う画面に進む", () => {
-    const waiting = run([...grantedEvents, message({ type: "rejected", reason: "full" })]);
+    const waiting = run([...grantedEvents, message({ type: "queued", reason: "full" })]);
     const close = (code: number) => connection({ status: "closed", code, reason: "" });
     expect(reduce(waiting, close(4000))).toEqual({ kind: "closed", replaced: true });
     expect(reduce(waiting, close(1000))).toEqual({ kind: "closed", replaced: false });
@@ -489,7 +497,7 @@ describe("抜ける", () => {
   it.each([
     message({ type: "left" }),
     connection({ status: "closed", code: 4004, reason: "left" }),
-    message({ type: "rejected", reason: "playing" }),
+    message({ type: "queued", reason: "playing" }),
     connection({ status: "closed", code: 1000, reason: "" }),
   ])("$type を受け取ったら担当の関節を残しておわりにする", (event) => {
     expect(run([...joinedEvents, tap, event])).toEqual({

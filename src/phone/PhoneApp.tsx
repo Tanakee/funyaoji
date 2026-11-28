@@ -73,7 +73,7 @@ export function PhoneApp({ room }: { room: string | undefined }) {
   const cancelWait = useCallback(() => {
     // stop() が接続終了を通知する前に、参加前の画面に戻す
     dispatch({ type: "cancel-wait" });
-    session.current?.stop();
+    session.current?.withdraw();
     session.current = undefined;
   }, []);
 
@@ -169,7 +169,7 @@ function Body({
     case "connecting":
       return <Waiting title="つないでいます" />;
     case "waiting":
-      return <WaitingForSeat onCancel={onCancelWait} />;
+      return <WaitingForSeat reason={state.reason} onCancel={onCancelWait} />;
     case "ended":
       return (
         <>

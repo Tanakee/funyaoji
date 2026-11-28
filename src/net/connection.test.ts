@@ -114,25 +114,22 @@ test("こちらから閉じたとき・no-room で断られたとき・4000 で�
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test.each(["full", "playing"])(
-  "%s で断られたときは、待つ時間を延ばしながらつなぎ直す",
-  (reason) => {
-    const { connection, opened } = connectFake();
-    for (const [index, delay] of [1_000, 2_000, 4_000, 8_000, 10_000, 10_000].entries()) {
-      const { handlers } = opened[index]!;
-      handlers.onOpen();
-      handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
-      handlers.onClose({ code: 4001, reason: "" });
-      expect(connection.state).toEqual({ status: "reconnecting", attempt: index + 1 });
-      vi.advanceTimersByTime(delay - 1);
-      expect(opened).toHaveLength(index + 1);
-      vi.advanceTimersByTime(1);
-      expect(opened).toHaveLength(index + 2);
-    }
-    connection.close();
-    expect(vi.getTimerCount()).toBe(0);
-  },
-);
+test("queued を受け取ってから切れたら、1秒から待ち直す", () => {
+  const { connection, opened } = connectFake();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  opened[1]!.handlers.onClose({ code: 1006, reason: "" });
+  expect(connection.state).toEqual({ status: "reconnecting", attempt: 2 });
+  vi.advanceTimersByTime(2_000);
+  opened[2]!.handlers.onOpen();
+  opened[2]!.handlers.onMessage(JSON.stringify({ type: "queued", reason: "full" }));
+  opened[2]!.handlers.onClose({ code: 1006, reason: "" });
+  expect(connection.state).toEqual({ status: "reconnecting", attempt: 1 });
+  vi.advanceTimersByTime(1_000);
+  expect(opened).toHaveLength(4);
+  connection.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 test("ハートビートの返事もほかのメッセージも10秒届かなければ、閉じてつなぎ直す", () => {
   const { connection, opened } = connectFake();

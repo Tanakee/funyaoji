@@ -39,14 +39,14 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
     directions: ["ServerToPhoneMessage"],
   },
   {
-    name: "rejected",
-    message: { type: "rejected", reason: "full" },
-    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
+    name: "queued: full",
+    message: { type: "queued", reason: "full" },
+    directions: ["ServerToPhoneMessage"],
   },
   {
-    name: "rejected: playing",
-    message: { type: "rejected", reason: "playing" },
-    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
+    name: "queued: playing",
+    message: { type: "queued", reason: "playing" },
+    directions: ["ServerToPhoneMessage"],
   },
   {
     name: "rejected: no-room",
@@ -204,6 +204,11 @@ const rejected: { name: string; message: unknown }[] = [
   { name: "未知の joint (status)", message: { type: "status", active: ["head"] } },
   { name: "未知の joint (howto)", message: { type: "howto", ready: ["rightHip", "head"] } },
   { name: "未知の reason", message: { type: "rejected", reason: "banned" } },
+  {
+    name: "rejected の full（参加列に並べるので断らない）",
+    message: { type: "rejected", reason: "full" },
+  },
+  { name: "queued の未知の reason", message: { type: "queued", reason: "no-room" } },
   { name: "phase が未知", message: { type: "phase", phase: "paused" } },
   {
     name: "playing に mode が無い",

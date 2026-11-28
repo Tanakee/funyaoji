@@ -1,6 +1,6 @@
 // スマホの代わりにルームにつなぎ、tilt を送り続ける。スマホのページが無くても、スクリーンを確かめられる。
 // 使い方：node scripts/fake-phone.ts <ルームコード> [--url http://localhost:5173] [--phones 4]
-// 切れたときと、満員かプレイ中で断られたときは、スマホのページと同じように、同じ ID でつなぎ直す。
+// 切れたときは、スマホのページと同じように、同じ ID でつなぎ直す。満員かプレイ中なら、つないだまま参加列で待つ（queued）。
 // どれかの台が、ルームが無くて断られた（rejected の no-room）か、一度もつながらなかったときは、終了コード 1 で終わる
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";

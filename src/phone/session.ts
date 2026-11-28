@@ -1,6 +1,6 @@
 // ルームにつないでいるあいだ、React の外でやること：接続、入力（傾きかカメラ）の読み取りと tilt の送信、画面を消さないこと
 import { connectPhone } from "../net/client.ts";
-import { createTiltSeq, phoneClientId } from "../net/phone.ts";
+import { createTiltSeq, phoneClientId, renewPhoneClientId } from "../net/phone.ts";
 import type {
   InputMethod,
   Joint,
@@ -19,6 +19,11 @@ const ALIVE_INTERVAL_MS = 1_000;
 interface PhoneSession {
   stop(): void;
   leave(): void;
+  /**
+   * 順番待ちをやめる。参加列から抜けたことをサーバーに知らせてから閉じる。列の位置を予約させない。
+   * 切れていて知らせられなければ、ID を作り直す。サーバーに残った列の位置を、次に参加したときに引き継がない
+   */
+  withdraw(): void;
   send(message: StartMessage | RetryMessage | ReadyMessage): boolean;
   /** 操作方法を切り替える。スクリーンが phase で知らせてくる。同じものなら何もしない */
   setInput(input: InputMethod): void;
@@ -85,13 +90,13 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
           // サーバーが関節を返したので、room を待つあいだに60秒を過ぎても切らない
           stopCountdown();
           releaseWakeLock ??= holdWakeLock();
-        } else if (message.type === "rejected") {
+        } else if (message.type === "rejected" || message.type === "queued") {
           joined = false;
           holdingJoint = false;
           readyAttempted = false;
-          // 参加していたスマホは、断られても60秒を数え続け、過ぎたらつなぎ直さない（docs/api.md の「つなぎ直し」）。
-          // 順番待ちになるのは、まだ参加していなかったスマホだけ
-          if (reconnectingSince === undefined) stopCountdown();
+          // 参加列に並んだら、サーバーが列の位置を持っているので、60秒で諦めない。
+          // 参加していたスマホも、そのまま列で待つ（docs/api.md の「つなぎ直し」）
+          stopCountdown();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         } else if (message.type === "phase") {
@@ -116,6 +121,8 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
         }
         emit({ type: "message", message, at });
         if (leaving && message.type === "joined") connection.send({ type: "leave" });
+        // 抜けるを押したあとに列に並べられたら、列からも抜ける。left が届いて終わる
+        if (leaving && message.type === "queued") connection.send({ type: "leave" });
         if (leaving && message.type === "rejected") connection.close();
       },
       onStateChange(state) {
@@ -170,6 +177,10 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
       stopSending?.();
       releaseWakeLock?.();
       stopReading();
+    },
+    withdraw() {
+      if (!connection.send({ type: "leave" })) renewPhoneClientId();
+      this.stop();
     },
     leave() {
       if (leaving) return;
