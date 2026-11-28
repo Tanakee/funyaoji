@@ -1,5 +1,6 @@
 // PixiJS の描画。SimState を読んで描くだけで、物理にも Rapier にも触れない
 import { Application, BitmapFont, BitmapText, Container, Graphics, Text } from "pixi.js";
+import { JOINT_COLORS } from "../../shared/joints.ts";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { INITIAL_POSES, PART_NAMES, PART_SHAPES, TORSO_SIZE, type PartName } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
@@ -21,13 +22,8 @@ export const COLORS = {
   head: 0xf3e2c3,
   foot: 0x3a3a3a,
   face: 0x2b2b2b,
-  /** 関節ごとの色。ももは股関節の色、すねはひざの色。4人が自分の脚を見つけるための色分け */
-  joint: {
-    rightHip: 0xe4572e,
-    leftHip: 0x2e86ab,
-    rightKnee: 0xf3a712,
-    leftKnee: 0x4caf7d,
-  } satisfies Record<Joint, number>,
+  /** 関節ごとの色。スマホの画面と同じ色にするので、shared に置く */
+  joint: JOINT_COLORS,
 };
 
 const JOINT_LABELS: Record<Joint, string> = {
