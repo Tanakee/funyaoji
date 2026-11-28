@@ -1,6 +1,9 @@
-import { beforeAll, describe, expect, test } from "vite-plus/test";
-import type { Joint } from "../../shared/messages.ts";
-import { NEUTRAL_INPUTS, STEP_S } from "./body.ts";
+import RAPIER from "@dimforge/rapier2d-compat";
+import { beforeAll, describe, expect, test, vi } from "vite-plus/test";
+import { JOINTS, type Joint } from "../../shared/messages.ts";
+import { DEMO_GAIT, type Gait, gaitRecord } from "./ai/gait.ts";
+import { replay } from "./ai/record.ts";
+import { BODY_MASS, HARD_MOTOR, MOTOR, NEUTRAL_INPUTS, STEP_S } from "./body.ts";
 import { demoGait as gait } from "./demo.ts";
 import { moveInputs } from "./keyboard.ts";
 import { SIT_MS, Sim, initPhysics } from "./sim.ts";
@@ -171,39 +174,44 @@ describe("練習の Sim", () => {
   });
 
   test.each([
-    { joint: "rightHip", key: "KeyQ" },
-    { joint: "rightKnee", key: "KeyO" },
-  ] as const)("$joint の反応はプレイ中と1ステップ以内の差に収まる", ({ joint, key }) => {
-    // 動き始めを見る。立った姿勢の入力のまま揺れる幅（練習・プレイ中とも 0.0001 rad 未満）より大きくする
-    const threshold = 0.0002;
-    const stepsToMove = (practice: boolean): number => {
-      const sim = practice ? new Sim({ practice: true }) : new Sim();
-      try {
-        if (!practice) sim.start();
-        for (let step = 0; step < 1 / STEP_S; step++) sim.advance(NEUTRAL, STEP_S);
-        const initialAngle = sim.readout().joints[joint].angle;
-        const inputs = { ...NEUTRAL };
-        const held = new Set([key]);
-        const driving = new Set<Joint>();
-        for (let step = 0; step < 1 / STEP_S; step++) {
-          if (step % (FRAME / STEP_S) === 0) moveInputs(inputs, held, FRAME, driving);
-          sim.advance(inputs, STEP_S);
-          if (Math.abs(sim.readout().joints[joint].angle - initialAngle) > threshold) {
-            return step + 1;
+    { joint: "rightHip", key: "KeyQ", hard: false },
+    { joint: "rightKnee", key: "KeyO", hard: false },
+    { joint: "rightHip", key: "KeyQ", hard: true },
+    { joint: "rightKnee", key: "KeyO", hard: true },
+  ] as const)(
+    "$joint の反応はプレイ中と1ステップ以内の差に収まる（hard: $hard）",
+    ({ joint, key, hard }) => {
+      // 動き始めを見る。立った姿勢の入力のまま揺れる幅（練習・プレイ中とも 0.0001 rad 未満）より大きくする
+      const threshold = 0.0002;
+      const stepsToMove = (practice: boolean): number => {
+        const sim = new Sim({ practice, hard });
+        try {
+          if (!practice) sim.start();
+          for (let step = 0; step < 1 / STEP_S; step++) sim.advance(NEUTRAL, STEP_S);
+          const initialAngle = sim.readout().joints[joint].angle;
+          const inputs = { ...NEUTRAL };
+          const held = new Set([key]);
+          const driving = new Set<Joint>();
+          for (let step = 0; step < 1 / STEP_S; step++) {
+            if (step % (FRAME / STEP_S) === 0) moveInputs(inputs, held, FRAME, driving);
+            sim.advance(inputs, STEP_S);
+            if (Math.abs(sim.readout().joints[joint].angle - initialAngle) > threshold) {
+              return step + 1;
+            }
           }
+          throw new Error(`${joint} が1秒以内に動かなかった（練習: ${practice}）`);
+        } finally {
+          sim.free();
         }
-        throw new Error(`${joint} が1秒以内に動かなかった（練習: ${practice}）`);
-      } finally {
-        sim.free();
-      }
-    };
-    const practice = stepsToMove(true);
-    const playing = stepsToMove(false);
-    expect(
-      Math.abs(practice - playing),
-      `練習 ${practice} ステップ、プレイ中 ${playing} ステップ`,
-    ).toBeLessThanOrEqual(1);
-  });
+      };
+      const practice = stepsToMove(true);
+      const playing = stepsToMove(false);
+      expect(
+        Math.abs(practice - playing),
+        `練習 ${practice} ステップ、プレイ中 ${playing} ステップ`,
+      ).toBeLessThanOrEqual(1);
+    },
+  );
 
   test("練習を作って動かしてから走らせても、お手本の結果が一致する", () => {
     const demoResult = () => {
@@ -218,5 +226,86 @@ describe("練習の Sim", () => {
     practice.advance({ ...NEUTRAL, rightHip: 1 }, 1);
     practice.free();
     expect(demoResult()).toEqual(before);
+  });
+});
+
+describe("ハードの Sim", () => {
+  /** ハードで、体の状態を見ずにゴールできる歩き方。scripts/hard-mode.ts で見つけた。5つの値を1つずつ ±5% ずらしてもゴールする（--perturb） */
+  const HARD_GAIT: Gait = { T: 2.92, h0: 0.58, A: 0.39, K: 0.4, kp: 0.23 };
+
+  test("片脚を前に振ると、胴を起こす補助が無いので、ノーマルより胴が大きく傾く", () => {
+    const maxTilt = (hard: boolean) => {
+      const sim = new Sim({ hard });
+      sim.start();
+      let max = 0;
+      for (let t = 0; t < 0.6; t += FRAME) {
+        sim.advance({ ...NEUTRAL, rightHip: 1 }, FRAME);
+        max = Math.max(max, Math.abs(sim.state().poses.torso.rot));
+      }
+      sim.free();
+      return max;
+    };
+    const normal = maxTilt(false);
+    const hard = maxTilt(true);
+    expect(hard, `ノーマル ${normal} rad、ハード ${hard} rad`).toBeGreaterThan(normal * 2);
+  });
+
+  test.each([
+    { hard: false, motor: MOTOR },
+    { hard: true, motor: HARD_MOTOR },
+  ])(
+    "プレイ中、4つの関節すべてに、モーターの値を毎ステップ設定する（hard: $hard）",
+    ({ hard, motor }) => {
+      // Rapier の関節からは力の上限を読めないので、設定する呼び出しを横から見る。元の処理はそのまま呼ぶ
+      const maxForce = vi.spyOn(RAPIER.UnitImpulseJoint.prototype, "setMotorMaxForce");
+      const position = vi.spyOn(RAPIER.UnitImpulseJoint.prototype, "configureMotorPosition");
+      const steps = 3;
+      try {
+        const sim = new Sim({ hard });
+        sim.start();
+        maxForce.mockClear();
+        position.mockClear();
+        sim.advance(NEUTRAL, steps * STEP_S + STEP_S / 2);
+        expect(sim.state().elapsedMs).toBeCloseTo(steps * STEP_S * 1000, 6);
+        sim.free();
+
+        const handles = (contexts: unknown[]) =>
+          new Set(contexts.map((j) => (j as RAPIER.UnitImpulseJoint).handle));
+        expect(handles(maxForce.mock.contexts).size).toBe(JOINTS.length);
+        expect(handles(position.mock.contexts).size).toBe(JOINTS.length);
+        expect(maxForce.mock.calls).toEqual(
+          Array.from({ length: JOINTS.length * steps }, () => [
+            // 9.81 は sim.ts の重力。sim.ts と同じ順に掛ける
+            motor.maxForceBodyWeights * BODY_MASS * 9.81,
+          ]),
+        );
+        for (const [, stiffness, damping] of position.mock.calls) {
+          expect([stiffness, damping]).toEqual([motor.stiffness, motor.damping]);
+        }
+        expect(position.mock.calls).toHaveLength(JOINTS.length * steps);
+      } finally {
+        maxForce.mockRestore();
+        position.mockRestore();
+      }
+    },
+  );
+
+  test("ハードのモーターの力の上限は、ノーマルより小さい", () => {
+    expect(HARD_MOTOR.maxForceBodyWeights).toBeLessThan(MOTOR.maxForceBodyWeights);
+  });
+
+  test("お手本の歩き方は、ノーマルではゴールするが、ハードでは転ぶ", () => {
+    const end = (hard: boolean) => replay(gaitRecord(DEMO_GAIT, 60), { hard });
+    expect(end(false).result?.outcome).toBe("goal");
+    const hard = end(true);
+    expect(hard.result?.outcome).toBe("fell");
+    expect(hard.elapsedMs).toBeLessThan(5_000);
+  });
+
+  test("ハードでも、10m のゴールまで行ける入力の列がある。作り直しても同じ結果になる", () => {
+    const record = gaitRecord(HARD_GAIT, 60);
+    const first = replay(record, { hard: true });
+    expect(first.result).toMatchObject({ outcome: "goal" });
+    expect(replay(record, { hard: true })).toEqual(first);
   });
 });
