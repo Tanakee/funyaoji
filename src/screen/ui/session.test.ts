@@ -33,6 +33,8 @@ let game: GameOptions;
 const calls: string[] = [];
 /** game.reset() に渡したモード */
 const resetModes: Mode[] = [];
+/** game.practice() に渡したモード */
+const practiceModes: Mode[] = [];
 const setSeats = vi.fn<Game["setSeats"]>();
 let stopDistance = 3.2;
 /** game.stop() に渡したもの。結果の画面にするかを見る */
@@ -92,7 +94,10 @@ vi.mock("../game/index.ts", async () => {
           resetModes.push(mode);
         },
         start() {},
-        practice: () => calls.push("practice"),
+        practice: (mode: Mode) => {
+          calls.push("practice");
+          practiceModes.push(mode);
+        },
         stop: (options?: { showResult?: boolean }) => {
           calls.push("stop");
           stopOptions.push(options);
@@ -118,6 +123,7 @@ beforeEach(() => {
     });
   calls.length = 0;
   resetModes.length = 0;
+  practiceModes.length = 0;
   setSeats.mockClear();
   connectionOpen = true;
   for (const type of Object.keys(listeners)) delete listeners[type];
@@ -869,6 +875,37 @@ describe("ScreenSession", () => {
     }
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     expect(preventDefault).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("ロビーの練習は選んでいるモードで吊り、モードを切り替えると作り直す", async () => {
+    const session = await open();
+    expect(practiceModes).toEqual(["normal"]);
+    session.setMode("hard");
+    expect(practiceModes).toEqual(["normal", "hard"]);
+    // 同じモードを選び直しても作り直さない
+    session.setMode("hard");
+    expect(practiceModes).toEqual(["normal", "hard"]);
+    // 結果からロビーに戻るときも、選んでいるモードで吊る
+    room(["rightHip", "leftKnee"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    game.onEnd({ outcome: "fell", distanceM: 1 });
+    room(["rightHip"]);
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(practiceModes).toEqual(["normal", "hard", "hard"]);
+    // ルームを作り直しても、選んでいるモードで吊る
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    connections[0]!.handlers.onMessage({ type: "room-closed" });
+    await pending;
+    expect(session.getSnapshot().mode).toBe("hard");
+    expect(practiceModes).toEqual(["normal", "hard", "hard", "hard"]);
+    session.setMode("normal");
+    expect(practiceModes).toEqual(["normal", "hard", "hard", "hard", "normal"]);
     session.dispose();
   });
 

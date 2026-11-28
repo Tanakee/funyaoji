@@ -306,6 +306,8 @@ export class ScreenSession {
   setMode(mode: Mode): void {
     if (this.view.flow.kind !== "lobby" || mode === this.view.mode) return;
     this.update({ mode });
+    // 練習もプレイ中と同じ関節のモーターで動かすので、吊ったおじさんを選んだモードで作り直す
+    this.game?.practice(mode);
   }
 
   /**
@@ -369,7 +371,7 @@ export class ScreenSession {
       });
       if (this.disposed) return game.destroy();
       this.game = game;
-      if (this.view.flow.kind === "lobby") game.practice();
+      if (this.view.flow.kind === "lobby") game.practice(this.view.mode);
       this.update({ game: "ready" });
     } catch (error) {
       console.error("ゲームを作れませんでした", error);
@@ -468,7 +470,7 @@ export class ScreenSession {
       this.grabbed.clear();
       Object.assign(this.inputs, NEUTRAL_INPUTS);
       this.keyboard?.reset();
-      this.game?.practice();
+      this.game?.practice(this.view.mode);
       this.audio.setPlaying(false);
       this.lastStatus = { key: "", at: -Infinity };
       this.update({
@@ -985,7 +987,7 @@ export class ScreenSession {
           if (!this.view.joints.includes(joint)) this.inputs[joint] = NEUTRAL_INPUTS[joint];
         }
         this.keyboard?.reset();
-        this.game?.practice();
+        this.game?.practice(this.view.mode);
         this.inputUnsent = !this.sendLobby();
         break;
     }

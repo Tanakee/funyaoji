@@ -24,7 +24,7 @@ declare global {
       scene: Scene;
       /** ロビーの練習で吊っているか */
       practice: boolean;
-      /** いまの走りのモード。練習のあいだは、最後に走ったモード */
+      /** いまの走りか練習のモード */
       mode: Mode;
       torso: Pose;
       /** 関節の角度（rad） */
@@ -46,7 +46,7 @@ export async function createGame({
   let spoken = false;
   let sim = new Sim();
   let practicing = false;
-  // いまの走りのモード。reset で物理演算（Sim）に渡す。ロビーの練習は、モードによらずノーマルの物理で吊る
+  // いまの走りか練習のモード。reset と practice で物理演算（Sim）に渡す
   let mode: Mode = "normal";
   let reported = false;
   let stopped = false;
@@ -130,9 +130,10 @@ export async function createGame({
       sim.start();
       setScene("playing");
     },
-    practice() {
+    practice(nextMode) {
+      mode = nextMode;
       sim.free();
-      sim = new Sim({ practice: true });
+      sim = new Sim({ practice: true, hard: mode === "hard" });
       practicing = true;
       reported = false;
       stopped = false;

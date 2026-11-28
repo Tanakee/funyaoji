@@ -174,39 +174,44 @@ describe("練習の Sim", () => {
   });
 
   test.each([
-    { joint: "rightHip", key: "KeyQ" },
-    { joint: "rightKnee", key: "KeyO" },
-  ] as const)("$joint の反応はプレイ中と1ステップ以内の差に収まる", ({ joint, key }) => {
-    // 動き始めを見る。立った姿勢の入力のまま揺れる幅（練習・プレイ中とも 0.0001 rad 未満）より大きくする
-    const threshold = 0.0002;
-    const stepsToMove = (practice: boolean): number => {
-      const sim = practice ? new Sim({ practice: true }) : new Sim();
-      try {
-        if (!practice) sim.start();
-        for (let step = 0; step < 1 / STEP_S; step++) sim.advance(NEUTRAL, STEP_S);
-        const initialAngle = sim.readout().joints[joint].angle;
-        const inputs = { ...NEUTRAL };
-        const held = new Set([key]);
-        const driving = new Set<Joint>();
-        for (let step = 0; step < 1 / STEP_S; step++) {
-          if (step % (FRAME / STEP_S) === 0) moveInputs(inputs, held, FRAME, driving);
-          sim.advance(inputs, STEP_S);
-          if (Math.abs(sim.readout().joints[joint].angle - initialAngle) > threshold) {
-            return step + 1;
+    { joint: "rightHip", key: "KeyQ", hard: false },
+    { joint: "rightKnee", key: "KeyO", hard: false },
+    { joint: "rightHip", key: "KeyQ", hard: true },
+    { joint: "rightKnee", key: "KeyO", hard: true },
+  ] as const)(
+    "$joint の反応はプレイ中と1ステップ以内の差に収まる（hard: $hard）",
+    ({ joint, key, hard }) => {
+      // 動き始めを見る。立った姿勢の入力のまま揺れる幅（練習・プレイ中とも 0.0001 rad 未満）より大きくする
+      const threshold = 0.0002;
+      const stepsToMove = (practice: boolean): number => {
+        const sim = new Sim({ practice, hard });
+        try {
+          if (!practice) sim.start();
+          for (let step = 0; step < 1 / STEP_S; step++) sim.advance(NEUTRAL, STEP_S);
+          const initialAngle = sim.readout().joints[joint].angle;
+          const inputs = { ...NEUTRAL };
+          const held = new Set([key]);
+          const driving = new Set<Joint>();
+          for (let step = 0; step < 1 / STEP_S; step++) {
+            if (step % (FRAME / STEP_S) === 0) moveInputs(inputs, held, FRAME, driving);
+            sim.advance(inputs, STEP_S);
+            if (Math.abs(sim.readout().joints[joint].angle - initialAngle) > threshold) {
+              return step + 1;
+            }
           }
+          throw new Error(`${joint} が1秒以内に動かなかった（練習: ${practice}）`);
+        } finally {
+          sim.free();
         }
-        throw new Error(`${joint} が1秒以内に動かなかった（練習: ${practice}）`);
-      } finally {
-        sim.free();
-      }
-    };
-    const practice = stepsToMove(true);
-    const playing = stepsToMove(false);
-    expect(
-      Math.abs(practice - playing),
-      `練習 ${practice} ステップ、プレイ中 ${playing} ステップ`,
-    ).toBeLessThanOrEqual(1);
-  });
+      };
+      const practice = stepsToMove(true);
+      const playing = stepsToMove(false);
+      expect(
+        Math.abs(practice - playing),
+        `練習 ${practice} ステップ、プレイ中 ${playing} ステップ`,
+      ).toBeLessThanOrEqual(1);
+    },
+  );
 
   test("練習を作って動かしてから走らせても、お手本の結果が一致する", () => {
     const demoResult = () => {

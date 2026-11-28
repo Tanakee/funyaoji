@@ -50,7 +50,7 @@ test("ロビーの練習のあとにハードで始め、もう一度でも、�
     onEnd() {},
   });
   try {
-    game.practice();
+    game.practice("hard");
     game.reset("hard");
     game.start();
     frame?.(1 / 60);
@@ -59,7 +59,33 @@ test("ロビーの練習のあとにハードで始め、もう一度でも、�
     game.start();
     frame?.(1 / 60);
     // 最初の1つは createGame が作る、まだ使わない Sim
-    expect(created.slice(1)).toEqual([{ practice: true }, { hard: true }, { hard: true }]);
+    expect(created.slice(1)).toEqual([
+      { practice: true, hard: true },
+      { hard: true },
+      { hard: true },
+    ]);
+  } finally {
+    game.destroy();
+  }
+});
+
+test("ロビーの練習は、渡したモードの物理で吊る", async () => {
+  const game = await createGame({
+    container: {} as HTMLElement,
+    inputs: { ...NEUTRAL_INPUTS },
+    onEnd() {},
+  });
+  try {
+    game.practice("normal");
+    frame?.(1 / 60);
+    game.practice("hard");
+    frame?.(1 / 60);
+    game.practice("normal");
+    expect(created.slice(1).map((o) => [o?.practice, o?.hard ?? false])).toEqual([
+      [true, false],
+      [true, true],
+      [true, false],
+    ]);
   } finally {
     game.destroy();
   }
