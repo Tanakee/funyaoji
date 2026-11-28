@@ -5,6 +5,7 @@ import {
   JOINTS,
   PhoneToServerMessage,
   ScreenToServerMessage,
+  type HowtoMessage,
   type Joint,
   type JoinedMessage,
   type PhaseMessage,
@@ -54,6 +55,8 @@ const ROOM_CODE_KEY = "roomCode";
 const CLOSED_KEY = "closed";
 /** スクリーンから最後に受信した phase */
 const PHASE_KEY = "phase";
+/** 遊び方の間にスクリーンから最後に受信した howto */
+const HOWTO_KEY = "howto";
 /** サーバーの時計でカウントダウンが終わる時刻（ミリ秒） */
 const COUNTDOWN_ENDS_AT_KEY = "countdownEndsAt";
 /** 誰もいないルームを消す時刻（ミリ秒）。誰かが接続しているあいだは無い */
@@ -105,9 +108,10 @@ export class Room extends DurableObject<Env> {
     }
     const { 0: client, 1: server } = new WebSocketPair();
     const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
-    const [phase, countdownEndsAt] = await Promise.all([
+    const [phase, countdownEndsAt, howto] = await Promise.all([
       this.ctx.storage.get<PhaseMessage>(PHASE_KEY),
       role === "phone" ? this.ctx.storage.get<number>(COUNTDOWN_ENDS_AT_KEY) : undefined,
+      role === "phone" ? this.ctx.storage.get<HowtoMessage>(HOWTO_KEY) : undefined,
     ]);
 
     // 断る理由は no-room → playing → full の順に調べる。戻ってきたスマホは playing・full では断らない
@@ -136,6 +140,7 @@ export class Room extends DurableObject<Env> {
             roomCode,
             phase,
             countdownEndsAt,
+            howto,
             joint,
             clientId,
             returning !== undefined,
@@ -275,6 +280,7 @@ export class Room extends DurableObject<Env> {
         break;
       case "start":
       case "retry":
+      case "ready":
         this.sendToScreens({ type: received.type, joint });
         break;
       case "heartbeat":
@@ -294,6 +300,7 @@ export class Room extends DurableObject<Env> {
         // プレイ中の参加を断るためと、あとから接続した人に送るために保持する。
         // put を待たずに送る。送信は書き込みが確定するまで止められ（output gate）、次のメッセージより先に中継される
         void this.ctx.storage.put(PHASE_KEY, received);
+        void this.ctx.storage.delete(HOWTO_KEY);
         if (received.phase === "playing" && received.countdown !== undefined) {
           void this.ctx.storage.put(
             COUNTDOWN_ENDS_AT_KEY,
@@ -303,6 +310,10 @@ export class Room extends DurableObject<Env> {
           void this.ctx.storage.delete(COUNTDOWN_ENDS_AT_KEY);
         }
         this.log({ event: "phase", phase: received.phase });
+        this.sendToPhones(received);
+        break;
+      case "howto":
+        void this.ctx.storage.put(HOWTO_KEY, received);
         this.sendToPhones(received);
         break;
       case "status":
@@ -323,7 +334,7 @@ export class Room extends DurableObject<Env> {
   private async closeRoom(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
       await this.ctx.storage.put(CLOSED_KEY, true);
-      await this.ctx.storage.delete([PHASE_KEY, RESERVATIONS_KEY, DELETE_AT_KEY]);
+      await this.ctx.storage.delete([PHASE_KEY, HOWTO_KEY, RESERVATIONS_KEY, DELETE_AT_KEY]);
       await this.ctx.storage.deleteAlarm();
       for (const ws of this.ctx.getWebSockets()) {
         markDeparted(ws);
@@ -500,7 +511,7 @@ export class Room extends DurableObject<Env> {
   }
 
   /**
-   * phase は保持している最後の phase。あれば joined のあとに送り、スマホの表示をルームの状態に合わせる。
+   * 保存済みの phase と howto があれば、joined のあとにこの順で送る。
    * returning は、予約か置き換えで、同じ ID のスマホに関節を返したとき true
    */
   private acceptPhone(
@@ -508,6 +519,7 @@ export class Room extends DurableObject<Env> {
     roomCode: string,
     phase: PhaseMessage | undefined,
     countdownEndsAt: number | undefined,
+    howto: HowtoMessage | undefined,
     joint: Joint,
     clientId: string | undefined,
     returning: boolean,
@@ -538,6 +550,18 @@ export class Room extends DurableObject<Env> {
       );
     } else if (phase !== undefined) {
       send(ws, phase);
+    }
+    if (howto !== undefined) {
+      // 前の人が押した準備OK を、新しく席に入った人に引き継がない。スクリーンは、席に入ったのが同じスマホか分からない
+      if (!returning && howto.ready.includes(joint)) {
+        const ready = howto.ready.filter((j) => j !== joint);
+        const updated = { ...howto, ready } satisfies HowtoMessage;
+        void this.ctx.storage.put(HOWTO_KEY, updated);
+        this.sendToScreens(updated);
+        send(ws, updated);
+      } else {
+        send(ws, howto);
+      }
     }
     // 置き換えのときは関節が変わらないが、新しい接続に room を届けるために送る
     this.broadcastRoom(roomCode);
