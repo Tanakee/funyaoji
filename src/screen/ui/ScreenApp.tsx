@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { DebugControls } from "./DebugControls.tsx";
 import { DebugPanel } from "./DebugPanel.tsx";
-import { Hud, RestartHint } from "./Hud.tsx";
+import { RestartHint } from "./Hud.tsx";
 import { Lobby } from "./Lobby.tsx";
 import { ResultScreen } from "./ResultScreen.tsx";
 import type { ScreenSession } from "./session.ts";
@@ -23,7 +23,6 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
           <span className="countdown-number">{flow.count}</span>
         </div>
       )}
-      <Hud view={view} />
       <RestartHint view={view} />
       <DebugControls session={session} view={view} />
       {flow.kind === "result" && (

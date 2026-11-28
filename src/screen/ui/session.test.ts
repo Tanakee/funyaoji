@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ScreenReceived, ScreenSent } from "../../net/client.ts";
 import type { Joint } from "../../shared/messages.ts";
-import type { GameOptions, JointInputs } from "../game/types.ts";
+import type { Game, GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
+import { ScreenSession, seatsOf, type ScreenView } from "./session.ts";
 
 const sent: ScreenSent[] = [];
 let connectionOpen = true;
 let handlers: { onMessage: (m: ScreenReceived) => void; onStateChange?: (s: unknown) => void };
 let game: GameOptions;
 const calls: string[] = [];
+const setSeats = vi.fn<Game["setSeats"]>();
 let stopDistance = 3.2;
 type Listener = (e: Partial<KeyboardEvent>) => void;
 /** window に付いたリスナー。セッションのキー操作と、キーボード操作（keyboard.ts）の両方が付く */
@@ -31,10 +33,11 @@ vi.mock("../../net/client.ts", () => ({
 vi.mock("../game/index.ts", async () => {
   const { NEUTRAL_INPUTS } = await import("../game/body.ts");
   const { demoGait } = await import("../game/demo.ts");
-  const { attachKeyboard } = await import("../game/keyboard.ts");
+  const { attachKeyboard, KEYBOARD_KEYS } = await import("../game/keyboard.ts");
   return {
     NEUTRAL_INPUTS,
     demoGait,
+    KEYBOARD_KEYS,
     // キーボード操作は本物を使い、フレームはテストが進める
     attachKeyboard: (inputs: JointInputs, controls: (joint: Joint) => boolean) => {
       keyboardControls = controls;
@@ -43,6 +46,7 @@ vi.mock("../game/index.ts", async () => {
     createGame: async (options: GameOptions) => {
       game = options;
       return {
+        setSeats,
         reset: () => calls.push("reset"),
         start() {},
         stop: () => {
@@ -59,6 +63,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   sent.length = 0;
   calls.length = 0;
+  setSeats.mockClear();
   connectionOpen = true;
   for (const type of Object.keys(listeners)) delete listeners[type];
   vi.stubGlobal("window", {
@@ -98,7 +103,6 @@ const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "
 const inputs = (): JointInputs => game.inputs;
 
 async function open(audio?: ScreenAudio) {
-  const { ScreenSession } = await import("./session.ts");
   const session = new ScreenSession({} as HTMLElement, false, audio);
   session.open();
   await vi.advanceTimersByTimeAsync(10);
@@ -106,7 +110,99 @@ async function open(audio?: ScreenAudio) {
   return session;
 }
 
+describe("seatsOf", () => {
+  const lobby: ScreenView = {
+    room: { status: "creating" },
+    flow: { kind: "lobby" },
+    joints: [],
+    active: [],
+    absent: {},
+    reserved: {},
+    game: "ready",
+    debug: { enabled: false, autoplay: false },
+    audio: { ready: false, muted: false, unavailable: false },
+  };
+
+  it("ロビーでは空席・入力中・入力なし・予約中の各席に部位名を出す", () => {
+    expect(
+      seatsOf({
+        ...lobby,
+        joints: ["leftHip", "rightKnee"],
+        active: ["leftHip"],
+        reserved: { rightHip: 52 },
+      }),
+    ).toEqual({
+      leftKnee: { showName: true, state: { kind: "empty" } },
+      leftHip: { showName: true, state: { kind: "joined", active: true } },
+      rightKnee: { showName: true, state: { kind: "joined", active: false } },
+      rightHip: { showName: true, state: { kind: "reserved", remainingSec: 52 } },
+    });
+  });
+
+  it("プレイ中は開始時の担当の待ち時間を使い、空いている関節にはキーを出す", () => {
+    expect(
+      seatsOf({
+        ...lobby,
+        flow: { kind: "playing", players: ["leftHip", "rightHip"] },
+        joints: ["rightHip", "rightKnee"],
+        active: ["rightHip"],
+        absent: { leftHip: 58 },
+        reserved: { leftHip: 18, leftKnee: 40 },
+      }),
+    ).toEqual({
+      leftKnee: { showName: false, state: { kind: "empty" }, key: "P" },
+      leftHip: { showName: false, state: { kind: "reserved", remainingSec: 58 } },
+      rightKnee: { showName: false, state: { kind: "joined", active: false } },
+      rightHip: { showName: false, state: { kind: "joined", active: true } },
+    });
+  });
+
+  it("結果では予約の残り時間を出し、部位名とキーを隠す", () => {
+    const seats = seatsOf({
+      ...lobby,
+      flow: { kind: "result", players: ["leftKnee"], result: { outcome: "fell", distanceM: 1 } },
+      reserved: { leftKnee: 20 },
+    });
+    expect(seats.leftKnee).toEqual({
+      showName: false,
+      state: { kind: "reserved", remainingSec: 20 },
+    });
+    expect(seats.leftHip).toEqual({ showName: false, state: { kind: "empty" } });
+  });
+});
+
 describe("ScreenSession", () => {
+  it("ロビーで抜けた席は予約中になり、60秒で空席に戻る", async () => {
+    const session = await open();
+    await vi.advanceTimersByTimeAsync(90);
+    room(["leftKnee"]);
+    room([]);
+    expect(session.getSnapshot().reserved).toEqual({ leftKnee: 60 });
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({
+      kind: "reserved",
+      remainingSec: 60,
+    });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(session.getSnapshot().reserved).toEqual({ leftKnee: 1 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session.getSnapshot().reserved).toEqual({});
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
+    session.dispose();
+  });
+
+  it("席はゲームの作成時に渡し、接続状態や入力状態が変わったときだけ更新する", async () => {
+    const session = await open();
+    expect(setSeats).toHaveBeenCalledOnce();
+    room(["leftKnee"]);
+    room(["leftKnee"]);
+    expect(setSeats).toHaveBeenCalledTimes(2);
+    handlers.onMessage({ type: "tilt", joint: "leftKnee", seq: 1, angle: 45 });
+    expect(setSeats).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "joined", active: true });
+    session.dispose();
+  });
+
   it("M キーで全音を切り替え、キーの長押しでは切り替えを繰り返さない", async () => {
     const audio = {
       unlock: vi.fn(),
