@@ -4,13 +4,14 @@ import { Entry } from "./Entry.tsx";
 import { HowTo } from "./HowTo.tsx";
 import { JointBand } from "./JointBand.tsx";
 import { Lobby } from "./Lobby.tsx";
-import { initialState, isHowtoReady, reduce, type PhoneState, type RejectReason } from "./model.ts";
+import { initialState, isHowtoReady, reduce, type PhoneState } from "./model.ts";
 import { Playing } from "./Playing.tsx";
 import { Reconnecting } from "./Reconnecting.tsx";
 import { Result } from "./Result.tsx";
 import { startSession } from "./session.ts";
 import { Notice, Waiting } from "./templates.tsx";
 import { requestTiltPermission, waitForTilt } from "./tilt.ts";
+import { WaitingForSeat } from "./WaitingForSeat.tsx";
 
 interface NoticeText {
   title: string;
@@ -18,18 +19,10 @@ interface NoticeText {
   next?: string;
 }
 
-// 満員とプレイ中は、順番待ち（P2a）ができるまでの文言
-const REJECT_NOTICES: Record<RejectReason, NoticeText> = {
-  full: { title: "満員です", reason: "このルームは4人そろっています。" },
-  playing: {
-    title: "プレイ中です",
-    reason: "いまのプレイが終わるまで待ってください。終わると自動で参加します。",
-  },
-  "no-room": {
-    title: "ルームが見つかりません",
-    reason: "このルームは、もう閉じたようです。",
-    next: "スクリーンのQRをもう一度読み取ってください。",
-  },
+const NO_ROOM: NoticeText = {
+  title: "ルームが見つかりません",
+  reason: "このルームは、もう閉じたようです。",
+  next: "スクリーンのQRをもう一度読み取ってください。",
 };
 
 const PERMISSION_DENIED: NoticeText = {
@@ -70,6 +63,13 @@ export function PhoneApp({ room }: { room: string | undefined }) {
     dispatch({ type: "tap-ready" });
     session.current?.send({ type: "ready" });
   }, []);
+  const cancelWait = useCallback(() => {
+    // stop() が接続終了を通知する前に、参加前の画面に戻す
+    dispatch({ type: "cancel-wait" });
+    session.current?.stop();
+    session.current = undefined;
+  }, []);
+
   const onLeave = useCallback(() => {
     dispatch({ type: "tap-leave" });
     session.current?.leave();
@@ -105,6 +105,7 @@ export function PhoneApp({ room }: { room: string | undefined }) {
         onStart={start}
         onRetry={retry}
         onReady={ready}
+        onCancelWait={cancelWait}
         onLeave={onLeave}
       />
     </main>
@@ -118,6 +119,7 @@ function Body({
   onStart,
   onRetry,
   onReady,
+  onCancelWait,
   onLeave,
 }: {
   state: PhoneState;
@@ -126,11 +128,13 @@ function Body({
   onStart: () => void;
   onRetry: () => void;
   onReady: () => void;
+  onCancelWait: () => void;
   onLeave: () => void;
 }) {
   switch (state.kind) {
     case "invalid-room":
-      return <Notice {...REJECT_NOTICES["no-room"]} />;
+    case "rejected":
+      return <Notice {...NO_ROOM} />;
     case "ready":
     case "asking-permission":
       return <Entry askingPermission={state.kind === "asking-permission"} onJoin={onJoin} />;
@@ -150,8 +154,8 @@ function Body({
     case "checking-tilt":
     case "connecting":
       return <Waiting title="つないでいます" />;
-    case "rejected":
-      return <Notice {...REJECT_NOTICES[state.reason]} />;
+    case "waiting":
+      return <WaitingForSeat onCancel={onCancelWait} />;
     case "ended":
       return (
         <>

@@ -69,7 +69,9 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
           joined = false;
           holdingJoint = false;
           readyAttempted = false;
-          stopCountdown();
+          // 参加していたスマホは、断られても60秒を数え続け、過ぎたらつなぎ直さない（docs/api.md の「つなぎ直し」）。
+          // 順番待ちになるのは、まだ参加していなかったスマホだけ
+          if (reconnectingSince === undefined) stopCountdown();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         } else if (message.type === "phase") {
