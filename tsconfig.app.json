@@ -22,5 +22,9 @@
   },
   "include": ["src", "cloudflare.config.ts", ".cloudflare/types"],
   // Node.js で動くファイル。tsconfig.node.json で検査する
-  "exclude": ["src/server/test-setup.ts", "src/server/test-server.ts"]
+  "exclude": [
+    "src/server/test-setup.ts",
+    "src/server/test-server.ts",
+    "src/server/ranking-table.test.ts"
+  ]
 }

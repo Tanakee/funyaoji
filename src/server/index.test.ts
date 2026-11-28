@@ -597,7 +597,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     test("プレイ中でも、予約か開いた接続のある ID のスマホは断らない。ほかのスマホは playing で断る", async () => {
       const roomCode = await createRoom();
       const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
-      const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
+      const playing = { type: "phase", phase: "playing", mode: "normal", input: "tilt" };
       await screen.send(JSON.stringify(playing));
       for (const phone of phones) {
         // fillRoom のあとに届いた room を読み飛ばす
@@ -637,7 +637,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
       await phone.next(); // room
       await screen.next(); // room
 
-      const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
+      const playing = { type: "phase", phase: "playing", mode: "normal", input: "tilt" };
       const countdown = {
         kind: "readyGo",
         durationMs: 1_500,

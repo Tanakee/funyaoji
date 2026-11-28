@@ -31,6 +31,8 @@ TODO：担当（スクリーンの PC を操作する人、ログを見る人、
 
 TODO：いつから `main` へのマージ（本番へのデプロイ）を止めるかを決める。
 
+- デプロイのあとは、開いているスクリーンのタブとスマホのページを読み込み直す。前の版のページは、新しい版のサーバーとメッセージの形が合わないことがある（たとえば、モードの値を `10m` から `normal`・`hard` に変えた版では、前の版のスクリーンが送る `10m` の `phase` をサーバーが捨て、スマホの画面が切り替わらない）
+
 TODO：戻す先のバージョン（最後に問題なく通せたもの）の ID を、通しのあとに控えておくかを決める。
 
 ## 当日の朝
@@ -70,8 +72,10 @@ TODO：会場の Wi-Fi の名前と、スマホをどの回線につなぐかを
 4. 会場の回線から、ランキングが空なのを確かめる
 
 ```sh
-curl --fail --show-error 'https://funyaoji.team-sweater.workers.dev/api/rankings?mode=10m'
-# {"mode":"10m","rankings":[]} なら空
+for mode in normal hard; do for input in tilt camera; do
+  curl --fail --show-error "https://funyaoji.team-sweater.workers.dev/api/rankings?mode=$mode&input=$input"; echo
+done; done
+# 4行とも {"mode":"normal","input":"tilt","rankings":[]} のように rankings が空なら空
 ```
 
 - 前のシーズンの記録は消えずに、前の名前の Durable Object に残る。値を戻せば、また見える
@@ -149,6 +153,7 @@ npx cf workers deployments create --worker funyaoji --strategy percentage \
 ```
 
 - Durable Objects のクラスを足した・消したバージョンをまたいでは、前のバージョンに戻せない
+- モードをノーマル・ハードにした PR（#182）より前のバージョンには戻さない。この版は、ランキングの `10m` の記録を `normal` に書き換えるので、前の版（`10m` で読む）に戻すと、同じシーズンのランキングが空に見える
 - ランキングを空にしたあとは、そのデプロイ（上の「ランキングを空にする」で控えた ID）以降のバージョンにだけ戻す。それより前に戻すと、リハーサルの記録のシーズンに戻り、発表で保存した記録が見えなくなる
 - 戻すと、本番の内容が `main` とずれる。直した変更を `main` に入れると、また最新の `main` がデプロイされる
 - GitHub Actions が使えないときだけ、ローカルからデプロイする（`npx cf deploy`）。コミットしていない変更も本番に出るので、`main` と同じ状態で行う

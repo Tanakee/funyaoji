@@ -30,7 +30,7 @@ export function ResultScreen({
         </div>
         <div className="brand-name">ふにゃおじ</div>
         {/* ランキングは、モードと操作方法の組ごとに分かれる */}
-        <span className="header-mode">{modeLabel(view.input)}</span>
+        <span className="header-mode">{modeLabel(view.mode, view.input)}</span>
       </header>
 
       <div className="result-layout">

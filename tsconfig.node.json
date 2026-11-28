@@ -1,5 +1,5 @@
 {
-  // Node.js で動くファイル（Vite の設定とテストの準備）だけを、Node.js の型で検査する。
+  // Node.js で動くファイル（Vite の設定とテストの準備、Node.js の SQLite を使うテスト）だけを、Node.js の型で検査する。
   // ほかのファイル（ブラウザと Worker）では、Node.js の型を使えないようにする
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
@@ -11,6 +11,7 @@
     "src/server/test-setup.ts",
     "src/server/test-server.ts",
     "src/server/test-context.d.ts",
+    "src/server/ranking-table.test.ts",
     "scripts"
   ],
   "exclude": []

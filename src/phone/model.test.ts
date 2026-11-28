@@ -75,7 +75,7 @@ describe("JumpFilter", () => {
 });
 
 describe("reduce", () => {
-  const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" } as const;
+  const playing = { type: "phase", phase: "playing", mode: "normal", input: "tilt" } as const;
   const countdown = { kind: "count", durationMs: 3_000, remainingMs: 2_000 } as const;
 
   it("遊び方の間だけ準備OKを押せる。howto を受け取っても active は変わらない", () => {
@@ -237,7 +237,7 @@ describe("reduce", () => {
   it("参加していたスマホがつなぎ直して playing で断られたら、順番待ちになる", () => {
     const state = run([
       ...joinedEvents,
-      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
+      message({ type: "phase", phase: "playing", mode: "normal", input: "tilt" }),
       connection({ status: "reconnecting", attempt: 1 }),
       connection({ status: "open" }),
       message({ type: "rejected", reason: "playing" }),
@@ -258,7 +258,7 @@ describe("reduce", () => {
     const state = run([
       ...joinedEvents,
       message({ type: "room", roomCode: "K7Q2", joints: ["rightHip", "leftKnee"] }),
-      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
+      message({ type: "phase", phase: "playing", mode: "normal", input: "tilt" }),
       message({ type: "status", active: ["leftKnee"] }),
     ]);
     expect(state).toMatchObject({
@@ -372,7 +372,7 @@ describe("reduce", () => {
       ...joinedEvents,
       connection({ status: "reconnecting", attempt: 1 }, 1_000),
       message({ type: "joined", joint: "leftKnee" }),
-      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
+      message({ type: "phase", phase: "playing", mode: "normal", input: "tilt" }),
     ]);
     expect(state).toMatchObject({ link: "rejoining", phase: { kind: "playing" } });
     expect(
@@ -386,7 +386,7 @@ describe("reduce", () => {
   it("phase を受け取っていないルームでは、joined のあとの room で、ロビーのまま閉じる", () => {
     const state = run([
       ...joinedEvents,
-      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
+      message({ type: "phase", phase: "playing", mode: "normal", input: "tilt" }),
       connection({ status: "reconnecting", attempt: 1 }, 1_000),
       message({ type: "joined", joint: "leftKnee" }),
       message({ type: "room", roomCode: "K7Q2", joints: ["leftKnee"] }),
@@ -479,7 +479,7 @@ describe("抜ける", () => {
     }
     const playing = reduce(
       lobby,
-      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
+      message({ type: "phase", phase: "playing", mode: "normal", input: "tilt" }),
     );
     expect(reduce(playing, tap)).toEqual({ ...playing, leaving: true });
     const ready = initialState("K7Q2");
