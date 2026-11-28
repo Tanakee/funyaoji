@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { ScreenReceived, ScreenSent } from "../../net/client.ts";
+import { createRoom } from "../../net/api.ts";
+import type { ConnectionState, ScreenReceived, ScreenSent } from "../../net/client.ts";
 import type { Joint } from "../../shared/messages.ts";
 import type { GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
 
 const sent: ScreenSent[] = [];
+const connections: {
+  roomCode: string;
+  handlers: typeof handlers;
+  sent: ScreenSent[];
+  closed: boolean;
+}[] = [];
 let connectionOpen = true;
 let handlers: { onMessage: (m: ScreenReceived) => void; onStateChange?: (s: unknown) => void };
 let game: GameOptions;
@@ -18,13 +25,25 @@ let keyboardControls: (joint: Joint) => boolean = () => false;
 let nextFrame: FrameRequestCallback | undefined;
 let frameTime = 0;
 
-vi.mock("../../net/api.ts", () => ({ createRoom: async () => "ABCD" }));
+vi.mock("../../net/api.ts", () => ({ createRoom: vi.fn(async () => "ABCD") }));
 vi.mock("../../net/client.ts", () => ({
-  connectScreen: (_room: string, h: typeof handlers) => {
+  connectScreen: (roomCode: string, h: typeof handlers) => {
     handlers = h;
+    const record = { roomCode, handlers: h, sent: [] as ScreenSent[], closed: false };
+    connections.push(record);
     return {
-      send: (m: ScreenSent) => connectionOpen && sent.push(m) > 0,
-      close() {},
+      send: (m: ScreenSent) => {
+        if (!connectionOpen || record.closed) return false;
+        record.sent.push(m);
+        return sent.push(m) > 0;
+      },
+      close() {
+        record.closed = true;
+        h.onStateChange?.({ status: "closed", code: 1000, reason: "" });
+      },
+      get state(): ConnectionState {
+        return record.closed ? { status: "closed", code: 1000, reason: "" } : { status: "open" };
+      },
     };
   },
 }));
@@ -58,6 +77,8 @@ vi.mock("../game/index.ts", async () => {
 beforeEach(() => {
   vi.useFakeTimers();
   sent.length = 0;
+  connections.length = 0;
+  vi.mocked(createRoom).mockReset().mockResolvedValue("ABCD");
   calls.length = 0;
   connectionOpen = true;
   for (const type of Object.keys(listeners)) delete listeners[type];
@@ -107,6 +128,116 @@ async function open(audio?: ScreenAudio) {
 }
 
 describe("ScreenSession", () => {
+  it("新ルームの接続と旧ルームの終了を確認するまで切り替えず、古い通知を捨てる", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    const old = connections[0]!;
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.closed).toBe(false);
+    expect(session.getSnapshot().flow.kind).toBe("playing");
+    expect(old.sent).not.toContainEqual({ type: "close-room" });
+    const next = connections[1]!;
+    next.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.sent).toContainEqual({ type: "close-room" });
+    expect(session.getSnapshot().room).toMatchObject({ roomCode: "ABCD" });
+    old.handlers.onMessage({ type: "room-closed" });
+    await pending;
+    expect(old.closed).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "WXYZ" },
+      flow: { kind: "lobby" },
+      joints: [],
+      active: [],
+      recreation: { status: "idle" },
+    });
+    old.handlers.onMessage({ type: "room", roomCode: "ABCD", joints: ["leftHip"] });
+    old.handlers.onStateChange?.({ status: "reconnecting", attempt: 1 });
+    old.handlers.onMessage({ type: "tilt", joint: "leftHip", seq: 1, angle: 90 });
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "WXYZ", connection: { status: "open" } },
+      joints: [],
+    });
+    expect(session.debug.tilts).toEqual({});
+    session.dispose();
+  });
+
+  it("429 で新ルームを作れなければ、前のプレイと参加者を維持する", async () => {
+    const session = await open();
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    vi.mocked(createRoom).mockRejectedValueOnce(new Error("今日はもう作れません"));
+    await session.recreateRoom();
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "ABCD" },
+      flow: { kind: "playing" },
+      joints: ["rightHip"],
+      recreation: { status: "failed", message: "今日はもう作れません" },
+    });
+    expect(connections).toHaveLength(1);
+    expect(connections[0]!.closed).toBe(false);
+    expect(sent).not.toContainEqual({ type: "close-room" });
+    session.dispose();
+  });
+
+  it("新ルームにつながらなければ旧ルームを閉じず、作成の連打も受け付けない", async () => {
+    const session = await open();
+    const old = connections[0]!;
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "rejected", reason: "no-room" });
+    await pending;
+    expect(createRoom).toHaveBeenCalledTimes(2);
+    expect(old.closed).toBe(false);
+    expect(old.sent).not.toContainEqual({ type: "close-room" });
+    expect(session.getSnapshot().recreation.status).toBe("failed");
+    session.dispose();
+  });
+
+  it("旧ルーム終了の返事が無いときは新ルームを破棄し、エラーを出す", async () => {
+    const session = await open();
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await pending;
+    expect(connections[1]!.sent).toContainEqual({ type: "close-room" });
+    expect(connections[1]!.closed).toBe(true);
+    expect(session.getSnapshot()).toMatchObject({
+      room: { roomCode: "ABCD" },
+      recreation: { status: "failed" },
+    });
+    // タイムアウト後に終了の返事が遅れても、閉じたルームでゲームを続けない。
+    connections[0]!.handlers.onMessage({ type: "room-closed" });
+    connections[0]!.handlers.onStateChange?.({
+      status: "closed",
+      code: 4003,
+      reason: "room-closed",
+    });
+    expect(calls.filter((c) => c === "stop")).toHaveLength(1);
+    expect(session.getSnapshot().room).toMatchObject({ connection: { status: "closed" } });
+    session.dispose();
+  });
+
+  it("作成中に画面を閉じたら、遅い結果で新ルームへ切り替えない", async () => {
+    const session = await open();
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    session.dispose();
+    await pending;
+    expect(connections.every((c) => c.closed)).toBe(true);
+    expect(session.getSnapshot().room).toMatchObject({ roomCode: "ABCD" });
+  });
+
   it("M キーで全音を切り替え、キーの長押しでは切り替えを繰り返さない", async () => {
     const audio = {
       unlock: vi.fn(),
