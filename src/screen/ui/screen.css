@@ -975,37 +975,137 @@ html[data-debug] .result-screen {
   }
 }
 
-/* ロビーで最初の操作を案内し、すべての画面で音を切り替えられる。 */
-.audio-controls {
+/* 運営・全画面・音。1280×720 の安全領域（左右54px・上下40px）内。 */
+.operator-controls {
   position: fixed;
-  left: 12px;
-  bottom: 8px;
-  z-index: 11;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 10px;
-  background: var(--color-surface);
+  right: max(env(safe-area-inset-right), min(4.21875vw, 81px));
+  bottom: max(env(safe-area-inset-bottom), min(5.55556vh, 60px));
+  z-index: 20;
   color: var(--color-ink);
-  font-size: 12px;
   pointer-events: auto;
 }
-.audio-controls button {
-  padding: 5px 8px;
-  border: 1px solid var(--color-line);
-  border-radius: 6px;
-  background: var(--color-bg);
+.operator-buttons {
+  display: flex;
+  gap: 8px;
+}
+.operator-buttons button {
+  width: clamp(40px, 4.375vw, 84px);
+  height: clamp(40px, 4.375vw, 84px);
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-surface);
   color: inherit;
+  font-size: clamp(22px, 2vw, 38px);
+  cursor: pointer;
+}
+.operator-buttons button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.operator-controls--playing .operator-buttons {
+  opacity: 0.35;
+}
+.operator-controls:hover .operator-buttons,
+.operator-controls:focus-within .operator-buttons {
+  opacity: 1;
+}
+.operator-menu,
+.operator-notice,
+.operator-audio-status:not(:empty) {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  width: max-content;
+  max-width: min(440px, 85vw);
+  margin: 0;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--color-surface);
+  font-size: clamp(16px, 1.5625vw, 30px);
+}
+.operator-menu {
+  z-index: 1;
+}
+.operator-menu p {
+  margin: 8px 0 0;
+  font-size: 16px;
+}
+.operator-menu button,
+.operator-dialog button {
+  min-height: 56px;
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-brand);
+  color: var(--color-brand-ink);
   font: inherit;
   cursor: pointer;
 }
-html[data-debug] .audio-controls:not(.audio-controls--full) {
-  bottom: calc(var(--debug-h) + 8px);
+.operator-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.operator-dialog {
+  max-width: min(600px, 90vw);
+  padding: 32px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 20px;
+}
+.operator-dialog::backdrop {
+  background: #0008;
+}
+.operator-dialog h2 {
+  margin-top: 0;
+  font-size: 32px;
+}
+.operator-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-top: 24px;
+}
+.operator-dialog-actions button:first-child {
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+html[data-debug] .operator-controls--playing {
+  bottom: calc(var(--debug-h) + 12px);
+}
+
+/* 1人用の開始ボタンが、運営の共通ボタンの下に入らないようにする。 */
+html[data-debug] .lobby-start .debug-button--start {
+  margin-right: calc(3 * clamp(40px, 4.375vw, 84px) + 32px);
+  width: auto;
 }
 @media (max-width: 600px) {
-  .audio-controls {
-    max-width: calc(100% - 24px);
-    font-size: 10px;
+  html[data-debug] .lobby-start .debug-button--start {
+    margin-right: 0;
   }
+}
+
+.operator-failure {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-size: 20px;
+  pointer-events: auto;
+  text-align: center;
+}
+.operator-failure h1 {
+  font-size: 32px;
+}
+.operator-failure button {
+  min-height: 56px;
+  padding: 12px 24px;
+  font: inherit;
 }
