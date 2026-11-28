@@ -5,6 +5,7 @@ import { isRoomCode, normalizeRoomCode } from "../shared/room.ts";
 import {
   ROOM_CLOSED_CODE,
   LEFT_CODE,
+  type InputMethod,
   type Joint,
   type PhaseMessage,
   type PlayResult,
@@ -50,6 +51,8 @@ export type PhoneState =
       /** 接続中のスマホの数 */
       count: number;
       phase: RoomPhase;
+      /** 操作方法。スクリーンがロビーで選び、phase で知らせる。結果の phase には無いので、前の値を残す */
+      input: InputMethod;
       /** 「抜ける」を押して、サーバーの受け付け（left）を待っている。つなぎ直しても残す */
       leaving: boolean;
       /** 遊び方の間に、このスマホで準備OK を押した。スクリーンの返事（howto の ready）を待たずに表示を変える */
@@ -203,6 +206,7 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
           joint: message.joint,
           count: 1,
           phase: { kind: "lobby" },
+          input: "tilt",
           leaving: false,
           readyPressed: false,
           active: false,
@@ -245,6 +249,7 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
         ? {
             ...state,
             phase: toRoomPhase(message, state.joint, at),
+            input: message.phase === "result" ? state.input : message.input,
             active: false,
             // つなぎ直したときにサーバーが送り直す lobby では消さない。遊び方の間なら、このあと howto が届く
             readyPressed:

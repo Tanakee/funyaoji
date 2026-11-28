@@ -9,7 +9,7 @@ import {
   type SubmitRankingResponse,
   type TooManyRequests,
 } from "../shared/api.ts";
-import { Mode, type RejectedMessage } from "../shared/messages.ts";
+import { InputMethod, Mode, type RejectedMessage } from "../shared/messages.ts";
 import {
   isRoomCode,
   normalizeRoomCode,
@@ -92,10 +92,13 @@ app.get("/api/rooms/:roomCode/ws", (c) => {
 app.get("/api/rankings", async (c) => {
   const mode = v.safeParse(Mode, c.req.query("mode"));
   if (!mode.success) return c.text("mode には 10m を指定してください", 400);
+  const input = v.safeParse(InputMethod, c.req.query("input"));
+  if (!input.success) return c.text("input には tilt か camera を指定してください", 400);
   const rankings = await c.executionCtx.exports.Ranking.getByName(RANKING_OBJECT_NAME).getTop(
     mode.output,
+    input.output,
   );
-  return c.json<RankingsResponse>({ mode: mode.output, rankings });
+  return c.json<RankingsResponse>({ mode: mode.output, input: input.output, rankings });
 });
 
 // 値の検査と IP ごとの回数で断るものは、Durable Object を呼ばない（設計の「ランキング」）
@@ -114,6 +117,7 @@ app.post("/api/rankings", async (c) => {
   console.log({
     event: "ranking-saved",
     mode: parsed.output.mode,
+    input: parsed.output.input,
     timeMs: parsed.output.timeMs,
     rank: result.entry.rank,
   });

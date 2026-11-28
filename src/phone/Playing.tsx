@@ -1,5 +1,6 @@
 import { useRef, type CSSProperties } from "react";
-import type { Joint } from "../shared/messages.ts";
+import type { InputMethod, Joint } from "../shared/messages.ts";
+import { CameraPreview } from "./camera/CameraPreview.tsx";
 import { JointBand } from "./JointBand.tsx";
 import { JOINT_LABELS } from "./joints.ts";
 import { MAX_ANGLE } from "./tilt.ts";
@@ -22,7 +23,7 @@ function stringX(y: number, bend: number): number {
   return STRING_X + 2 * (1 - t) * t * bend;
 }
 
-const SCALE = (
+const TILT_SCALE = (
   <g className="playing-scale">
     <path d="M154 55 V390 M142 55 H166 M147 166.7 H161 M147 278.3 H161 M142 390 H166" />
     <text x="132" y="51">
@@ -40,7 +41,28 @@ const SCALE = (
   </g>
 );
 
-export function Playing({ joint, active }: { joint: Joint; active: boolean }) {
+const CAMERA_SCALE = (
+  <g className="playing-scale">
+    <path d="M154 55 V390 M142 55 H166 M147 166.7 H161 M147 278.3 H161 M142 390 H166" />
+    <text x="132" y="61">
+      曲げる
+    </text>
+    <text x="132" y="396">
+      伸ばす
+    </text>
+  </g>
+);
+
+export function Playing({
+  joint,
+  active,
+  input,
+}: {
+  joint: Joint;
+  active: boolean;
+  input: InputMethod;
+}) {
+  const camera = input === "camera";
   const label = JOINT_LABELS[joint];
   const string = useRef<SVGPathElement>(null);
   const knot = useRef<SVGGElement>(null);
@@ -75,9 +97,13 @@ export function Playing({ joint, active }: { joint: Joint; active: boolean }) {
           viewBox="0 0 320 608"
           preserveAspectRatio="xMidYMin meet"
           role="img"
-          aria-label="担当の糸と傾きの目盛り。立てると90度、寝かせると0度"
+          aria-label={
+            camera
+              ? "担当の糸と指の曲げの目盛り。曲げると糸が引かれ、伸ばすとゆるむ"
+              : "担当の糸と傾きの目盛り。立てると90度、寝かせると0度"
+          }
         >
-          {SCALE}
+          {camera ? CAMERA_SCALE : TILT_SCALE}
           <path
             className="playing-leg-faint"
             d={label.hip ? "M222 528 L196 583" : "M93 439 L170 474"}
@@ -94,8 +120,15 @@ export function Playing({ joint, active }: { joint: Joint; active: boolean }) {
             <circle className="playing-knot" r="18" />
           </g>
         </svg>
+        {camera ? <CameraPreview /> : null}
         <p className={active ? "playing-hint" : "playing-hint playing-warning"}>
-          {active ? "スクリーンを見て傾けよう" : "傾きがスクリーンに届いていません"}
+          {active
+            ? camera
+              ? "スクリーンを見て指を曲げよう"
+              : "スクリーンを見て傾けよう"
+            : camera
+              ? "指の動きがスクリーンに届いていません"
+              : "傾きがスクリーンに届いていません"}
         </p>
       </section>
     </>

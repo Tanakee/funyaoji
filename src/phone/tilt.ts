@@ -45,11 +45,19 @@ export class JumpFilter {
   }
 }
 
-/** 最後に読めた角度。まだ読めていなければ undefined。ゲージと糸が毎フレーム読む */
+/**
+ * 最後に読めた角度。まだ読めていなければ undefined。ゲージと糸が毎フレーム読み、startSendingTilt が送る。
+ * カメラで遊ぶときは、傾きの代わりにカメラ（camera/camera.ts）が、指の曲げを同じ 0〜90度にして書く
+ */
 let latest: number | undefined;
 let filter = new JumpFilter();
 export function latestAngle(): number | undefined {
   return latest;
+}
+
+/** 傾き以外の入力（カメラ）が、送る角度を書く。読めていなければ undefined */
+export function setLatestAngle(angle: number | undefined): void {
+  latest = angle;
 }
 
 function onOrientation(event: DeviceOrientationEvent): void {

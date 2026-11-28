@@ -344,7 +344,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
       await first.next(); // joined
       await first.next(); // room
       await screen.next(); // room
-      const phase = { type: "phase", phase: "lobby" };
+      const phase = { type: "phase", phase: "lobby", input: "tilt" };
       const howto = { type: "howto", ready: [] };
       if (withPhase) {
         await screen.send(JSON.stringify(phase));
@@ -385,7 +385,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     expect(await again.next()).toEqual({ type: "howto", ready: ["rightHip"] });
     expect(await again.next()).toEqual(room);
 
-    const phase = { type: "phase", phase: "lobby" };
+    const phase = { type: "phase", phase: "lobby", input: "tilt" };
     await screen.send(JSON.stringify(phase));
     expect(await again.next()).toEqual(phase);
     const afterHowto = new Client(roomCode, "phone");
@@ -580,7 +580,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     test("プレイ中でも、予約か開いた接続のある ID のスマホは断らない。ほかのスマホは playing で断る", async () => {
       const roomCode = await createRoom();
       const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
-      const playing = { type: "phase", phase: "playing", mode: "10m" };
+      const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
       await screen.send(JSON.stringify(playing));
       for (const phone of phones) {
         // fillRoom のあとに届いた room を読み飛ばす
@@ -620,7 +620,7 @@ describe("GET /api/rooms/:roomCode/ws", () => {
       await phone.next(); // room
       await screen.next(); // room
 
-      const playing = { type: "phase", phase: "playing", mode: "10m" };
+      const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
       const countdown = {
         kind: "readyGo",
         durationMs: 1_500,
