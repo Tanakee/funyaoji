@@ -2,6 +2,7 @@ import type * as v from "valibot";
 import {
   HEARTBEAT,
   ROOM_CLOSED_CODE,
+  LEFT_CODE,
   HEARTBEAT_INTERVAL_MS,
   type HeartbeatMessage,
   type RejectedMessage,
@@ -56,7 +57,7 @@ const NORMAL_CLOSURE = 1000;
 /** サーバーが、新しいスクリーンに置き換えて閉じたときの close コード */
 const REPLACED = 4000;
 /** これで断られたら、つなぎ直しても入れない */
-const FINAL_REJECTIONS: readonly RejectedMessage["reason"][] = ["no-room", "full"];
+const FINAL_REJECTIONS: readonly RejectedMessage["reason"][] = ["no-room"];
 
 /** ブラウザの document のうち、使うところだけ。Node.js（scripts/fake-phone.ts）には無い */
 interface Page {
@@ -74,7 +75,7 @@ export const LIVENESS_TIMEOUT_MS = 10_000;
 /**
  * トランスポートを開き、受信したメッセージを検証して渡す。
  * 開いているあいだ、5秒ごとにハートビートを送る（docs/api.md の heartbeat）。
- * 思いがけず切れたときと、10秒何も届かないときは、つなぎ直す
+ * 思いがけず切れたとき、10秒何も届かないとき、full・playing で断られたときは、つなぎ直す
  */
 export function connect<Receive extends { type: string }, Send>(
   options: ConnectOptions<Receive>,
@@ -122,7 +123,7 @@ export function connect<Receive extends { type: string }, Send>(
     setState({ status: "closed", code, reason });
   };
 
-  /** いまのトランスポートを捨てて、つなぎ直す。断られたあとに閉じられないまま黙ったときは、つなぎ直さない */
+  /** いまのトランスポートを捨てる。no-room で断られたかルームが終了したときは、つなぎ直さない */
   const dropAndReconnect = () => {
     generation++;
     clearInterval(heartbeat);
@@ -177,16 +178,17 @@ export function connect<Receive extends { type: string }, Send>(
           if (FINAL_REJECTIONS.includes(reason)) finalRejection = true;
         } else {
           // 断られずに受け取れたら、次に切れたときは1秒から待ち直す。
-          // playing で断られ続けているあいだは、待つ時間を延ばしていく
+          // full・playing で断られ続けているあいだは、待つ時間を延ばしていく
           attempt = 0;
         }
-        if (message.type === "room-closed") {
+        if (message.type === "room-closed" || message.type === "left") {
           finalRejection = true;
-          options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
           // close フレームを待たず、通知だけでも再接続とタイマーを止める。
+          stopTimers();
           generation++;
+          options.onMessage(message as Exclude<Receive, HeartbeatMessage>);
           transport.close();
-          finish(ROOM_CLOSED_CODE, "room-closed");
+          finish(message.type === "left" ? LEFT_CODE : ROOM_CLOSED_CODE, message.type);
           return;
         }
         if (message.type === "heartbeat") return;
@@ -197,8 +199,16 @@ export function connect<Receive extends { type: string }, Send>(
         clearInterval(heartbeat);
         heartbeat = undefined;
         if (state.status === "closed") return;
-        if (finalRejection || code === REPLACED || code === ROOM_CLOSED_CODE) finish(code, reason);
-        else scheduleReconnect();
+        if (
+          finalRejection ||
+          code === REPLACED ||
+          code === ROOM_CLOSED_CODE ||
+          code === LEFT_CODE
+        ) {
+          finish(code, reason);
+        } else {
+          scheduleReconnect();
+        }
       },
     });
   };

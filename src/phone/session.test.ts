@@ -103,6 +103,52 @@ test("別の関節につなぎ直したときは準備OKを送り直さない", 
   session.stop();
 });
 
+test("抜けるの受け付けを待つあいだに切れたら、joined を受け取り直して leave を送る", () => {
+  const session = startSession("K7Q2", () => {});
+  const first = opened[0]!;
+  first.handlers.onOpen();
+  first.handlers.onMessage(JOINED);
+  first.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  session.leave();
+  session.leave();
+  expect(session.send({ type: "start" })).toBe(false);
+  expect(session.send({ type: "retry" })).toBe(false);
+  expect(session.send({ type: "ready" })).toBe(false);
+  expect(first.sent).toEqual(['{"type":"leave"}']);
+  expect(first.closed).toBe(false);
+
+  first.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  const next = opened[1]!;
+  next.handlers.onOpen();
+  expect(next.sent).toEqual([]);
+  next.handlers.onMessage(JOINED);
+  next.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(next.sent).toEqual(['{"type":"leave"}']);
+  session.stop();
+});
+
+test("抜けるを押してからつなぎ直しを断られたら、rejected を渡して閉じる", () => {
+  const events: PhoneEvent[] = [];
+  const session = startSession("K7Q2", (event) => events.push(event));
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onMessage(JOINED);
+  session.leave();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  const next = opened[1]!;
+  next.handlers.onOpen();
+  next.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
+  expect(events.slice(-2)).toMatchObject([
+    { type: "message", message: { type: "rejected", reason: "playing" } },
+    { type: "connection", state: { status: "closed" } },
+  ]);
+  expect(next.closed).toBe(true);
+  vi.advanceTimersByTime(60_000);
+  expect(opened).toHaveLength(2);
+  session.stop();
+});
+
 function joinThenDrop() {
   const events: PhoneEvent[] = [];
   const session = startSession("K7Q2", (event) => events.push(event));
@@ -145,6 +191,24 @@ test("60秒より前に開き始めたトランスポートは、60秒で切ら�
   stop();
 });
 
+test("60秒より前に開き始めたトランスポートが、60秒を過ぎて full で断られたら、つなぎ直さない", () => {
+  const { stop, closed } = joinThenDrop();
+  vi.advanceTimersByTime(1_000);
+  for (const [i, delay] of [2_000, 4_000, 8_000, 10_000, 10_000, 10_000, 10_000].entries()) {
+    opened[i + 1]!.handlers.onClose({ code: 1006, reason: "" });
+    vi.advanceTimersByTime(delay);
+  }
+  vi.advanceTimersByTime(5_500); // 60.5秒
+  const last = opened.at(-1)!;
+  last.handlers.onOpen();
+  last.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "full" }));
+  last.handlers.onClose({ code: 4001, reason: "" });
+  expect(closed()).toBe(true);
+  vi.advanceTimersByTime(60_000);
+  expect(opened).toHaveLength(9);
+  stop();
+});
+
 test("60秒より前に開き始めたトランスポートが失敗したら、すぐ閉じる", () => {
   const { stop, closed } = joinThenDrop();
   vi.advanceTimersByTime(1_000);
@@ -159,16 +223,22 @@ test("60秒より前に開き始めたトランスポートが失敗したら、
   stop();
 });
 
-test("playing で断られてつなぎ直しているスマホは、60秒たっても閉じない", () => {
+test.each(["full", "playing"])("%s で断られたスマホは、60秒を過ぎてもつなぎ直す", (reason) => {
   const events: PhoneEvent[] = [];
   const session = startSession("K7Q2", (event) => events.push(event));
-  opened[0]!.handlers.onOpen();
-  opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
-  opened[0]!.handlers.onClose({ code: 4001, reason: "" });
   for (let i = 0; i < 12; i++) {
+    const { handlers } = opened[i]!;
+    handlers.onOpen();
+    handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
+    handlers.onClose({ code: 4001, reason: "" });
     vi.advanceTimersByTime(10_000);
-    opened.at(-1)!.handlers.onClose({ code: 1006, reason: "" });
   }
+  expect(opened).toHaveLength(13);
   expect(events.some((e) => e.type === "connection" && e.state.status === "closed")).toBe(false);
+  opened[12]!.handlers.onOpen();
+  opened[12]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
+  opened[12]!.handlers.onClose({ code: 4001, reason: "" });
   session.stop();
+  vi.advanceTimersByTime(60_000);
+  expect(opened).toHaveLength(13);
 });

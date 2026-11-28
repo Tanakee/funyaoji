@@ -39,19 +39,6 @@ export function ResultScreen({
             <span className="eyebrow-line" />
             PLAY RESULT
           </div>
-          <div className="result-illustration" aria-hidden="true">
-            <div className="illustration-sun" />
-            <div className="illustration-track track-back" />
-            <div className="illustration-track track-front" />
-            <div className="illustration-person">
-              <span className="person-head" />
-              <span className="person-body" />
-              <span className="person-arm arm-left" />
-              <span className="person-arm arm-right" />
-              <span className="person-leg leg-left" />
-              <span className="person-leg leg-right" />
-            </div>
-          </div>
           <div className="result-heading">
             <span className="result-label">{copy.label}</span>
             <h1 id="result-title">{copy.title}</h1>

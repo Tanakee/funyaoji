@@ -1,37 +1,53 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Noto+Sans+JP:wght@400;500;600;700;800;900&display=swap");
+@import "../../shared/fonts/fonts.css";
 
-/* 色とフォントはここに集める。見た目の方針が決まったら、この変数を差し替える */
+/* 色とフォントはここに集める。値の決まりは docs/screens.md の「色・フォント・刷り」 */
 :root {
-  --font-body: "DM Sans", "Noto Sans JP", sans-serif;
-  --color-bg: #f8f5ed;
-  --color-bg-glow: #fffaf2;
-  --color-surface: #fffdf8;
-  --color-ink: #302c2a;
-  --color-ink-soft: #77716a;
-  --color-ink-faint: #aaa39a;
-  --color-line: #e7e0d4;
-  --color-brand: #292827;
-  --color-brand-ink: #fff9eb;
-  --color-accent: #ec724f;
-  --color-accent-soft: #ffe5d5;
-  --color-fell: #bd7558;
-  --color-fell-soft: #f6ded2;
-  --color-disconnected: #7c8590;
-  --color-disconnected-soft: #e6e9ec;
+  --font-body:
+    "Zen Kaku Gothic New", system-ui, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  --font-display: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+  --debug-h: 0px;
+  --u: clamp(
+    calc(var(--layout-scale-min) * 1px),
+    min(calc(100vw / var(--layout-base-w)), calc((100dvh - var(--debug-h)) / var(--layout-base-h))),
+    calc(var(--layout-scale-max) * 1px)
+  );
+  --safe-x: calc(var(--layout-safe-x) * var(--u));
+  --safe-y: calc(var(--layout-safe-y) * var(--u));
+  --band-h: calc(var(--layout-band-h) * var(--u));
+  --font-size-body: max(16px, calc(20 * var(--u)));
+  --font-size-heading: max(24px, calc(32 * var(--u)));
+  --font-size-hero: max(40px, calc(64 * var(--u)));
+  --operator-space: calc(3 * clamp(40px, 4.375vw, 84px) + 32px);
+  --color-bg: #f3ead7;
+  --color-ground: #c99f6a;
+  --color-surface: #fbf8f0;
+  --color-ink: #1f3a68;
+  --color-ink-soft: #3f5275;
+  --color-ink-faint: #3f5275;
+  --color-line: #b3b5b6;
+  --color-line-strong: #7e899a;
+  --color-brand: #1f3a68;
+  --color-brand-ink: #fbf8f0;
+  --color-accent: #1f3a68;
+  --color-accent-soft: #ebe0c6;
+  --color-fell: #3f5275;
+  --color-fell-soft: #eae1d1;
+  --color-disconnected: #58647a;
+  --color-disconnected-soft: #e9e1d5;
   /* 入力の状態（HUD、ロビーの枠） */
-  --color-active: #3f9d6a;
-  --color-idle: #c9c2b6;
-  --color-keyboard: #6b86c4;
+  --color-active: #1f3a68;
+  --color-idle: #bebebb;
+  --color-keyboard: #3f5275;
   /* デバッグ操作（?debug） */
   --color-debug-bg: #2d2a28;
   --color-debug-surface: #403c39;
   --color-debug-ink: #f6f1e7;
   --color-debug-ink-soft: #b9b1a5;
   --color-debug-guide: #ffffff;
-  --qr-dark: #302c2a;
-  --qr-light: #ffffff;
+  --qr-dark: #1f3a68;
+  --qr-light: #fbf8f0;
   /* ゲームの Canvas の後ろ。ゲームが背景を描くまでの色 */
-  --stage-bg: #e8e2d4;
+  --stage-bg: #f3ead7;
 }
 
 * {
@@ -43,6 +59,7 @@ body {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-body);
+  font-weight: 700;
   font-synthesis: none;
   background: var(--stage-bg);
   color: var(--color-ink);
@@ -70,7 +87,7 @@ kbd {
   border-radius: 10px;
   background: var(--color-surface);
   font: inherit;
-  font-weight: 800;
+  font-weight: 900;
   text-align: center;
 }
 
@@ -78,32 +95,40 @@ kbd {
 .lobby {
   display: flex;
   flex-direction: column;
-  padding: 32px clamp(24px, 5vw, 84px) 48px;
-  background:
-    radial-gradient(circle at 20% 68%, var(--color-bg-glow) 0, transparent 45%), var(--color-bg);
+  padding: var(--safe-y) var(--safe-x) 0;
+  background: transparent;
 }
 .lobby-layout {
   flex: 1;
-  width: min(1500px, 100%);
-  margin: auto;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: clamp(40px, 6vw, 100px);
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  padding-top: calc(16 * var(--u));
 }
 .lobby-join {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 20px;
+  align-items: flex-start;
+  gap: calc(16 * var(--u));
+  max-width: calc(360 * var(--u));
+}
+.lobby-players {
+  grid-column: 3;
+  max-width: calc(420 * var(--u));
+  padding: calc(12 * var(--u));
+  border-radius: 12px;
+  background: var(--color-surface);
+  line-height: 1.2;
 }
 .lobby-lead {
   margin: 0;
-  font-size: clamp(22px, 2.2vw, 34px);
-  font-weight: 800;
+  font-size: var(--font-size-body);
+  font-weight: 900;
 }
 .qr {
-  width: min(34vh, 100%);
+  width: calc(260 * var(--u));
+  max-width: 100%;
   aspect-ratio: 1;
   border: 2px solid var(--color-line);
   border-radius: 20px;
@@ -113,15 +138,21 @@ kbd {
 .room-code {
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: calc(12 * var(--u));
+}
+.lobby-join .room-code {
+  padding: calc(8 * var(--u));
+  border-radius: 8px;
+  background: var(--color-surface);
 }
 .room-code-label {
   color: var(--color-ink-soft);
-  font-size: clamp(16px, 1.6vw, 24px);
+  font-size: var(--font-size-body);
   font-weight: 700;
 }
 .room-code-value {
-  font-size: clamp(64px, 9vh, 120px);
+  font-size: var(--font-size-hero);
   line-height: 1;
   font-weight: 900;
   letter-spacing: 0.12em;
@@ -130,14 +161,18 @@ kbd {
 .room-pending {
   max-width: 24em;
   margin: 0;
-  font-size: clamp(20px, 2vw, 30px);
+  font-size: var(--font-size-body);
   font-weight: 700;
   text-align: center;
 }
+.lobby-count,
+.lobby-count strong {
+  font-family: var(--font-display);
+}
 .lobby-count {
-  margin: 0 0 12px;
-  font-size: clamp(28px, 2.6vw, 44px);
-  font-weight: 800;
+  margin: 0 0 calc(12 * var(--u));
+  font-size: var(--font-size-heading);
+  font-weight: 900;
 }
 .lobby-count strong {
   font-size: 1.6em;
@@ -178,47 +213,48 @@ kbd {
   color: var(--color-active);
 }
 .lobby-start {
-  margin-top: 16px;
+  margin-top: calc(12 * var(--u));
   display: grid;
-  gap: 10px;
+  gap: calc(8 * var(--u));
 }
 .start-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: calc(12 * var(--u));
   margin: 0;
   color: var(--color-ink-soft);
-  font-size: clamp(18px, 1.8vw, 28px);
+  font-size: var(--font-size-body);
   font-weight: 700;
 }
 .start-row--ready {
   color: var(--color-active);
-  font-size: clamp(22px, 2.4vw, 36px);
   font-weight: 900;
-}
-.start-row--debug {
-  font-size: clamp(14px, 1.2vw, 18px);
 }
 .lobby-settings {
   display: flex;
   align-items: center;
-  gap: 32px;
-  padding: 16px 0 0;
-  border-top: 2px solid var(--color-line);
+  flex: none;
+  gap: calc(24 * var(--u));
+  height: var(--band-h);
+  padding: 0 var(--operator-space) var(--safe-y) 0;
 }
 .team-name-field {
   display: grid;
-  grid-template-columns: auto minmax(180px, 400px);
+  grid-template-columns: auto minmax(0, calc(400 * var(--u)));
   align-items: center;
-  gap: 8px 16px;
-  font-size: clamp(20px, 1.6vw, 26px);
+  gap: calc(4 * var(--u)) calc(16 * var(--u));
+  padding: calc(4 * var(--u)) calc(8 * var(--u));
+  border-radius: 8px;
+  background: var(--color-surface);
+  font-size: var(--font-size-body);
+  line-height: 1.2;
   font-weight: 700;
 }
 .team-name-field input {
   min-width: 0;
   width: 100%;
-  padding: 10px 16px;
-  border: 2px solid var(--color-line);
+  padding: calc(4 * var(--u)) calc(12 * var(--u));
+  border: 2px solid var(--color-line-strong);
   border-radius: 12px;
   background: var(--color-surface);
   color: var(--color-ink);
@@ -234,22 +270,24 @@ kbd {
 .team-name-field p {
   grid-column: 1 / -1;
   margin: 0;
-  font-size: 20px;
   color: var(--color-ink-soft);
 }
 .team-name-field:has([aria-invalid="true"]) p {
   color: var(--color-ink);
 }
-/* 操作方法。傾きとカメラを、2つのボタンが並んだ形で選ぶ */
+/* 操作方法。傾きとカメラを、2つのボタンが並んだ形で選ぶ。チーム名の欄と同じ板に載せる */
 .input-field {
   display: grid;
   grid-template-columns: auto auto auto;
   align-items: center;
-  gap: 8px 12px;
+  gap: calc(4 * var(--u)) calc(12 * var(--u));
   margin: 0;
-  padding: 0;
+  padding: calc(4 * var(--u)) calc(8 * var(--u));
   border: 0;
-  font-size: clamp(20px, 1.6vw, 26px);
+  border-radius: 8px;
+  background: var(--color-surface);
+  font-size: var(--font-size-body);
+  line-height: 1.2;
   font-weight: 700;
 }
 .input-field legend {
@@ -266,8 +304,8 @@ kbd {
 }
 .input-option span {
   display: block;
-  padding: 8px 20px;
-  border: 2px solid var(--color-line);
+  padding: calc(4 * var(--u)) calc(16 * var(--u));
+  border: 2px solid var(--color-line-strong);
   border-radius: 999px;
   background: var(--color-surface);
   cursor: pointer;
@@ -284,15 +322,18 @@ kbd {
 .input-field p {
   grid-column: 1 / -1;
   margin: 0;
-  font-size: 20px;
   color: var(--color-ink-soft);
 }
 .lobby-notice {
+  position: absolute;
+  right: var(--safe-x);
+  bottom: calc(var(--band-h) + 12 * var(--u));
+  max-width: calc(420 * var(--u));
   margin: 0;
   padding: 12px 20px;
   border-radius: 14px;
   background: var(--color-accent-soft);
-  font-size: clamp(16px, 1.5vw, 22px);
+  font-size: var(--font-size-body);
   font-weight: 700;
   text-align: center;
 }
@@ -305,10 +346,14 @@ kbd {
   justify-content: center;
   pointer-events: none;
 }
+.countdown-number,
+.countdown-start {
+  font-family: var(--font-display);
+  font-weight: 900;
+}
 .countdown-number {
   color: var(--color-surface);
   font-size: max(64px, 34vh);
-  font-weight: 900;
   line-height: 1;
   text-shadow:
     0 0.04em 0 var(--color-ink),
@@ -321,7 +366,7 @@ kbd {
 .countdown-guidance {
   margin: 0.5em 0 0;
   color: var(--color-surface);
-  font-size: max(20px, 2.78vh);
+  font-size: var(--font-size-body);
   font-weight: 700;
   text-shadow: 0 0.08em 0.2em var(--color-ink);
 }
@@ -362,15 +407,15 @@ kbd {
 }
 .hud-joint--active {
   background: var(--color-active);
-  color: #fff;
+  color: var(--color-surface);
 }
 .hud-joint--keyboard {
   background: var(--color-keyboard);
-  color: #fff;
+  color: var(--color-surface);
 }
 .hud-joint--absent {
   background: var(--color-disconnected);
-  color: #fff;
+  color: var(--color-surface);
 }
 .restart-hint {
   position: absolute;
@@ -384,9 +429,9 @@ kbd {
   margin: 0;
   padding: 6px 12px;
   border-radius: 999px;
-  background: #ffffffd9;
+  background: var(--color-surface);
   color: var(--color-ink-soft);
-  font-size: clamp(12px, 1.1vw, 16px);
+  font-size: var(--font-size-body);
   font-weight: 700;
   pointer-events: none;
 }
@@ -414,7 +459,7 @@ kbd {
   min-width: 1.8em;
   padding: 2px 6px;
   border-radius: 6px;
-  background: #fff;
+  background: var(--color-surface);
   color: var(--color-keyboard);
   font-size: 1.1em;
   text-align: center;
@@ -428,7 +473,7 @@ kbd {
   max-width: calc(100% - 24px);
   padding: 4px 10px;
   border-radius: 10px;
-  background: #ffffffd9;
+  background: #fbf8f0d9;
   color: var(--color-ink);
   font-size: 13px;
   pointer-events: auto;
@@ -453,9 +498,6 @@ kbd {
 }
 
 /* デバッグ操作（?debug）。ゲームの下に操作の場所を空け、そこにつまみを置く。ロビーと結果は、その上も覆う */
-:root {
-  --debug-h: 0px;
-}
 html[data-debug] {
   --debug-h: 240px;
 }
@@ -467,6 +509,8 @@ html[data-debug] .lobby,
 html[data-debug] .result-screen {
   position: fixed;
   z-index: 5;
+  /* 画面の下まで使うのは今までどおり。つまみの欄の上だけ塗り、その上の Canvas は見せる */
+  background: linear-gradient(to top, var(--color-bg) var(--debug-h), transparent var(--debug-h));
 }
 .debug-button {
   min-height: 56px;
@@ -477,7 +521,7 @@ html[data-debug] .result-screen {
   color: var(--color-debug-ink);
   font: inherit;
   font-size: 20px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0;
   cursor: pointer;
   touch-action: manipulation;
@@ -641,19 +685,40 @@ html[data-debug] .result-screen {
   html[data-debug] .lobby,
   html[data-debug] .result-screen {
     padding: 16px;
+    background: var(--color-bg);
   }
   html[data-debug] .lobby-layout,
   html[data-debug] .result-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
     gap: 14px;
     margin: 0;
     padding: 12px 0 0;
     align-content: start;
   }
+  html[data-debug] .result-layout {
+    flex: none;
+  }
   html[data-debug] .lobby-join {
     flex-direction: row;
+    align-items: center;
     justify-content: center;
     gap: 16px;
+    max-width: none;
+  }
+  html[data-debug] .lobby-players {
+    grid-column: auto;
+    max-width: none;
+    padding: 0;
+    background: transparent;
+  }
+  html[data-debug] .lobby-settings {
+    height: auto;
+    padding: 16px 0 0;
+  }
+  html[data-debug] .lobby-notice {
+    position: static;
+    max-width: none;
   }
   /* 傾きの数字の表は、スマホ1台では使わない。結果の見出しに重なるので隠す */
   html[data-debug] .debug {
@@ -662,7 +727,6 @@ html[data-debug] .result-screen {
   html[data-debug] .lobby-lead,
   html[data-debug] .lobby-start .start-row,
   html[data-debug] .eyebrow,
-  html[data-debug] .result-illustration,
   html[data-debug] .panel-footer,
   html[data-debug] .result-hint {
     display: none;
@@ -694,6 +758,9 @@ html[data-debug] .result-screen {
     width: 100%;
     margin-top: 0;
   }
+  html[data-debug] .result-panel {
+    max-height: none;
+  }
   html[data-debug] .result-heading h1 {
     font-size: 56px;
   }
@@ -706,7 +773,7 @@ html[data-debug] .result-screen {
   }
 }
 
-/* 結果。ロビーと同じ背景で、Canvas を隠す */
+/* 結果。おじさんが止まった場所が見えるように、記録を右に置く */
 .result-screen,
 .result-screen * {
   box-sizing: border-box;
@@ -717,24 +784,20 @@ html[data-debug] .result-screen {
 
 .result-screen {
   --accent: var(--color-accent);
-  --accent-soft: var(--color-accent-soft);
   font-family: var(--font-body);
   color: var(--color-ink);
   font-synthesis: none;
-  padding: 32px clamp(24px, 5vw, 84px) 28px;
+  padding: var(--safe-y) var(--safe-x) 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 20% 68%, var(--color-bg-glow) 0, transparent 45%), var(--color-bg);
+  background: transparent;
 }
 .result-screen--fell {
   --accent: var(--color-fell);
-  --accent-soft: var(--color-fell-soft);
 }
 .result-screen--disconnected {
   --accent: var(--color-disconnected);
-  --accent-soft: var(--color-disconnected-soft);
 }
 
 .screen-header {
@@ -762,6 +825,8 @@ html[data-debug] .result-screen {
 }
 .header-mode {
   margin-left: auto;
+  /* 結果では Canvas のゴールの市松模様が後ろに来ることがある */
+  background: var(--color-surface);
   padding: 9px 16px;
   border: 1px solid var(--color-line);
   border-radius: 999px;
@@ -772,13 +837,14 @@ html[data-debug] .result-screen {
 }
 
 .result-layout {
-  width: min(1380px, 100%);
-  margin: auto;
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(380px, 0.88fr);
-  gap: clamp(42px, 7vw, 112px);
-  align-items: center;
-  padding: 26px 0 38px;
+  grid-template-columns: minmax(0, 1fr) minmax(calc(380 * var(--u)), calc(460 * var(--u)));
+  grid-template-rows: minmax(0, 1fr);
+  gap: calc(24 * var(--u));
+  align-items: start;
+  padding: calc(16 * var(--u)) 0;
 }
 .result-main {
   position: relative;
@@ -789,7 +855,7 @@ html[data-debug] .result-screen {
   align-items: center;
   gap: 11px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0.25em;
   color: var(--color-ink-soft);
 }
@@ -798,130 +864,19 @@ html[data-debug] .result-screen {
   height: 2px;
   background: var(--accent);
 }
-.result-illustration {
-  position: relative;
-  height: clamp(230px, 29vh, 360px);
-  margin: 18px 0 12px;
-  border-radius: 40px 40px 16px 16px;
-  background: linear-gradient(150deg, #fff5e9, var(--accent-soft));
-  overflow: hidden;
-}
-.illustration-sun {
-  position: absolute;
-  width: 210px;
-  height: 210px;
-  left: 50%;
-  top: 12%;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: #fffbef;
-  opacity: 0.85;
-}
-.illustration-track {
-  position: absolute;
-  height: 110px;
-  width: 125%;
-  left: -10%;
-  border-radius: 50% 50% 0 0;
-}
-.track-back {
-  bottom: -63px;
-  background: #dbbda1;
-  transform: rotate(-4deg);
-}
-.track-front {
-  bottom: -84px;
-  background: #cf9f78;
-  transform: rotate(3deg);
-}
-.illustration-person {
-  position: absolute;
-  width: 130px;
-  height: 220px;
-  left: 50%;
-  bottom: 20px;
-  transform: translateX(-50%) rotate(-7deg);
-  filter: drop-shadow(15px 14px 4px #8c65453b);
-}
-.illustration-person span {
-  position: absolute;
-  display: block;
-  background: #35302d;
-}
-.person-head {
-  width: 62px;
-  height: 67px;
-  border-radius: 49% 47% 44% 45%;
-  left: 35px;
-  top: 0;
-}
-.person-head::after {
-  content: "";
-  position: absolute;
-  left: 17px;
-  top: 31px;
-  width: 30px;
-  height: 7px;
-  border-radius: 50%;
-  border-top: 2px solid #f7e4cd;
-}
-.person-body {
-  width: 70px;
-  height: 90px;
-  left: 31px;
-  top: 57px;
-  border-radius: 26px 24px 18px 18px;
-  transform: rotate(6deg);
-}
-.person-arm {
-  width: 23px;
-  height: 85px;
-  top: 67px;
-  border-radius: 16px;
-  transform-origin: top center;
-}
-.arm-left {
-  left: 24px;
-  transform: rotate(35deg);
-}
-.arm-right {
-  right: 20px;
-  transform: rotate(-41deg);
-}
-.person-leg {
-  width: 26px;
-  height: 84px;
-  top: 132px;
-  border-radius: 14px;
-  transform-origin: top center;
-}
-.leg-left {
-  left: 42px;
-  transform: rotate(24deg);
-}
-.leg-right {
-  right: 39px;
-  transform: rotate(-28deg);
-}
-.result-screen--fell .illustration-person {
-  transform: translateX(-50%) rotate(66deg);
-  bottom: -8px;
-}
-.result-screen--disconnected .illustration-person {
-  opacity: 0.48;
-}
 .result-heading {
-  position: relative;
+  margin-top: calc(12 * var(--u));
 }
 .result-label {
   color: var(--accent);
-  font-weight: 800;
+  font-weight: 900;
   font-size: 14px;
   letter-spacing: 0.19em;
 }
 .result-heading h1 {
+  font-family: var(--font-display);
   margin: 2px 0 5px;
-  font-size: clamp(54px, 5.3vw, 86px);
+  font-size: var(--font-size-hero);
   line-height: 1.2;
   font-weight: 900;
   letter-spacing: -0.065em;
@@ -929,32 +884,28 @@ html[data-debug] .result-screen {
 .result-heading p {
   margin: 0;
   color: var(--color-ink-soft);
-  font-size: clamp(15px, 1.4vw, 19px);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 700;
 }
 
 .result-panel {
   position: relative;
-  padding: clamp(28px, 3vw, 50px);
-  min-height: 430px;
+  padding: calc(20 * var(--u));
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
   border: 1px solid var(--color-line);
-  border-radius: 26px;
+  border-radius: 12px;
   background: var(--color-surface);
-  box-shadow: 0 24px 60px #53463210;
-  display: flex;
-  flex-direction: column;
 }
 .panel-topline {
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 900;
 }
 .metric {
-  margin-top: 44px;
-  padding-bottom: 27px;
+  margin-top: calc(16 * var(--u));
+  padding-bottom: calc(12 * var(--u));
   border-bottom: 1px solid var(--color-line);
-}
-.metric-time {
-  margin-top: 27px;
 }
 .metric-label {
   display: flex;
@@ -967,67 +918,51 @@ html[data-debug] .result-screen {
 .metric-label span {
   color: var(--color-ink-faint);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0.15em;
 }
 .metric-value {
+  font-family: var(--font-display);
   margin-top: 4px;
-  font-size: clamp(58px, 6vw, 86px);
+  font-size: var(--font-size-hero);
   line-height: 1.1;
-  font-weight: 800;
+  font-weight: 900;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.07em;
   white-space: nowrap;
 }
 .metric-value small {
+  font-family: var(--font-body);
   margin-left: 12px;
   color: var(--accent);
   font-size: 24px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0;
 }
 .panel-footer {
-  margin-top: auto;
-  padding-top: 24px;
+  padding-top: calc(12 * var(--u));
   color: var(--color-ink-faint);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
+/* 帯の中に置く。地面の目盛りの数字と重なるので、下地を敷く */
 .result-hint {
-  margin: 0;
-  padding-top: 18px;
-  border-top: 1px solid var(--color-line);
+  flex: none;
+  align-self: center;
+  box-sizing: border-box;
+  height: calc(var(--band-h) - var(--safe-y) - 24 * var(--u));
+  margin: calc(12 * var(--u)) var(--operator-space) calc(var(--safe-y) + 12 * var(--u));
+  padding: 0 calc(16 * var(--u));
+  border-radius: 12px;
+  background: var(--color-surface);
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 12px;
   color: var(--color-ink-soft);
-  font-size: clamp(18px, 1.8vw, 28px);
+  font-size: var(--font-size-body);
   font-weight: 700;
-}
-
-@media (max-width: 820px) {
-  .result-screen {
-    padding: 20px;
-  }
-  .result-layout {
-    grid-template-columns: 1fr;
-    gap: 28px;
-    padding: 36px 0;
-  }
-  .result-illustration {
-    height: 240px;
-  }
-  .result-panel {
-    min-height: 0;
-  }
-  .metric {
-    margin-top: 28px;
-  }
-  .metric-value {
-    font-size: clamp(52px, 11vw, 78px);
-  }
 }
 
 /* 運営・全画面・音。1280×720 の安全領域（左右54px・上下40px）内。 */
@@ -1110,7 +1045,7 @@ html[data-debug] .result-screen {
   font-size: 20px;
 }
 .operator-dialog::backdrop {
-  background: #0008;
+  background: #1f3a6888;
 }
 .operator-dialog h2 {
   margin-top: 0;
@@ -1128,17 +1063,6 @@ html[data-debug] .result-screen {
 }
 html[data-debug] .operator-controls--playing {
   bottom: calc(var(--debug-h) + 12px);
-}
-
-/* 1人用の開始ボタンが、運営の共通ボタンの下に入らないようにする。 */
-html[data-debug] .lobby-start .debug-button--start {
-  margin-right: calc(3 * clamp(40px, 4.375vw, 84px) + 32px);
-  width: auto;
-}
-@media (max-width: 600px) {
-  html[data-debug] .lobby-start .debug-button--start {
-    margin-right: 0;
-  }
 }
 
 .operator-failure {

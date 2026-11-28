@@ -705,7 +705,7 @@ export class ScreenSession {
   /** 待ちきれなかった。ゲームを今の場所で止め、距離だけの結果を出す */
   private giveUp(): void {
     if (this.view.flow.kind !== "playing" || this.game === undefined) return;
-    const distanceM = this.game.stop();
+    const distanceM = this.game.stop({ showResult: true });
     this.dispatch({ type: "ended", result: { outcome: "disconnected", distanceM } });
   }
 

@@ -234,7 +234,7 @@ describe("reduce", () => {
     expect(run([message(playing)], result)).toMatchObject({ input: "tilt" });
   });
 
-  it("参加していたスマホがつなぎ直して断られたら、断られた理由を出す", () => {
+  it("参加していたスマホがつなぎ直して playing で断られたら、順番待ちになる", () => {
     const state = run([
       ...joinedEvents,
       message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
@@ -242,7 +242,7 @@ describe("reduce", () => {
       connection({ status: "open" }),
       message({ type: "rejected", reason: "playing" }),
     ]);
-    expect(state).toEqual({ kind: "rejected", reason: "playing" });
+    expect(state).toEqual({ kind: "waiting" });
   });
   it("ルームコードが無ければ invalid-room", () => {
     expect(initialState(undefined)).toEqual({ kind: "invalid-room" });
@@ -283,20 +283,57 @@ describe("reduce", () => {
     expect(state).toMatchObject({ kind: "joined", active: false, phase: { kind: "result" } });
   });
 
-  it("playing で断られたあと、つなぎ直して joined になれる。閉じても断った理由を残す", () => {
-    const rejected = run([
-      ...grantedEvents,
-      message({ type: "rejected", reason: "playing" }),
-      connection({ status: "reconnecting", attempt: 1 }),
-    ]);
-    expect(rejected).toEqual({ kind: "rejected", reason: "playing" });
-    expect(reduce(rejected, message({ type: "joined", joint: "rightHip" })).kind).toBe("joined");
-    const full = run([
+  it.each(["full", "playing"] as const)(
+    "%s で順番待ちになり、参加できたら phase を反映する",
+    (reason) => {
+      const rejection = message({ type: "rejected", reason });
+      const waiting = run([
+        ...grantedEvents,
+        rejection,
+        connection({ status: "reconnecting", attempt: 1 }),
+      ]);
+      expect(waiting).toEqual({ kind: "waiting" });
+      expect(reduce(waiting, rejection)).toBe(waiting);
+      const joined = reduce(waiting, message({ type: "joined", joint: "rightHip" }));
+      expect(joined).toMatchObject({ kind: "joined", joint: "rightHip", phase: { kind: "lobby" } });
+      const result = { outcome: "fell", distanceM: 3 } as const;
+      const next = reduce(joined, message({ type: "phase", phase: "result", result }));
+      expect(next).toMatchObject({ kind: "joined", phase: { kind: "result", result } });
+    },
+  );
+
+  it("順番待ちをやめると、接続終了の通知が来ても参加前の画面に戻り、もう一度参加できる", () => {
+    const ready = run([
       ...grantedEvents,
       message({ type: "rejected", reason: "full" }),
-      connection({ status: "closed", code: 4001, reason: "" }),
+      { type: "cancel-wait" },
+      connection({ status: "closed", code: 1000, reason: "" }),
     ]);
-    expect(full).toEqual({ kind: "rejected", reason: "full" });
+    expect(ready).toEqual({ kind: "ready" });
+    expect(reduce(ready, { type: "cancel-wait" })).toBe(ready);
+    expect(reduce(ready, { type: "tap-join" })).toEqual({ kind: "asking-permission" });
+  });
+
+  it("やめるを押したのと同時に joined が届いても、参加前の画面に戻る", () => {
+    const ready = run([
+      ...grantedEvents,
+      message({ type: "rejected", reason: "full" }),
+      message({ type: "joined", joint: "rightHip" }),
+      { type: "cancel-wait" },
+      connection({ status: "closed", code: 1000, reason: "" }),
+    ]);
+    expect(ready).toEqual({ kind: "ready" });
+  });
+
+  it("順番待ちのあと、接続を終了した理由に合う画面に進む", () => {
+    const waiting = run([...grantedEvents, message({ type: "rejected", reason: "full" })]);
+    const close = (code: number) => connection({ status: "closed", code, reason: "" });
+    expect(reduce(waiting, close(4000))).toEqual({ kind: "closed", replaced: true });
+    expect(reduce(waiting, close(1000))).toEqual({ kind: "closed", replaced: false });
+    expect(reduce(waiting, close(4003))).toMatchObject({ kind: "ended" });
+
+    const rejected = reduce(waiting, message({ type: "rejected", reason: "no-room" }));
+    expect(reduce(rejected, close(4001))).toEqual({ kind: "rejected", reason: "no-room" });
   });
 
   it("参加中に切れたら link が reconnecting になり、関節の表示は残る", () => {
@@ -412,7 +449,7 @@ describe("reconnectRemainingSeconds", () => {
 
 it("ルーム終了でおわりになり、遅い通知でも参加中に戻らない", () => {
   const state = run([...joinedEvents, message({ type: "room-closed" })]);
-  expect(state).toEqual({ kind: "ended", joint: "leftKnee" });
+  expect(state).toEqual({ kind: "ended", reason: "room-closed", joint: "leftKnee" });
   expect(reduce(state, connection({ status: "closed", code: 4003, reason: "room-closed" }))).toBe(
     state,
   );
@@ -422,5 +459,54 @@ it("ルーム終了でおわりになり、遅い通知でも参加中に戻ら�
 it("ルーム終了の通知が欠けても4003でおわりになる", () => {
   expect(
     run([...joinedEvents, connection({ status: "closed", code: 4003, reason: "room-closed" })]),
-  ).toEqual({ kind: "ended", joint: "leftKnee" });
+  ).toEqual({ kind: "ended", reason: "room-closed", joint: "leftKnee" });
+});
+
+describe("抜ける", () => {
+  const tap = { type: "tap-leave" } as const;
+
+  it("参加しているときだけ受け付けを待つ状態にする", () => {
+    const lobby = run(joinedEvents);
+    const result = reduce(
+      lobby,
+      message({ type: "phase", phase: "result", result: { outcome: "fell", distanceM: 1 } }),
+    );
+    for (const state of [lobby, result]) {
+      expect(state).toMatchObject({ kind: "joined", leaving: false });
+      const leaving = reduce(state, tap);
+      expect(leaving).toEqual({ ...state, leaving: true });
+      expect(reduce(leaving, tap)).toBe(leaving);
+    }
+    const playing = reduce(
+      lobby,
+      message({ type: "phase", phase: "playing", mode: "10m", input: "tilt" }),
+    );
+    expect(reduce(playing, tap)).toEqual({ ...playing, leaving: true });
+    const ready = initialState("K7Q2");
+    expect(reduce(ready, tap)).toBe(ready);
+  });
+
+  it.each([
+    message({ type: "left" }),
+    connection({ status: "closed", code: 4004, reason: "left" }),
+    message({ type: "rejected", reason: "playing" }),
+    connection({ status: "closed", code: 1000, reason: "" }),
+  ])("$type を受け取ったら担当の関節を残しておわりにする", (event) => {
+    expect(run([...joinedEvents, tap, event])).toEqual({
+      kind: "ended",
+      reason: "left",
+      joint: "leftKnee",
+    });
+  });
+
+  it("つなぎ直して joined を受け取っても leaving を残す", () => {
+    expect(
+      run([
+        ...joinedEvents,
+        tap,
+        connection({ status: "reconnecting", attempt: 1 }, 1_000),
+        message({ type: "joined", joint: "leftKnee" }),
+      ]),
+    ).toMatchObject({ kind: "joined", link: "rejoining", leaving: true });
+  });
 });

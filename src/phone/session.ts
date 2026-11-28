@@ -18,6 +18,7 @@ const ALIVE_INTERVAL_MS = 1_000;
 
 interface PhoneSession {
   stop(): void;
+  leave(): void;
   send(message: StartMessage | RetryMessage | ReadyMessage): boolean;
   /** 操作方法を切り替える。スクリーンが phase で知らせてくる。同じものなら何もしない */
   setInput(input: InputMethod): void;
@@ -42,6 +43,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
   let releaseWakeLock: (() => void) | undefined;
   /** いまの接続で joined を受け取った。つなぎ直したら、また joined が届くまで false */
   let joined = false;
+  let leaving = false;
   /**
    * 最後に、つながっていてページが動いていた時刻。画面のロックなどでページが止まると、止まる前の時刻のまま残る。
    * 止まっているあいだもサーバーは関節を取っておく60秒を数えるので、つなぎ直しの残り秒数はこの時刻から数える
@@ -87,7 +89,9 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
           joined = false;
           holdingJoint = false;
           readyAttempted = false;
-          stopCountdown();
+          // 参加していたスマホは、断られても60秒を数え続け、過ぎたらつなぎ直さない（docs/api.md の「つなぎ直し」）。
+          // 順番待ちになるのは、まだ参加していなかったスマホだけ
+          if (reconnectingSince === undefined) stopCountdown();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         } else if (message.type === "phase") {
@@ -96,7 +100,13 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
         } else if (message.type === "howto") {
           howtoReplayed ||= replaying;
           // つなぎ直す直前に送った ready が失われていたら、送り直す。スクリーンは同じ関節を2回数えない
-          if (readyAttempted && joined && joint !== undefined && !message.ready.includes(joint)) {
+          if (
+            readyAttempted &&
+            joined &&
+            !leaving &&
+            joint !== undefined &&
+            !message.ready.includes(joint)
+          ) {
             connection.send({ type: "ready" });
           }
         } else if (message.type === "room") {
@@ -105,6 +115,8 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
           replaying = false;
         }
         emit({ type: "message", message, at });
+        if (leaving && message.type === "joined") connection.send({ type: "leave" });
+        if (leaving && message.type === "rejected") connection.close();
       },
       onStateChange(state) {
         stopSending?.();
@@ -159,7 +171,13 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
       releaseWakeLock?.();
       stopReading();
     },
+    leave() {
+      if (leaving) return;
+      leaving = true;
+      if (joined) connection.send({ type: "leave" });
+    },
     send(message) {
+      if (leaving) return false;
       if (message.type === "ready") readyAttempted = true;
       return joined && connection.send(message);
     },
