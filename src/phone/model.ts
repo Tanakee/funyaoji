@@ -1,7 +1,13 @@
 // スマホのページの状態。React の外に置く、純粋な関数だけ
 import type { ConnectionState, PhoneReceived } from "../net/client.ts";
 import { isRoomCode, normalizeRoomCode } from "../shared/room.ts";
-import type { Joint, PhaseMessage, PlayResult, RejectedMessage } from "../shared/messages.ts";
+import {
+  ROOM_CLOSED_CODE,
+  type Joint,
+  type PhaseMessage,
+  type PlayResult,
+  type RejectedMessage,
+} from "../shared/messages.ts";
 
 export type RejectReason = RejectedMessage["reason"];
 
@@ -50,7 +56,8 @@ export type PhoneState =
   /** 断られた。playing のときだけ、自動でつなぎ直している */
   | { kind: "rejected"; reason: RejectReason }
   /** 閉じた。もうつなぎ直さない。replaced は別のタブに置き換えられたとき */
-  | { kind: "closed"; replaced: boolean };
+  | { kind: "closed"; replaced: boolean }
+  | { kind: "ended"; joint?: Joint };
 
 export type PhoneEvent =
   | { type: "tap-join" }
@@ -101,6 +108,10 @@ export function reduce(state: PhoneState, event: PhoneEvent): PhoneState {
 }
 
 function onConnection(state: PhoneState, connection: ConnectionState, at: number): PhoneState {
+  if (state.kind === "ended") return state;
+  if (connection.status === "closed" && connection.code === ROOM_CLOSED_CODE) {
+    return { kind: "ended", joint: state.kind === "joined" ? state.joint : undefined };
+  }
   switch (connection.status) {
     case "connecting":
     case "open":
@@ -122,7 +133,10 @@ function onConnection(state: PhoneState, connection: ConnectionState, at: number
 }
 
 function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
+  if (state.kind === "ended") return state;
   switch (message.type) {
+    case "room-closed":
+      return { kind: "ended", joint: state.kind === "joined" ? state.joint : undefined };
     case "joined":
       if (state.kind === "joined") {
         // つなぎ直したとき。phase はこのあと届くので、届かなければロビーに戻す

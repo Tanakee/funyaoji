@@ -131,6 +131,15 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
       return <Waiting title="つないでいます" />;
     case "rejected":
       return <Notice {...REJECT_NOTICES[state.reason]} />;
+    case "ended":
+      return (
+        <Center>
+          {state.joint && <p className="joint-name">{JOINT_LABELS[state.joint].name}</p>}
+          <h1 className="notice-title">このルームは終了しました</h1>
+          <p className="lead">遊んでくれてありがとう！</p>
+          <p className="lead">また遊ぶときは、スクリーンのQRを読み取ろう</p>
+        </Center>
+      );
     case "closed":
       return <Notice {...CLOSED[state.replaced ? "replaced" : "lost"]} />;
     case "joined":

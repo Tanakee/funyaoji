@@ -25,6 +25,12 @@ function acceptedBy(message: unknown): Direction[] {
 
 // docs/api.md の例と、フィールドの表から作った例。期待する送信方向は、メッセージの表（送信元 → 送信先）から取る
 const accepted: { name: string; message: unknown; directions: Direction[] }[] = [
+  { name: "close-room", message: { type: "close-room" }, directions: ["ScreenToServerMessage"] },
+  {
+    name: "room-closed",
+    message: { type: "room-closed" },
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
+  },
   {
     name: "joined",
     message: { type: "joined", joint: "rightHip" },
