@@ -150,26 +150,32 @@ describe("reduce", () => {
     expect(reduce(checking, { type: "tilt-check", supported: true }).kind).toBe("connecting");
   });
 
-  it("つなぎ直しの残り秒数は、最初に切れた時刻から数え、つながったら消す", () => {
+  it("つなぎ直しの残り秒数は、最初に切れた時刻から数え、joined を受け取ったら消す", () => {
     const reconnecting = run([
       ...joinedEvents,
       connection({ status: "reconnecting", attempt: 1 }, 1_000),
       connection({ status: "reconnecting", attempt: 2 }, 3_000),
     ]);
     expect(reconnecting).toMatchObject({ link: "reconnecting", reconnectingSince: 1_000 });
-    expect(reduce(reconnecting, message({ type: "joined", joint: "leftKnee" }))).toMatchObject({
-      link: "open",
-      reconnectingSince: undefined,
-    });
-    // つながったあとにまた切れたら、その時刻から数え直す
-    const again = run(
-      [
-        connection({ status: "open" }, 4_000),
-        connection({ status: "reconnecting", attempt: 1 }, 9_000),
-      ],
-      reconnecting,
-    );
+    const rejoined = reduce(reconnecting, message({ type: "joined", joint: "leftKnee" }));
+    expect(rejoined).toMatchObject({ link: "open", reconnectingSince: undefined });
+    // 参加し直したあとにまた切れたら、その時刻から数え直す
+    const again = reduce(rejoined, connection({ status: "reconnecting", attempt: 1 }, 9_000));
     expect(again).toMatchObject({ link: "reconnecting", reconnectingSince: 9_000 });
+  });
+
+  it("トランスポートが開いただけでは、つなぎ直しを終えず、切れた時刻も数え直さない", () => {
+    const state = run([
+      ...joinedEvents,
+      connection({ status: "reconnecting", attempt: 1 }, 1_000),
+      connection({ status: "open" }, 2_000),
+      connection({ status: "reconnecting", attempt: 2 }, 5_000),
+    ]);
+    expect(state).toMatchObject({ link: "reconnecting", reconnectingSince: 1_000 });
+    expect(reduce(state, connection({ status: "open" }, 6_000))).toMatchObject({
+      link: "reconnecting",
+      reconnectingSince: 1_000,
+    });
   });
 
   it("参加中に閉じたら closed。置き換えられたかは code で分かる", () => {

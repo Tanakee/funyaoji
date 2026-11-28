@@ -38,7 +38,11 @@ export type PhoneState =
       phase: RoomPhase;
       /** 自分の関節の入力がスクリーンに届いている（プレイ中だけ意味がある） */
       active: boolean;
-      /** reconnecting のあいだも、関節などの表示は残す */
+      /**
+       * 切れてから、つなぎ直して joined を受け取るまでは reconnecting。
+       * トランスポートが開いただけでは、まだ参加できていない（断られることもある）ので open にしない。
+       * reconnecting のあいだも、関節などの表示は残す
+       */
       link: "open" | "reconnecting";
       /** link が reconnecting になった時刻（ミリ秒）。open のあいだは undefined */
       reconnectingSince: number | undefined;
@@ -99,13 +103,11 @@ export function reduce(state: PhoneState, event: PhoneEvent): PhoneState {
 function onConnection(state: PhoneState, connection: ConnectionState, at: number): PhoneState {
   switch (connection.status) {
     case "connecting":
-      return state;
     case "open":
-      return state.kind === "joined" && state.link !== "open"
-        ? { ...state, link: "open", reconnectingSince: undefined }
-        : state;
+      // 参加し直せたかは joined で分かる
+      return state;
     case "reconnecting":
-      // 2回目からのつなぎ直しでは、最初に切れた時刻を残す
+      // joined を受け取るまでに何回切れても、最初に切れた時刻を残す
       return state.kind === "joined" && state.link !== "reconnecting"
         ? { ...state, link: "reconnecting", reconnectingSince: at }
         : state;
