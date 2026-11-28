@@ -126,6 +126,7 @@ function Join({ roomCode }: { roomCode: string }) {
         <span className="room-code-label">ルームコード</span>
         <strong className="room-code-value">{roomCode}</strong>
       </div>
+      <p className="lobby-manual-url">QR を読めないとき：{url.origin}/play</p>
     </>
   );
 }

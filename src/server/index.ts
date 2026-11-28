@@ -70,6 +70,15 @@ app.post("/api/rooms", async (c) => {
   return c.text("ルームを作れませんでした", 503);
 });
 
+app.get("/api/rooms/:roomCode", async (c) => {
+  const roomCode = normalizeRoomCode(c.req.param("roomCode"));
+  c.header("Cache-Control", "no-store");
+  if (!isRoomCode(roomCode) || !(await getRoom(c, roomCode).exists())) {
+    return c.body(null, 404);
+  }
+  return c.body(null, 204);
+});
+
 app.get("/api/rooms/:roomCode/ws", (c) => {
   if (c.req.header("Upgrade")?.toLowerCase() !== "websocket") {
     return c.text("WebSocket の接続が必要です", 426);

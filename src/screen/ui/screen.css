@@ -157,6 +157,13 @@ kbd {
   letter-spacing: 0.12em;
   font-variant-numeric: tabular-nums;
 }
+.lobby-manual-url {
+  margin: 0;
+  font-size: clamp(13px, 1.2vw, 19px);
+  font-weight: 700;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
 .room-pending {
   max-width: 24em;
   margin: 0;
