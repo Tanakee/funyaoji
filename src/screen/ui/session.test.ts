@@ -377,7 +377,7 @@ describe("ScreenSession", () => {
       session.dispose();
     });
 
-    it("サーバーの howto で準備OKを置き換え、スクリーンの再接続時に現在の一覧を送る", async () => {
+    it("サーバーの howto で準備OKを置き換え、同じ一覧をサーバーに送り返す", async () => {
       const session = await open();
       room(FOUR);
       session.start();
@@ -387,19 +387,52 @@ describe("ScreenSession", () => {
       expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: ["leftKnee"] });
       expect(setSeats.mock.lastCall?.[0].rightHip.ready).toBe(false);
       expect(setSeats.mock.lastCall?.[0].leftKnee.ready).toBe(true);
-      expect(sent).toEqual([]);
+      // 行き違いでサーバーがスクリーンより古い一覧を保持しても、送り返してそろえる
+      expect(sent).toEqual([{ type: "howto", ready: ["leftKnee"] }]);
+      session.dispose();
+    });
+
+    it("スクリーンがつなぎ直すと準備OKを空にして送り、送り直されたものだけを数える", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      ready("rightHip");
 
       connectionOpen = false;
       handlers.onStateChange?.({ status: "reconnecting", attempt: 1 });
       await vi.advanceTimersByTimeAsync(HOWTO_AUTO_ADVANCE_MS + 100);
       expect(session.getSnapshot().flow.kind).toBe("howto");
+      // 切れている間に rightHip の人が抜け、新しい人が入った。前の人の準備OK を渡さない
+      sent.length = 0;
       connectionOpen = true;
       handlers.onStateChange?.({ status: "open" });
-      expect(sent).toEqual([{ type: "howto", ready: ["leftKnee"] }]);
+      expect(sent).toEqual([{ type: "howto", ready: [] }]);
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: [] });
       await vi.advanceTimersByTimeAsync(100);
       expect(session.getSnapshot().flow.kind).toBe("howto");
       room(FOUR);
       expect(session.getSnapshot().flow.kind).toBe("countdown");
+      session.dispose();
+    });
+
+    it("「抜ける」で空いた席の準備OK を外し、サーバーに送る", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      ready("rightHip");
+      ready("leftHip");
+      sent.length = 0;
+      handlers.onMessage({
+        type: "room",
+        roomCode: "ABCD",
+        joints: FOUR.filter((joint) => joint !== "rightHip"),
+        vacated: "rightHip",
+      });
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: ["leftHip"] });
+      expect(sent).toContainEqual({ type: "howto", ready: ["leftHip"] });
+      // 新しい人が入っても、準備OK は引き継がない
+      room(FOUR);
+      expect(setSeats.mock.lastCall?.[0].rightHip.ready).toBe(false);
       session.dispose();
     });
 

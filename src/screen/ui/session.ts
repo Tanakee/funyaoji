@@ -409,7 +409,9 @@ export class ScreenSession {
         );
         if (connection.status === "open") {
           this.flushInput();
-          if (this.view.flow.kind === "howto") this.sendHowto(this.view.flow.ready);
+          // 切れている間に席に入った新しい人へ、前の人の準備OK を渡さないよう、空にして送り直す。
+          // 押していたスマホは、自分の関節が無い howto を受けて ready を送り直す（docs/api.md の「ready」）
+          if (this.view.flow.kind === "howto") this.dispatch({ type: "howto", ready: [] });
         }
       },
       onLatency: (latency) => {
@@ -597,6 +599,11 @@ export class ScreenSession {
       reserved: this.reservedSeconds(now),
       absent: this.absentSeconds(performance.now()),
     });
+    const { flow } = this.view;
+    // 「抜ける」で空いた席の準備OK は、次に入る人に渡さない
+    if (flow.kind === "howto" && vacated !== undefined && flow.ready.includes(vacated)) {
+      this.dispatch({ type: "howto", ready: flow.ready.filter((joint) => joint !== vacated) });
+    }
     this.dispatch({ type: "room", joints });
     this.checkActive();
   }
@@ -891,7 +898,9 @@ export class ScreenSession {
           this.howtoDeadline = performance.now() + HOWTO_AUTO_ADVANCE_MS;
           this.waitingForHowtoRoom = false;
         }
-        if (event.type === "start" || event.type === "ready") this.sendHowto(next.ready);
+        // サーバーから届いた howto も送り返す。行き違いで、サーバーがスクリーンと違う一覧を持ったままにならないように
+        if (event.type === "start" || event.type === "ready" || event.type === "howto")
+          this.sendHowto(next.ready);
         break;
       case "countdown":
         // 最初の表示の前（遅いスマホに届くのを待つあいだ）は鳴らさない
