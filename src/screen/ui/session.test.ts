@@ -220,6 +220,23 @@ describe("seatsOf", () => {
 });
 
 describe("ScreenSession", () => {
+  it("「抜ける」で空いた席（vacated）は予約中にせず、すぐ空席にする", async () => {
+    const session = await open();
+    await vi.advanceTimersByTimeAsync(90);
+    room(["leftKnee", "rightHip"]);
+    handlers.onMessage({
+      type: "room",
+      roomCode: "ABCD",
+      joints: ["rightHip"],
+      vacated: "leftKnee",
+    });
+    expect(session.getSnapshot().reserved).toEqual({});
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
+    room([]);
+    expect(session.getSnapshot().reserved).toEqual({ rightHip: 60 });
+    session.dispose();
+  });
+
   it("ロビーで抜けた席は予約中になり、60秒で空席に戻る", async () => {
     const session = await open();
     await vi.advanceTimersByTimeAsync(90);

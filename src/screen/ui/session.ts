@@ -492,7 +492,7 @@ export class ScreenSession {
         this.onRoomClosed();
         break;
       case "room":
-        this.onRoom(message.joints);
+        this.onRoom(message.joints, message.vacated);
         break;
       case "phase":
         this.onPhase(message);
@@ -518,7 +518,7 @@ export class ScreenSession {
     }
   }
 
-  private onRoom(joints: readonly Joint[]): void {
+  private onRoom(joints: readonly Joint[], vacated?: Joint): void {
     const now = performance.now();
     for (const joint of joints) {
       this.left.delete(joint);
@@ -528,7 +528,8 @@ export class ScreenSession {
     // 抜けた関節だけを戻す。もともとスマホのいない関節はキーボードが動かしているので、触らない
     for (const joint of this.view.joints) {
       if (joints.includes(joint)) continue;
-      this.left.set(joint, now);
+      // 「抜ける」で空いた席（vacated）は予約されないので、すぐ空きにする。切れた席だけ60秒を数える
+      if (joint !== vacated) this.left.set(joint, now);
       this.inputs[joint] = NEUTRAL_INPUTS[joint];
       this.lastTiltAt.delete(joint);
       delete this.debug.tilts[joint];
