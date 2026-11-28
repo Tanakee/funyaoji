@@ -37,7 +37,8 @@ let keyboardControls: (joint: Joint) => boolean = () => false;
 let nextFrame: FrameRequestCallback | undefined;
 let frameTime = 0;
 
-vi.mock("../../net/api.ts", () => ({
+vi.mock("../../net/api.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../net/api.ts")>()),
   createRoom: vi.fn(async () => "ABCD"),
   submitRanking: vi.fn(),
 }));
@@ -153,6 +154,7 @@ async function open(audio?: ScreenAudio, teamName = "テスト") {
   const session = new ScreenSession({} as HTMLElement, false, audio);
   if (teamName) session.setTeamName(teamName);
   session.open();
+  session.begin();
   await vi.advanceTimersByTimeAsync(10);
   handlers.onStateChange?.({ status: "open" });
   return session;
@@ -167,6 +169,8 @@ describe("seatsOf", () => {
     absent: {},
     reserved: {},
     game: "ready",
+    loadProgress: 1,
+    started: true,
     debug: { enabled: false, autoplay: false },
     audio: { ready: false, muted: false, unavailable: false },
     recreation: { status: "idle" },
@@ -1163,5 +1167,26 @@ describe("ScreenSession", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+});
+
+describe("「はじめる」の前", () => {
+  it("4人そろっていても、スマホとキーからの開始を受け付けない", async () => {
+    const session = new ScreenSession({} as HTMLElement, false);
+    session.setTeamName("テスト");
+    session.open();
+    await vi.advanceTimersByTimeAsync(10);
+    handlers.onStateChange?.({ status: "open" });
+    room(FOUR);
+
+    handlers.onMessage({ type: "start", joint: "leftHip" });
+    press("Space");
+    press("Enter");
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+
+    session.begin();
+    press("Space");
+    expect(session.getSnapshot().flow.kind).not.toBe("lobby");
+    session.dispose();
   });
 });

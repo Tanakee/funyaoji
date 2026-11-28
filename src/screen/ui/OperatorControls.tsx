@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { screenGate } from "./gate.ts";
 import type { ScreenSession, ScreenView } from "./session.ts";
 
 /** S2〜S7 と待つ画面に共通の操作。ルームの寿命はセッションが持つ。 */
@@ -13,12 +14,9 @@ export function OperatorControls({ session, view }: { session: ScreenSession; vi
   const busy = view.recreation.status === "creating" || view.recreation.status === "closing";
   const canRecreate =
     view.room.status === "ready" && view.room.connection.status === "open" && !busy;
-  const isErrorScreen =
-    view.game === "failed" ||
-    view.room.status === "failed" ||
-    (view.room.status === "ready" &&
-      (view.room.connection.status === "closed" || view.room.rejected !== undefined));
-
+  const gate = screenGate(view)?.kind;
+  // 「はじめる」の画面とお知らせ型には、ボタンを置かない（docs/screens.md の「運営の操作」）
+  const hidden = gate === "loading" || gate === "start" || gate === "notice";
   useEffect(() => {
     const changed = () => setFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", changed);
@@ -35,11 +33,11 @@ export function OperatorControls({ session, view }: { session: ScreenSession; vi
     return () => document.removeEventListener("pointerdown", outside);
   }, [menuOpen]);
   useEffect(() => {
-    if (isErrorScreen) {
+    if (hidden) {
       setMenuOpen(false);
       dialog.current?.close();
     }
-  }, [isErrorScreen]);
+  }, [hidden]);
 
   const toggleFullscreen = async () => {
     try {
@@ -50,17 +48,7 @@ export function OperatorControls({ session, view }: { session: ScreenSession; vi
       setFullscreenError("全画面にできませんでした");
     }
   };
-  if (isErrorScreen) {
-    return view.recreation.status === "failed" ? (
-      <div className="operator-failure" role="alert">
-        <h1>ルームの接続が終了しました</h1>
-        <p>{view.recreation.message}</p>
-        <button type="button" onClick={() => location.reload()}>
-          読み込み直す
-        </button>
-      </div>
-    ) : null;
-  }
+  if (hidden) return null;
   return (
     <div
       ref={container}

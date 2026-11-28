@@ -164,13 +164,6 @@ kbd {
   text-align: center;
   overflow-wrap: anywhere;
 }
-.room-pending {
-  max-width: 24em;
-  margin: 0;
-  font-size: var(--font-size-body);
-  font-weight: 700;
-  text-align: center;
-}
 .lobby-count,
 .lobby-count strong {
   font-family: var(--font-display);
@@ -297,19 +290,6 @@ kbd {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--color-ink-soft);
-}
-.lobby-notice {
-  position: absolute;
-  right: var(--safe-x);
-  bottom: calc(var(--band-h) + 12 * var(--u));
-  max-width: calc(420 * var(--u));
-  margin: 0;
-  padding: 12px 20px;
-  border-radius: 14px;
-  background: var(--color-accent-soft);
-  font-size: var(--font-size-body);
-  font-weight: 700;
-  text-align: center;
 }
 
 /* カウントダウン。ゲームの Canvas の上に重ねる */
@@ -623,10 +603,6 @@ html[data-debug] .result-screen {
   html[data-debug] .lobby-settings {
     height: auto;
     padding: 16px 0 0;
-  }
-  html[data-debug] .lobby-notice {
-    position: static;
-    max-width: none;
   }
   /* 傾きの数字の表は、スマホ1台では使わない。結果の見出しに重なるので隠す */
   html[data-debug] .debug {
@@ -967,30 +943,6 @@ html[data-debug] .operator-controls--playing {
   bottom: calc(var(--debug-h) + 12px);
 }
 
-.operator-failure {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 40px;
-  background: var(--color-bg);
-  color: var(--color-ink);
-  font-size: 20px;
-  pointer-events: auto;
-  text-align: center;
-}
-.operator-failure h1 {
-  font-size: 32px;
-}
-.operator-failure button {
-  min-height: 56px;
-  padding: 12px 24px;
-  font: inherit;
-}
-
 .result-ranking {
   font-size: 16px;
   line-height: 1.25;
@@ -1006,4 +958,126 @@ html[data-debug] .operator-controls--playing {
   list-style: none;
   max-height: 180px;
   overflow-y: auto;
+}
+
+/* 「はじめる」の画面・待つ型・お知らせ型。Canvas を紙の色で隠す */
+.gate,
+.gate-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(20 * var(--u));
+}
+.gate {
+  z-index: 10;
+  justify-content: safe center;
+  overflow: auto;
+  padding: var(--safe-y) var(--safe-x);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  text-align: center;
+}
+/* 待つ型は、すぐ終わる待ちでちらつかないように、0.3秒たってから中身を出す */
+.gate-delayed {
+  animation: gate-appear 0s 0.3s both;
+}
+@keyframes gate-appear {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+.gate-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-heading);
+  font-weight: 900;
+}
+.gate-title--game {
+  font-size: var(--font-size-hero);
+}
+.gate-text {
+  margin: 0;
+  font-size: var(--font-size-body);
+}
+.gate-button {
+  min-width: calc(280 * var(--u));
+  min-height: max(56px, calc(72 * var(--u)));
+  padding: 0.4em 1.6em;
+  border: 2px solid var(--color-ink);
+  border-bottom-width: 8px;
+  border-radius: 16px;
+  background: var(--color-ink);
+  color: var(--color-surface);
+  font: inherit;
+  font-size: var(--font-size-heading);
+  font-weight: 900;
+  cursor: pointer;
+}
+.gate-button:active,
+.gate-button[data-pressed] {
+  border-bottom-width: 2px;
+  transform: translateY(6px);
+}
+.gate-progress {
+  width: calc(420 * var(--u));
+  height: 20px;
+  overflow: hidden;
+  border: 2px solid var(--color-ink);
+  border-radius: 999px;
+  background: var(--color-surface);
+}
+.gate-progress-bar {
+  height: 100%;
+  background: var(--color-ink);
+  transform-origin: 0 50%;
+  transition: transform 0.2s;
+}
+
+/* 灰色の形の絵（おじさんの絵ができるまで） */
+.figure-svg {
+  width: calc(140 * var(--u));
+  height: calc(198 * var(--u));
+  overflow: visible;
+}
+.figure-sitting {
+  width: calc(260 * var(--u));
+  height: calc(156 * var(--u));
+}
+.figure-body {
+  fill: var(--color-line);
+  stroke: var(--color-line-strong);
+  stroke-width: 3;
+}
+.figure-string,
+.figure-limb,
+.figure-ground {
+  fill: none;
+  stroke: var(--color-line-strong);
+  stroke-linecap: round;
+}
+.figure-string {
+  stroke-width: 2;
+}
+.figure-limb {
+  stroke: var(--color-line);
+  stroke-width: 12;
+}
+.figure-ground {
+  stroke-width: 3;
+}
+/* 待つ型の絵は揺れ続けて、固まっていないことを見せる。動きを減らす設定でも止めない */
+.figure-swing {
+  transform-origin: 50% 0;
+  animation: swing 2.4s ease-in-out infinite alternate;
+}
+@keyframes swing {
+  from {
+    transform: rotate(-8deg);
+  }
+  to {
+    transform: rotate(8deg);
+  }
 }

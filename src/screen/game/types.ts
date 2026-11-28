@@ -40,6 +40,8 @@ export interface GameOptions {
   onEnd: (result: GameResult) => void;
   /** おじさんの部位画像。省略時は UNCLE_ART を使う */
   art?: UncleArt;
+  /** 読み込みの段階が終わるたびに、終わった割合（0〜1）を渡す */
+  onProgress?: (progress: number) => void;
 }
 
 export interface Game {

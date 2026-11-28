@@ -1,8 +1,8 @@
 // スクリーンのページの React の外側。通信・入力・ゲームをつなぎ、進行（flow.ts）の遷移に合わせて副作用を起こす。
 // React には、画面を変える値（view）だけを渡す。tilt のたびに state は変えない（docs/design.md の「フロントエンド」）
 import * as v from "valibot";
-import { createRoom, submitRanking } from "../../net/api.ts";
-import type { SubmitRankingResponse } from "../../shared/api.ts";
+import { CreateRoomError, createRoom, submitRanking } from "../../net/api.ts";
+import type { CreateRoomRejected, SubmitRankingResponse } from "../../shared/api.ts";
 import { TeamName } from "../../shared/api.ts";
 import {
   connectScreen,
@@ -59,7 +59,12 @@ const ABSENT_INPUT = tiltToInput(0);
 
 export type RoomState =
   | { status: "creating" }
-  | { status: "failed"; message: string }
+  | {
+      status: "failed";
+      message: string;
+      /** サーバーが理由を付けて断ったとき（429）だけ */
+      reason?: CreateRoomRejected["reason"];
+    }
   | {
       status: "ready";
       roomCode: string;
@@ -94,6 +99,10 @@ export interface ScreenView {
   /** room の joints から抜けてから、予約が切れるまでの秒数（切り上げ） */
   reserved: Readonly<Partial<Record<Joint, number>>>;
   game: GameState;
+  /** ゲームの読み込みが終わった割合（0〜1） */
+  loadProgress: number;
+  /** 「はじめる」を押したか。押すまでは、開始・やり直しを受け付けない */
+  started: boolean;
   /** モード（docs/game.md の「モード」）。ロビーでだけ変えられ、プレイを始めるときの phase でスマホに知らせる */
   mode: Mode;
   /** 操作方法（docs/game.md の「操作方法」）。ロビーでだけ変えられ、phase でスマホに知らせる */
@@ -198,6 +207,8 @@ export class ScreenSession {
     absent: {},
     reserved: {},
     game: "loading",
+    loadProgress: 0,
+    started: false,
     mode: "normal",
     input: "tilt",
     audio: { ready: false, muted: false, unavailable: false },
@@ -315,6 +326,11 @@ export class ScreenSession {
     void this.openRoom();
   }
 
+  /** 「はじめる」。音と全画面は、押した操作の中で呼ぶ必要があるので、画面の側で済ませる */
+  begin(): void {
+    this.update({ started: true });
+  }
+
   dispose(): void {
     this.disposed = true;
     this.lifetime.abort();
@@ -342,6 +358,7 @@ export class ScreenSession {
         inputs: this.inputs,
         onEnd: (result) => this.dispatch({ type: "ended", result }),
         ...(usePlaceholder ? { art: PLACEHOLDER_ART } : {}),
+        onProgress: (loadProgress) => this.update({ loadProgress }),
       });
       if (this.disposed) return game.destroy();
       this.game = game;
@@ -360,7 +377,11 @@ export class ScreenSession {
     } catch (error) {
       if (this.disposed) return;
       this.update({
-        room: { status: "failed", message: error instanceof Error ? error.message : String(error) },
+        room: {
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+          reason: error instanceof CreateRoomError ? error.reason : undefined,
+        },
       });
       return;
     }
@@ -718,7 +739,8 @@ export class ScreenSession {
   };
 
   private operate(event: FlowEvent): void {
-    if (this.game === undefined || !canOperate(this.view)) return;
+    // ルームは「はじめる」の前に作るので、キーだけでなく、スマホからの開始もここで止める
+    if (this.game === undefined || !this.view.started || !canOperate(this.view)) return;
     if (event.type === "start" && this.view.flow.kind === "lobby") {
       // キーとボタン、デバッグ開始のどの経路でも、未入力・不正な名前では始めない。
       this.setTeamName(this.view.teamNameInput);
