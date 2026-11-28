@@ -3,3 +3,5 @@ node_modules
 *.log
 .DS_Store
 .cloudflare
+# self-hosted runner の登録の秘密（ml/runner/README.md）
+ml/runner/.env

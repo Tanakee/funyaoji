@@ -1,0 +1,46 @@
+# 理論値の記録の作り直しの、学習のジョブだけを流す self-hosted runner（ml/runner/README.md）。
+# ジョブを1つ流すと、ランナーは登録を消して終わる（使い捨て。EPHEMERAL）。restart でコンテナが起き直し、
+# reset.sh が前のジョブの残りを消してから、登録し直して次のジョブを待つ。
+# 値は同じフォルダの .env から読む（.env.example を写して書く。.env はコミットしない）
+name: funyaoji-ml-runner
+
+services:
+  runner:
+    build: .
+    image: funyaoji-ml-runner:local
+    # PC の再起動のあとも、Docker が起きれば立ち上がる。docker compose stop / down で止めたときは起きない
+    restart: unless-stopped
+    environment:
+      # 登録の秘密（管理者が作る、このリポジトリだけの fine-grained PAT）。登録のトークンを取るのに使う
+      ACCESS_TOKEN: ${ACCESS_TOKEN:?.env に ACCESS_TOKEN を書く（ml/runner/README.md）}
+      RUNNER_SCOPE: repo
+      REPO_URL: ${REPO_URL:-https://github.com/Tanakee/funyaoji}
+      # 既定のラベル（self-hosted・Linux・X64）に足す、このランナーだけのラベル。
+      # リポジトリの変数 ML_TRAIN_RUNNER（["self-hosted","linux","x64","funyaoji-ml"]）と合わせる
+      LABELS: funyaoji-ml
+      RUNNER_NAME_PREFIX: funyaoji-ml
+      RANDOM_RUNNER_SUFFIX: "true"
+      RUNNER_WORKDIR: /_work/funyaoji-ml
+      # ジョブを1つ流したら登録を消して終わる
+      EPHEMERAL: "true"
+      # 本体は reset.sh が毎回イメージの写しに戻すので、自分では上げない。上げるときはイメージの版を上げる
+      DISABLE_AUTO_UPDATE: "true"
+      # ジョブは root でなく runner のユーザーで動かす（sudo も使えない。Dockerfile）
+      RUN_AS_ROOT: "false"
+      # 登録が済んだら、設定の値（ACCESS_TOKEN など）を環境から消してからジョブを待つ
+      UNSET_CONFIG_VARS: "true"
+    # CPU とメモリの上限。.env で変える。Docker Desktop（WSL2）の VM に割り当てた量より大きくしても効かない
+    cpus: ${RUNNER_CPUS:-20}
+    mem_limit: ${RUNNER_MEMORY:-16g}
+    memswap_limit: ${RUNNER_MEMORY:-16g}
+    pids_limit: 4096
+    # setuid（sudo など）で権限を上げさせない
+    security_opt:
+      - no-new-privileges:true
+    # ホストに触れるもの（Docker のソケット・ホストのフォルダ）はマウントしない。volumes を足さない
+    stop_grace_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
