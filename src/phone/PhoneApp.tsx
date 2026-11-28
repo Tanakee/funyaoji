@@ -161,7 +161,12 @@ function Body({
             )}
           </div>
           {state.reconnectingSince !== undefined ? (
-            <Reconnecting joint={state.joint} since={state.reconnectingSince} />
+            // since が変わった直後に、古い残り秒数を出さないよう作り直す
+            <Reconnecting
+              key={state.reconnectingSince}
+              joint={state.joint}
+              since={state.reconnectingSince}
+            />
           ) : null}
         </>
       );

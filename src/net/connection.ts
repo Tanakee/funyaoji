@@ -28,6 +28,11 @@ export interface Connection<Send> {
   send(message: Send): boolean;
   /** 閉じる。もうつなぎ直さない */
   close(): void;
+  /**
+   * つなぎ直すのを待っているなら、shouldReconnect を聞き直し、false なら閉じる。
+   * トランスポートを開いている途中なら、その結果を待つ（切れたら、つなぎ直す前に聞く）
+   */
+  checkReconnect(): void;
   readonly state: ConnectionState;
 }
 
@@ -39,6 +44,11 @@ export interface ConnectOptions<Receive extends { type: string }> {
   /** 検証したメッセージ。ハートビートの返事は渡さない */
   onMessage: (message: Exclude<Receive, HeartbeatMessage>) => void;
   onStateChange?: (state: ConnectionState) => void;
+  /**
+   * 切れてつなぎ直すときと、トランスポートを開く前に聞く。false なら開かずに閉じる（code は 1000）。
+   * 省くと諦めない。初めの接続では聞かない
+   */
+  shouldReconnect?: () => boolean;
 }
 
 /** こちらから閉じたときの close コード */
@@ -125,14 +135,23 @@ export function connect<Receive extends { type: string }, Send>(
   const scheduleReconnect = () => {
     clearTimeout(liveness);
     liveness = undefined;
+    if (options.shouldReconnect?.() === false) {
+      finish(NORMAL_CLOSURE, "");
+      return;
+    }
     attempt++;
     const delays = RECONNECT_DELAYS_MS;
     const delay = delays[Math.min(attempt, delays.length) - 1];
     retry = setTimeout(() => {
       retry = undefined;
-      open();
+      reopen();
     }, delay);
     setState({ status: "reconnecting", attempt });
+  };
+
+  const reopen = () => {
+    if (options.shouldReconnect?.() === false) finish(NORMAL_CLOSURE, "");
+    else open();
   };
 
   const open = () => {
@@ -191,7 +210,7 @@ export function connect<Receive extends { type: string }, Send>(
       clearTimeout(retry);
       retry = undefined;
       attempt = 0;
-      open();
+      reopen();
     } else if (liveness !== undefined) {
       watchLiveness();
     }
@@ -222,6 +241,10 @@ export function connect<Receive extends { type: string }, Send>(
       } finally {
         options.onStateChange?.(closed);
       }
+    },
+    checkReconnect() {
+      if (retry === undefined || options.shouldReconnect?.() !== false) return;
+      finish(NORMAL_CLOSURE, "");
     },
     get state() {
       return state;
