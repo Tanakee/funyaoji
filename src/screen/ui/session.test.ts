@@ -5,7 +5,13 @@ import { GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import type { Joint, Mode } from "../../shared/messages.ts";
 import type { Game, GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
-import { ScreenSession, seatsOf, type ScreenView } from "./session.ts";
+import {
+  HOWTO_AUTO_ADVANCE_MS,
+  RECONNECT_WAIT_MS,
+  ScreenSession,
+  seatsOf,
+  type ScreenView,
+} from "./session.ts";
 
 const sent: ScreenSent[] = [];
 /** session.ts の FINISH_MS */
@@ -150,6 +156,7 @@ const frames = (n: number) => {
 };
 const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "ABCD", joints });
 const inputs = (): JointInputs => game.inputs;
+const ready = (joint: Joint) => handlers.onMessage({ type: "ready", joint });
 
 async function open(audio?: ScreenAudio, teamName = "テスト") {
   const session = new ScreenSession({} as HTMLElement, false, audio);
@@ -164,6 +171,7 @@ describe("seatsOf", () => {
   const lobby: ScreenView = {
     room: { status: "creating" },
     flow: { kind: "lobby" },
+    howtoRemainingSec: undefined,
     joints: [],
     active: [],
     absent: {},
@@ -189,10 +197,25 @@ describe("seatsOf", () => {
         reserved: { rightHip: 52 },
       }),
     ).toEqual({
-      leftKnee: { showName: true, state: { kind: "empty" } },
-      leftHip: { showName: true, state: { kind: "joined", active: true } },
-      rightKnee: { showName: true, state: { kind: "joined", active: false } },
-      rightHip: { showName: true, state: { kind: "reserved", remainingSec: 52 } },
+      leftKnee: { showName: true, ready: false, moveName: false, state: { kind: "empty" } },
+      leftHip: {
+        showName: true,
+        ready: false,
+        moveName: false,
+        state: { kind: "joined", active: true },
+      },
+      rightKnee: {
+        showName: true,
+        ready: false,
+        moveName: false,
+        state: { kind: "joined", active: false },
+      },
+      rightHip: {
+        showName: true,
+        ready: false,
+        moveName: false,
+        state: { kind: "reserved", remainingSec: 52 },
+      },
     });
   });
 
@@ -207,10 +230,31 @@ describe("seatsOf", () => {
         reserved: { leftHip: 18, leftKnee: 40 },
       }),
     ).toEqual({
-      leftKnee: { showName: false, state: { kind: "empty" }, key: "P" },
-      leftHip: { showName: false, state: { kind: "reserved", remainingSec: 58 } },
-      rightKnee: { showName: false, state: { kind: "joined", active: false } },
-      rightHip: { showName: false, state: { kind: "joined", active: true } },
+      leftKnee: {
+        showName: false,
+        ready: false,
+        moveName: false,
+        state: { kind: "empty" },
+        key: "P",
+      },
+      leftHip: {
+        showName: false,
+        ready: false,
+        moveName: false,
+        state: { kind: "reserved", remainingSec: 58 },
+      },
+      rightKnee: {
+        showName: false,
+        ready: false,
+        moveName: false,
+        state: { kind: "joined", active: false },
+      },
+      rightHip: {
+        showName: false,
+        ready: false,
+        moveName: false,
+        state: { kind: "joined", active: true },
+      },
     });
   });
 
@@ -222,13 +266,238 @@ describe("seatsOf", () => {
     });
     expect(seats.leftKnee).toEqual({
       showName: false,
+      ready: false,
+      moveName: false,
       state: { kind: "reserved", remainingSec: 20 },
     });
-    expect(seats.leftHip).toEqual({ showName: false, state: { kind: "empty" } });
+    expect(seats.leftHip).toEqual({
+      showName: false,
+      ready: false,
+      moveName: false,
+      state: { kind: "empty" },
+    });
   });
 });
 
 describe("ScreenSession", () => {
+  describe("遊び方", () => {
+    it("通常のスタートで練習のまま遊び方に入り、空の howto を送る", async () => {
+      const session = await open();
+      room(FOUR);
+      sent.length = 0;
+      session.start();
+
+      expect(session.getSnapshot()).toMatchObject({
+        flow: { kind: "howto", ready: [] },
+        howtoRemainingSec: 30,
+      });
+      expect(sent).toEqual([{ type: "howto", ready: [] }]);
+      expect(calls).toEqual(["practice"]);
+      session.dispose();
+    });
+
+    it("同じ関節の ready は一度だけ反映して送り返し、4人全員でカウントダウンに進む", async () => {
+      const session = await open();
+      room(FOUR);
+      press("Space");
+      sent.length = 0;
+      ready("rightHip");
+      ready("rightHip");
+
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: ["rightHip"] });
+      expect(setSeats.mock.lastCall?.[0].rightHip).toMatchObject({ ready: true, moveName: true });
+      expect(sent).toEqual([{ type: "howto", ready: ["rightHip"] }]);
+      for (const joint of FOUR.slice(1)) ready(joint);
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        countdownKind: "count",
+        players: FOUR,
+      });
+      expect(session.getSnapshot().howtoRemainingSec).toBeUndefined();
+      expect(sent.filter((message) => message.type === "phase")).toMatchObject([
+        { phase: "playing" },
+      ]);
+      session.dispose();
+    });
+
+    it("残り秒数が変わったときだけ画面を更新し、30秒で4人のカウントダウンに進む", async () => {
+      const session = await open();
+      room(FOUR);
+      press("Space");
+      const listener = vi.fn();
+      session.subscribe(listener);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(listener).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(101);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(session.getSnapshot().howtoRemainingSec).toBe(29);
+      await vi.advanceTimersByTimeAsync(HOWTO_AUTO_ADVANCE_MS - 1_101);
+      expect(session.getSnapshot().flow.kind).toBe("howto");
+      await vi.advanceTimersByTimeAsync(101);
+      expect(session.getSnapshot().flow.kind).toBe("countdown");
+      session.dispose();
+    });
+
+    it("締め切りを過ぎても満員になるまで待ち、そろった時点の担当で進む", async () => {
+      const session = await open();
+      room(FOUR);
+      press("Space");
+      ready("rightHip");
+      room(FOUR.slice(1));
+      expect(setSeats.mock.lastCall?.[0].rightHip).toEqual({
+        showName: true,
+        moveName: true,
+        ready: false,
+        state: { kind: "reserved", remainingSec: 60 },
+      });
+      expect(session.getSnapshot().absent).toEqual({});
+      await vi.advanceTimersByTimeAsync(HOWTO_AUTO_ADVANCE_MS + 100);
+      expect(session.getSnapshot()).toMatchObject({
+        flow: { kind: "howto", ready: ["rightHip"] },
+        howtoRemainingSec: 0,
+      });
+      const joints = [...FOUR.slice(1), "rightHip"] satisfies Joint[];
+      room(joints);
+      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", players: joints });
+      session.dispose();
+    });
+
+    it("Space で飛ばせるのは4人そろっているときだけで、R は遊び方では効かない", async () => {
+      const session = await open();
+      room(FOUR);
+      press("Space");
+      room(FOUR.slice(1));
+      press("Space");
+      expect(session.getSnapshot().flow.kind).toBe("howto");
+      room(FOUR);
+      press("KeyR");
+      expect(session.getSnapshot().flow.kind).toBe("howto");
+      press("Space");
+      expect(session.getSnapshot().flow.kind).toBe("countdown");
+      session.dispose();
+    });
+
+    it("サーバーの howto で準備OKを置き換え、同じ一覧をサーバーに送り返す", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      ready("rightHip");
+      sent.length = 0;
+      handlers.onMessage({ type: "howto", ready: ["leftKnee"] });
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: ["leftKnee"] });
+      expect(setSeats.mock.lastCall?.[0].rightHip.ready).toBe(false);
+      expect(setSeats.mock.lastCall?.[0].leftKnee.ready).toBe(true);
+      // 行き違いでサーバーがスクリーンより古い一覧を保持しても、送り返してそろえる
+      expect(sent).toEqual([{ type: "howto", ready: ["leftKnee"] }]);
+      session.dispose();
+    });
+
+    it("スクリーンがつなぎ直すと準備OKを空にして送り、送り直されたものだけを数える", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      ready("rightHip");
+
+      connectionOpen = false;
+      handlers.onStateChange?.({ status: "reconnecting", attempt: 1 });
+      await vi.advanceTimersByTimeAsync(HOWTO_AUTO_ADVANCE_MS + 100);
+      expect(session.getSnapshot().flow.kind).toBe("howto");
+      // 切れている間に rightHip の人が抜け、新しい人が入った。前の人の準備OK を渡さない
+      sent.length = 0;
+      connectionOpen = true;
+      handlers.onStateChange?.({ status: "open" });
+      expect(sent).toEqual([{ type: "howto", ready: [] }]);
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: [] });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(session.getSnapshot().flow.kind).toBe("howto");
+      room(FOUR);
+      expect(session.getSnapshot().flow.kind).toBe("countdown");
+      session.dispose();
+    });
+
+    it("「抜ける」で空いた席の準備OK を外し、サーバーに送る", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      ready("rightHip");
+      ready("leftHip");
+      sent.length = 0;
+      handlers.onMessage({
+        type: "room",
+        roomCode: "ABCD",
+        joints: FOUR.filter((joint) => joint !== "rightHip"),
+        vacated: "rightHip",
+      });
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: ["leftHip"] });
+      expect(sent).toContainEqual({ type: "howto", ready: ["leftHip"] });
+      // 新しい人が入っても、準備OK は引き継がない
+      room(FOUR);
+      expect(setSeats.mock.lastCall?.[0].rightHip.ready).toBe(false);
+      session.dispose();
+    });
+
+    it("全員が切断したら、最後の席の予約が切れた時点でロビーに戻る", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      room([]);
+      await vi.advanceTimersByTimeAsync(RECONNECT_WAIT_MS - 1);
+      expect(session.getSnapshot().flow.kind).toBe("howto");
+      expect(sent.some((message) => message.type === "phase")).toBe(false);
+      await vi.advanceTimersByTimeAsync(101);
+      expect(session.getSnapshot()).toMatchObject({
+        flow: { kind: "lobby" },
+        reserved: {},
+        howtoRemainingSec: undefined,
+      });
+      expect(sent).toContainEqual({ type: "phase", phase: "lobby", input: "tilt" });
+      session.dispose();
+    });
+
+    it("全員が抜けて予約がなければすぐにロビーに戻る", async () => {
+      const session = await open();
+      room(FOUR);
+      session.start();
+      for (const [i, joint] of FOUR.entries()) {
+        handlers.onMessage({
+          type: "room",
+          roomCode: "ABCD",
+          joints: FOUR.slice(i + 1),
+          vacated: joint,
+        });
+      }
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(session.getSnapshot().howtoRemainingSec).toBeUndefined();
+      expect(sent).toContainEqual({ type: "phase", phase: "lobby", input: "tilt" });
+      session.dispose();
+    });
+
+    it("Enter のデバッグ開始と、その後のもう一度や R では遊び方を出さない", async () => {
+      const session = await open();
+      room(FOUR);
+      press("Enter");
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        countdownKind: "count",
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      game.onEnd({ outcome: "fell", distanceM: 1 });
+      session.restart();
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        countdownKind: "readyGo",
+      });
+      await vi.advanceTimersByTimeAsync(1_500);
+      press("KeyR");
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        countdownKind: "readyGo",
+      });
+      expect(sent.some((message) => message.type === "howto")).toBe(false);
+      session.dispose();
+    });
+  });
+
   it("「抜ける」で空いた席（vacated）は予約中にせず、すぐ空席にする", async () => {
     const session = await open();
     await vi.advanceTimersByTimeAsync(90);
@@ -387,6 +656,7 @@ describe("ScreenSession", () => {
     const session = await open();
     room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
     press("Space");
+    press("Space");
     await vi.advanceTimersByTimeAsync(3000);
     room(["leftHip", "rightKnee", "leftKnee"]);
     handlers.onMessage({ type: "phase", phase: "playing", mode: "normal", input: "tilt" });
@@ -404,11 +674,17 @@ describe("ScreenSession", () => {
     const phases = () => sent.filter((message) => message.type === "phase");
     const playing = { type: "phase", phase: "playing", mode: "normal", input: "tilt" };
 
-    it("4人いるロビーで start を受け取ると、一度だけカウントダウンを始める", async () => {
+    it("4人いるロビーで start を受け取ると遊び方に入り、続けて届く start は無視する", async () => {
       const session = await open();
       room(four);
       start();
       start();
+      expect(session.getSnapshot().flow).toEqual({ kind: "howto", ready: [] });
+      expect(sent.filter((message) => message.type === "howto")).toEqual([
+        { type: "howto", ready: [] },
+      ]);
+      expect(phases()).toEqual([]);
+      for (const joint of four) ready(joint);
       expect(session.getSnapshot().flow).toMatchObject({
         kind: "countdown",
         countdownKind: "count",
@@ -440,6 +716,7 @@ describe("ScreenSession", () => {
     it("4人いる結果で retry が連続して届いても、一度だけカウントダウンを始める", async () => {
       const session = await open();
       room(four);
+      press("Space");
       press("Space");
       await vi.advanceTimersByTimeAsync(3000);
       game.onEnd({ outcome: "fell", distanceM: 1 });
@@ -473,13 +750,16 @@ describe("ScreenSession", () => {
       session.dispose();
     });
 
-    it("ロビー・カウントダウン・プレイ中は retry を無視する", async () => {
+    it("ロビー・遊び方・カウントダウン・プレイ中は retry を無視する", async () => {
       const session = await open();
       room(four);
       retry();
       expect(session.getSnapshot().flow.kind).toBe("lobby");
       expect(phases()).toEqual([]);
 
+      press("Space");
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("howto");
       press("Space");
       await vi.advanceTimersByTimeAsync(1000);
       retry();
@@ -507,7 +787,7 @@ describe("ScreenSession", () => {
     }
     session.setTeamName("  ＡＢＣ  ");
     press("Space");
-    expect(session.getSnapshot().flow.kind).toBe("countdown");
+    expect(session.getSnapshot().flow.kind).toBe("howto");
     expect(session.getSnapshot().teamNameError).toBeUndefined();
     expect(session.getSnapshot().teamName).toBe("ABC");
     session.dispose();
@@ -592,11 +872,13 @@ describe("ScreenSession", () => {
     session.dispose();
   });
 
-  it("ルームを作り直すと、旧ルームで抜けた席の予約を消す", async () => {
+  it("遊び方でルームを作り直すと、残り時間と旧ルームの席の予約を消す", async () => {
     const session = await open();
-    room(["leftKnee"]);
-    room([]);
+    room(FOUR);
+    session.start();
+    room(FOUR.filter((joint) => joint !== "leftKnee"));
     expect(session.getSnapshot().reserved).toEqual({ leftKnee: 60 });
+    expect(session.getSnapshot().howtoRemainingSec).toBe(30);
     vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
     const pending = session.recreateRoom();
     await vi.advanceTimersByTimeAsync(0);
@@ -604,6 +886,8 @@ describe("ScreenSession", () => {
     await vi.advanceTimersByTimeAsync(0);
     connections[0]!.handlers.onMessage({ type: "room-closed" });
     await pending;
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    expect(session.getSnapshot().howtoRemainingSec).toBeUndefined();
     expect(session.getSnapshot().reserved).toEqual({});
     expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
     session.dispose();
@@ -741,6 +1025,7 @@ describe("ScreenSession", () => {
     fire("keyup", "Enter", { target: menu });
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     press("Space");
+    press("Space");
     await vi.advanceTimersByTimeAsync(3000);
     const dialog = Object.assign(new HTMLElement(), {
       tagName: "BUTTON",
@@ -848,6 +1133,7 @@ describe("ScreenSession", () => {
     const session = await open();
     room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
     press("Space");
+    press("Space");
     await vi.advanceTimersByTimeAsync(3000);
     connectionOpen = false;
     game.onEnd({ outcome: "fell", distanceM: 1 });
@@ -867,6 +1153,7 @@ describe("ScreenSession", () => {
     await open();
     room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
     await vi.advanceTimersByTimeAsync(2000);
+    press("Space");
     sent.length = 0;
     press("Space");
 
@@ -990,6 +1277,7 @@ describe("ScreenSession", () => {
       const session = await open();
       room(FOUR);
       press("Space");
+      press("Space");
       await vi.advanceTimersByTimeAsync(3000);
       expect(session.getSnapshot().flow.kind).toBe("playing");
       return session;
@@ -1081,6 +1369,7 @@ describe("ScreenSession", () => {
       const session = await open();
       room(FOUR);
       press("Space");
+      press("Space");
       await vi.advanceTimersByTimeAsync(2_000);
       expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", step: { label: "1" } });
       press("Space");
@@ -1157,6 +1446,7 @@ describe("ScreenSession", () => {
     const session = await open();
     room(FOUR);
     session.start();
+    press("Space");
     await vi.advanceTimersByTimeAsync(1_000);
     room(FOUR.filter((joint) => joint !== "leftKnee"));
     expect(session.getSnapshot().flow).toMatchObject({

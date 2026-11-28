@@ -24,6 +24,7 @@ import {
   type ShapeSpec,
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
+import { createHowtoLabels } from "./howto-labels.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
 import { bottomRightControlsLeft, SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
@@ -102,7 +103,7 @@ function hudFontName(state: FontState): string {
 
 // Canvas に Zen Kaku Gothic New で描く字をすべて入れる。フォントは字の範囲ごとのファイルに分かれていて、
 // document.fonts.load は渡した字を含むファイルしか読まない。ここに無い字は、代替フォントで描かれることがある
-const GOTHIC_CHARS = "0123456789 mQWOPスタートゴール左右ひざももあと秒";
+const GOTHIC_CHARS = "0123456789 mQWOPスタートゴール左右ひざももあと秒OK!";
 
 async function loadViewFonts(): Promise<boolean> {
   try {
@@ -394,6 +395,9 @@ export async function createView(
   const markers = new Container();
   const tags = new Container();
   seatLayer.addChild(strings, markers, tags);
+  const howtoLabels = createHowtoLabels(seatLayer, COLORS, (text, color) =>
+    label(text, 20, color, true),
+  );
   const tiltGlow = new TiltGlow();
   const seatCaption = (text: string) => {
     const caption = label(text, 20, COLORS.seatText, true);
@@ -514,6 +518,7 @@ export async function createView(
       graphics.captions.addChild(graphics.detail);
     });
     if (currentSeats) setSeats(currentSeats);
+    howtoLabels.rebuildTexts();
   }
   if (fontState === "timeout") {
     void fontsLoaded.then((loaded) => {
@@ -586,6 +591,16 @@ export async function createView(
       const pose = state.poses[anchor.part];
       const input = seat.kind === "joined" ? inputs[joint] : undefined;
       const glow = tiltGlow.update(joint, input, dtSec);
+      howtoLabels.update(
+        joint,
+        currentSeats?.[joint],
+        {
+          x: (screenX(pose.x) - seatLayer.x) / ui,
+          y: (groundY - pose.y * pxPerM) / ui,
+        },
+        glow,
+        dtSec,
+      );
       partGlow.position.set(pose.x, pose.y);
       partGlow.rotation = pose.rot;
       partGlow.visible = glow > 0;
@@ -601,6 +616,7 @@ export async function createView(
       drawString(line, cx, x, y, color, glowColor, stringLook(input ?? 0), glow);
       marker.position.set(x, y);
     });
+    howtoLabels.finishFrame();
 
     // 1m ごとの杭は backdrop が描く。数字はプレイ中だけ、紙色の下地を敷いて出す
     ruler.clear();
@@ -693,6 +709,7 @@ export async function createView(
       observer.disconnect();
       bubble.destroy();
       backdrop.destroy();
+      howtoLabels.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };

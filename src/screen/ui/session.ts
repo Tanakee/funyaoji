@@ -57,6 +57,8 @@ const ACTIVE_CHECK_MS = 100;
  * サーバーは予約が切れたことを知らせないので、スクリーンが、関節が room から抜けたときから数える
  */
 export const RECONNECT_WAIT_MS = 60_000;
+/** 遊び方から自動で進むまでの時間。4人そろっていなければ引き続き待つ */
+export const HOWTO_AUTO_ADVANCE_MS = 30_000;
 /** つなぎ直しを待つあいだ、その関節に書く入力。傾き 0 と同じ */
 const ABSENT_INPUT = tiltToInput(0);
 
@@ -86,6 +88,8 @@ export interface DebugState {
 export interface ScreenView {
   room: RoomState;
   flow: Flow;
+  /** 遊び方の残り秒数（切り上げ）。遊び方を出している間だけ持つ */
+  howtoRemainingSec: number | undefined;
   /** プレイが始まった直後だけ重ねる合図 */
   startLabel?: string;
   /** 接続中のスマホの関節（room の joints） */
@@ -142,15 +146,21 @@ export function keyboardDrives(view: ScreenView, joint: Joint): boolean {
 
 /**
  * 画面の上の席の見せ方（docs/screens.md の「糸」）。カウントダウンとプレイ中は、開始したスマホのつなぎ直しを待つ
- * 残り秒数（absent）を、ロビーと結果は room から抜けてからの残り秒数（reserved）を出す
+ * 残り秒数（absent）を、それ以外では room から抜けてからの残り秒数（reserved）を出す
  */
 export function seatsOf(view: ScreenView): Seats {
   const { flow } = view;
-  const showName = flow.kind === "lobby";
+  const moveName = flow.kind === "howto";
+  const showName = flow.kind === "lobby" || moveName;
   const inRun = flow.kind === "countdown" || flow.kind === "playing";
   const seatOf = (joint: Joint): SeatView => {
     if (view.joints.includes(joint)) {
-      return { showName, state: { kind: "joined", active: view.active.includes(joint) } };
+      return {
+        showName,
+        moveName,
+        ready: moveName && flow.ready.includes(joint),
+        state: { kind: "joined", active: view.active.includes(joint) },
+      };
     }
     const remainingSec = inRun
       ? flow.players.includes(joint)
@@ -158,10 +168,10 @@ export function seatsOf(view: ScreenView): Seats {
         : undefined
       : view.reserved[joint];
     if (remainingSec !== undefined) {
-      return { showName, state: { kind: "reserved", remainingSec } };
+      return { showName, moveName, ready: false, state: { kind: "reserved", remainingSec } };
     }
     const key = keyboardDrives(view, joint) ? KEYBOARD_KEYS[joint].label : undefined;
-    return { showName, state: { kind: "empty" }, key };
+    return { showName, moveName, ready: false, state: { kind: "empty" }, key };
   };
   return {
     leftKnee: seatOf("leftKnee"),
@@ -172,7 +182,13 @@ export function seatsOf(view: ScreenView): Seats {
 }
 
 function sameSeat(a: SeatView, b: SeatView): boolean {
-  if (a.showName !== b.showName || a.key !== b.key) return false;
+  if (
+    a.showName !== b.showName ||
+    a.key !== b.key ||
+    a.moveName !== b.moveName ||
+    a.ready !== b.ready
+  )
+    return false;
   switch (a.state.kind) {
     case "empty":
       return b.state.kind === "empty";
@@ -196,6 +212,7 @@ export class ScreenSession {
   private view: ScreenView = {
     room: { status: "creating" },
     flow: INITIAL_FLOW,
+    howtoRemainingSec: undefined,
     joints: [],
     active: [],
     absent: {},
@@ -223,6 +240,9 @@ export class ScreenSession {
   private readonly lastTiltAt = new Map<Joint, number>();
   /** room の joints から抜けた関節と、抜けた時刻（performance.now()）。RECONNECT_WAIT_MS のあいだ持つ */
   private readonly left = new Map<Joint, number>();
+  private howtoDeadline: number | undefined;
+  /** 再接続前の参加者で遊び方を終えないよう、次の room を待つ */
+  private waitingForHowtoRoom = false;
   private countdownTimer: ReturnType<typeof setTimeout> | undefined;
   /** カウントダウンの最初の表示（「3」「よーい」）を出す時刻（performance.now()） */
   private countdownStartedAt = 0;
@@ -382,12 +402,19 @@ export class ScreenSession {
     return {
       onStateChange: (connection) => {
         if (!current()) return;
+        if (connection.status !== "open" && this.view.flow.kind === "howto")
+          this.waitingForHowtoRoom = true;
         if (connection.status === "closed" && connection.code === ROOM_CLOSED_CODE)
           this.onRoomClosed();
         this.updateRoom(
           connection.status === "open" ? { connection, rejected: undefined } : { connection },
         );
-        if (connection.status === "open") this.flushInput();
+        if (connection.status === "open") {
+          this.flushInput();
+          // 切れている間に席に入った新しい人へ、前の人の準備OK を渡さないよう、空にして送り直す。
+          // 押していたスマホは、自分の関節が無い howto を受けて ready を送り直す（docs/api.md の「ready」）
+          if (this.view.flow.kind === "howto") this.dispatch({ type: "howto", ready: [] });
+        }
       },
       onLatency: (latency) => {
         if (current()) this.debug.latency = latency;
@@ -431,6 +458,8 @@ export class ScreenSession {
       this.connection?.close();
       this.connection = prepared.connection;
       clearTimeout(this.countdownTimer);
+      this.howtoDeadline = undefined;
+      this.waitingForHowtoRoom = false;
       this.clearAbsent();
       this.left.clear();
       this.lastTiltAt.clear();
@@ -445,6 +474,7 @@ export class ScreenSession {
       this.update({
         room: { status: "ready", roomCode, connection: prepared.connection.state },
         flow: INITIAL_FLOW,
+        howtoRemainingSec: undefined,
         joints: [],
         active: [],
         absent: {},
@@ -527,6 +557,14 @@ export class ScreenSession {
       case "start":
         if (this.view.flow.kind === "lobby" && isFull(this.view.joints)) this.start();
         break;
+      case "ready":
+        this.dispatch({ type: "ready", joint: message.joint });
+        this.checkHowto(performance.now());
+        break;
+      case "howto":
+        this.dispatch({ type: "howto", ready: message.ready });
+        this.checkHowto(performance.now());
+        break;
       case "retry":
         if (this.view.flow.kind === "result" && isFull(this.view.joints)) this.restart();
         break;
@@ -541,6 +579,7 @@ export class ScreenSession {
   }
 
   private onRoom(joints: readonly Joint[], vacated?: Joint): void {
+    this.waitingForHowtoRoom = false;
     const now = performance.now();
     for (const joint of joints) {
       this.left.delete(joint);
@@ -562,6 +601,11 @@ export class ScreenSession {
       reserved: this.reservedSeconds(now),
       absent: this.absentSeconds(performance.now()),
     });
+    const { flow } = this.view;
+    // 「抜ける」で空いた席の準備OK は、次に入る人に渡さない
+    if (flow.kind === "howto" && vacated !== undefined && flow.ready.includes(vacated)) {
+      this.dispatch({ type: "howto", ready: flow.ready.filter((joint) => joint !== vacated) });
+    }
     this.dispatch({ type: "room", joints });
     this.checkActive();
   }
@@ -610,6 +654,7 @@ export class ScreenSession {
     } else if (event.code === "Space") {
       event.preventDefault();
       if (flow.kind === "lobby") this.start();
+      else if (flow.kind === "howto") this.skipHowto();
       else this.restart();
     } else if (event.code === "Enter" && flow.kind === "lobby") {
       this.startDebug();
@@ -636,8 +681,33 @@ export class ScreenSession {
       type: "start",
       joints: this.view.joints,
       debug: false,
-      delayMs: this.measuredDelays(),
     });
+  }
+
+  private skipHowto(): void {
+    if (this.waitingForHowtoRoom) return;
+    this.operate({ type: "begin", joints: this.view.joints, delayMs: this.measuredDelays() });
+  }
+
+  private sendHowto(ready: readonly Joint[]): void {
+    this.send({ type: "howto", ready: [...ready] });
+  }
+
+  private checkHowto(now: number): void {
+    const { flow, joints, reserved, howtoRemainingSec } = this.view;
+    if (flow.kind !== "howto" || this.howtoDeadline === undefined) return;
+    if (joints.length === 0 && Object.keys(reserved).length === 0) {
+      this.dispatch({ type: "toLobby" });
+      return;
+    }
+    const remainingSec = Math.max(0, Math.ceil((this.howtoDeadline - now) / 1000));
+    if (remainingSec !== howtoRemainingSec) this.update({ howtoRemainingSec: remainingSec });
+    if (
+      isFull(joints) &&
+      (remainingSec === 0 || JOINTS.every((joint) => flow.ready.includes(joint)))
+    ) {
+      this.skipHowto();
+    }
   }
 
   /** いるスマホだけで始める。いない関節は、キーボードか画面のつまみで動かす */
@@ -702,7 +772,7 @@ export class ScreenSession {
   /** つまみで動かせる関節か。スマホがいる関節は動かせない */
   private isDebugControlled(joint: Joint): boolean {
     const { flow } = this.view;
-    return flow.kind !== "lobby" && !flow.players.includes(joint);
+    return flow.kind !== "lobby" && flow.kind !== "howto" && !flow.players.includes(joint);
   }
 
   /** キーボードで動かしてよい関節か（keyboardDrives）。つまみでつかんでいる関節は、つまみに任せる */
@@ -741,7 +811,14 @@ export class ScreenSession {
       prev.kind === "countdown" && next.kind === "playing"
         ? COUNTDOWNS[prev.countdownKind].startLabel
         : undefined;
-    this.update({ flow: next, startLabel });
+    if (prev.kind === "howto" && next.kind !== "howto") this.howtoDeadline = undefined;
+    const howtoRemainingSec =
+      next.kind === "howto"
+        ? event.type === "start"
+          ? HOWTO_AUTO_ADVANCE_MS / 1000
+          : this.view.howtoRemainingSec
+        : undefined;
+    this.update({ flow: next, startLabel, howtoRemainingSec });
     this.runEffects(next, event);
     this.syncAbsent();
     this.checkSeatTimers(performance.now());
@@ -749,11 +826,11 @@ export class ScreenSession {
 
   /**
    * room に合わせて、つなぎ直しの待ちを増やす・減らす。待つのはカウントダウンとプレイ中だけで、
-   * 結果とロビーでは待ちを持たない
+   * それ以外では待ちを持たない
    */
   private syncAbsent(joints = this.view.joints): void {
     const { flow } = this.view;
-    if (flow.kind === "lobby" || flow.kind === "finish" || flow.kind === "result") {
+    if (flow.kind !== "countdown" && flow.kind !== "playing") {
       this.clearAbsent();
       return;
     }
@@ -818,10 +895,19 @@ export class ScreenSession {
   private runEffects(next: Flow, event: FlowEvent): void {
     this.audio.setPlaying(next.kind === "playing");
     switch (next.kind) {
+      case "howto":
+        if (event.type === "start") {
+          this.howtoDeadline = performance.now() + HOWTO_AUTO_ADVANCE_MS;
+          this.waitingForHowtoRoom = false;
+        }
+        // サーバーから届いた howto も送り返す。行き違いで、サーバーがスクリーンと違う一覧を持ったままにならないように
+        if (event.type === "start" || event.type === "ready" || event.type === "howto")
+          this.sendHowto(next.ready);
+        break;
       case "countdown":
         // 最初の表示の前（遅いスマホに届くのを待つあいだ）は鳴らさない
         if (next.step.label !== "") this.audio.play("countdown");
-        if (event.type === "start" || event.type === "restart") {
+        if (event.type === "start" || event.type === "restart" || event.type === "begin") {
           // 始めに phase を送り、スマホの画面を切り替えて、途中参加を断る
           // 前の走りのキーボードの入力を持ち越さない。スマホの関節は、次の tilt で上書きされる
           clearTimeout(this.countdownTimer);
@@ -926,6 +1012,7 @@ export class ScreenSession {
     // 待っている関節は、キーボードで動かされても 0 に戻す
     for (const joint of this.absent.keys()) this.inputs[joint] = ABSENT_INPUT;
     this.checkSeatTimers(now);
+    this.checkHowto(now);
     const active = JOINTS.filter(
       (joint) =>
         this.view.joints.includes(joint) &&
