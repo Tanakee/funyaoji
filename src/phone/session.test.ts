@@ -45,12 +45,12 @@ const JOINED = JSON.stringify({ type: "joined", joint: "rightHip" });
 
 function joinThenDrop() {
   const events: PhoneEvent[] = [];
-  const stop = startSession("K7Q2", (event) => events.push(event));
+  const session = startSession("K7Q2", (event) => events.push(event));
   opened[0]!.handlers.onOpen();
   opened[0]!.handlers.onMessage(JOINED);
   opened[0]!.handlers.onClose({ code: 1006, reason: "" });
   const closed = () => events.some((e) => e.type === "connection" && e.state.status === "closed");
-  return { events, stop, closed };
+  return { events, stop: () => session.stop(), closed };
 }
 
 test("60秒たっても戻れなければ閉じる。そのあとはトランスポートを開かない", () => {
@@ -101,7 +101,7 @@ test("60秒より前に開き始めたトランスポートが失敗したら、
 
 test("playing で断られてつなぎ直しているスマホは、60秒たっても閉じない", () => {
   const events: PhoneEvent[] = [];
-  const stop = startSession("K7Q2", (event) => events.push(event));
+  const session = startSession("K7Q2", (event) => events.push(event));
   opened[0]!.handlers.onOpen();
   opened[0]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
   opened[0]!.handlers.onClose({ code: 4001, reason: "" });
@@ -110,5 +110,5 @@ test("playing で断られてつなぎ直しているスマホは、60秒たっ�
     opened.at(-1)!.handlers.onClose({ code: 1006, reason: "" });
   }
   expect(events.some((e) => e.type === "connection" && e.state.status === "closed")).toBe(false);
-  stop();
+  session.stop();
 });

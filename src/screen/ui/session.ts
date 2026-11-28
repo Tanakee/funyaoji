@@ -29,7 +29,7 @@ import {
   type KeyboardHandle,
 } from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
-import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
+import { INITIAL_FLOW, isFull, reduce, type Flow, type FlowEvent } from "./flow.ts";
 import { prepareScreen } from "./roomConnection.ts";
 import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
 
@@ -412,6 +412,12 @@ export class ScreenSession {
         // 終了通知の前に回線が切れても、再接続で no-room になれば終了済みと分かる。
         if (message.reason === "no-room") this.roomClose?.resolve();
         this.updateRoom({ rejected: message.reason });
+        break;
+      case "start":
+        if (this.view.flow.kind === "lobby" && isFull(this.view.joints)) this.start();
+        break;
+      case "retry":
+        if (this.view.flow.kind === "result" && isFull(this.view.joints)) this.restart();
         break;
       case "tilt":
         // 待っている関節に古い tilt が遅れて届いても、入力は 0 のまま

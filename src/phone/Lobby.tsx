@@ -40,10 +40,12 @@ export function Lobby({
   room,
   joint,
   count,
+  onStart,
 }: {
   room: string | undefined;
   joint: Joint;
   count: number;
+  onStart: () => void;
 }) {
   const label = JOINT_LABELS[joint];
   const remaining = JOINTS.length - count;
@@ -73,8 +75,11 @@ export function Lobby({
         </strong>
         {remaining > 0 ? <span>あと{remaining}人</span> : null}
       </p>
-      {/* #89 でスタートボタンを置く場所を空けておく */}
-      {remaining <= 0 ? <div className="start-slot" aria-hidden="true" /> : null}
+      {count === JOINTS.length ? (
+        <button type="button" className="phone-button start-button" onClick={onStart}>
+          スタート
+        </button>
+      ) : null}
     </section>
   );
 }

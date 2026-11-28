@@ -1,6 +1,7 @@
 // ルームにつないでいるあいだ、React の外でやること：接続、tilt の送信、画面を消さないこと
 import { connectPhone } from "../net/client.ts";
 import { createTiltSeq, phoneClientId } from "../net/phone.ts";
+import type { RetryMessage, StartMessage } from "../shared/messages.ts";
 import { RECONNECT_GRACE_MS, type PhoneEvent } from "./model.ts";
 import { startReadingTilt, startSendingTilt } from "./tilt.ts";
 import { holdWakeLock } from "./wakeLock.ts";
@@ -8,8 +9,13 @@ import { holdWakeLock } from "./wakeLock.ts";
 /** つながっているあいだ、ページが動いている時刻を覚える間隔 */
 const ALIVE_INTERVAL_MS = 1_000;
 
-/** ルームにつなぐ。戻り値で、つなぎ直しも含めて全部やめる */
-export function startSession(room: string, emit: (event: PhoneEvent) => void): () => void {
+interface PhoneSession {
+  stop(): void;
+  send(message: StartMessage | RetryMessage): boolean;
+}
+
+/** ルームにつなぐ。stop でつなぎ直しも含めて終了する */
+export function startSession(room: string, emit: (event: PhoneEvent) => void): PhoneSession {
   const stopReading = startReadingTilt();
   const nextSeq = createTiltSeq();
   let stopSending: (() => void) | undefined;
@@ -99,12 +105,17 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
     if (!resumed && connection.state.status === "open") aliveAt = now;
   }, ALIVE_INTERVAL_MS);
 
-  return () => {
-    clearInterval(alive);
-    stopCountdown();
-    connection.close();
-    stopSending?.();
-    releaseWakeLock?.();
-    stopReading();
+  return {
+    stop() {
+      clearInterval(alive);
+      stopCountdown();
+      connection.close();
+      stopSending?.();
+      releaseWakeLock?.();
+      stopReading();
+    },
+    send(message) {
+      return joined && connection.send(message);
+    },
   };
 }
