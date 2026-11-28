@@ -1,0 +1,20 @@
+@font-face {
+  font-family: "Zen Old Mincho";
+  font-weight: 900;
+  font-display: swap;
+  src: url("./zen-old-mincho-900.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  font-weight: 700;
+  font-display: swap;
+  src: url("./zen-kaku-gothic-new-700.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  font-weight: 900;
+  font-display: swap;
+  src: url("./zen-kaku-gothic-new-900.woff2") format("woff2");
+}
