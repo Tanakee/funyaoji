@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ConnectionState, Latency } from "../../net/client.ts";
+import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import { JOINTS } from "../../shared/messages.ts";
-import { JOINT_LABELS } from "./labels.ts";
 import type { ScreenSession, ScreenView } from "./session.ts";
 
 /** 開いているあいだ、読み直す間隔。tilt のたびには読まない */
@@ -48,7 +48,7 @@ function DebugBody({ session, view }: { session: ScreenSession; view: ScreenView
         <tbody>
           {JOINTS.map((joint) => (
             <tr key={joint}>
-              <td>{JOINT_LABELS[joint]}</td>
+              <td>{JOINT_DISPLAY[joint].name}</td>
               <td>{view.joints.includes(joint) ? "接続中" : "-"}</td>
               <td>{tilts[joint]?.angle ?? "-"}</td>
               <td>{tilts[joint]?.seq ?? "-"}</td>

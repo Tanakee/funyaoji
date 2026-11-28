@@ -1,12 +1,21 @@
 // PixiJS の描画。SimState を読んで描くだけで、物理にも Rapier にも触れない
-import { Application, BitmapFont, BitmapText, Container, Graphics, Text } from "pixi.js";
+import {
+  Application,
+  BitmapFont,
+  BitmapText,
+  Container,
+  Graphics,
+  Text,
+  type ColorSource,
+} from "pixi.js";
+import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
 import { INITIAL_POSES, PART_NAMES, PART_SHAPES, TORSO_SIZE, type PartName } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
 
-/** 色はここに集める。見た目は、あとで人が決める */
-export const COLORS = {
+/** 色はここに集める。見た目は、あとで人が決める。部位ごとの色は shared/joints.ts */
+const COLORS = {
   sky: 0xf6f1e7,
   ground: 0xd9cfbd,
   groundEdge: 0x8a7f68,
@@ -21,20 +30,6 @@ export const COLORS = {
   head: 0xf3e2c3,
   foot: 0x3a3a3a,
   face: 0x2b2b2b,
-  /** 関節ごとの色。ももは股関節の色、すねはひざの色。4人が自分の脚を見つけるための色分け */
-  joint: {
-    rightHip: 0xe4572e,
-    leftHip: 0x2e86ab,
-    rightKnee: 0xf3a712,
-    leftKnee: 0x4caf7d,
-  } satisfies Record<Joint, number>,
-};
-
-const JOINT_LABELS: Record<Joint, string> = {
-  rightHip: "右もも",
-  leftHip: "左もも",
-  rightKnee: "右ひざ",
-  leftKnee: "左ひざ",
 };
 
 // 部位を動かす関節（色分けに使う）
@@ -97,7 +92,7 @@ function drawPart(name: PartName): Graphics {
           ? COLORS.head
           : name === "torso"
             ? COLORS.torso
-            : COLORS.joint[PART_JOINT[name]];
+            : JOINT_DISPLAY[PART_JOINT[name]].color;
     if (shape.kind === "box") {
       g.roundRect(
         (shape.ox - shape.hw) * CM,
@@ -123,7 +118,7 @@ function drawPart(name: PartName): Graphics {
   return g;
 }
 
-function label(text: string, size: number, color: number, bold = false): Text {
+function label(text: string, size: number, color: ColorSource, bold = false): Text {
   return new Text({
     text,
     style: {
@@ -193,12 +188,11 @@ export async function createView(container: HTMLElement): Promise<View> {
   JOINTS.forEach((joint, i) => {
     const chip = new Graphics()
       .roundRect(0, 0, 150, 40, 8)
-      .fill(COLORS.joint[joint])
+      .fill(JOINT_DISPLAY[joint].color)
       .stroke({ width: 2, color: COLORS.outline });
-    const name = label(JOINT_LABELS[joint], 24, 0xffffff, true);
+    const name = label(JOINT_DISPLAY[joint].name, 24, JOINT_DISPLAY[joint].textOnColor, true);
     name.anchor.set(0.5);
     name.position.set(75, 20);
-    name.style.stroke = { color: COLORS.outline, width: 4 };
     const item = new Container();
     item.addChild(chip, name);
     item.y = i * 48;

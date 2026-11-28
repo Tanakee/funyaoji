@@ -1,7 +1,7 @@
 import type { ConnectionState } from "../../net/client.ts";
+import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import { JOINTS } from "../../shared/messages.ts";
 import { isFull } from "./flow.ts";
-import { JOINT_LABELS } from "./labels.ts";
 import { QrCode } from "./QrCode.tsx";
 import { canOperate, type RoomState, type ScreenSession, type ScreenView } from "./session.ts";
 
@@ -38,7 +38,7 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
               const filled = joints.includes(joint);
               return (
                 <li key={joint} className={`slot ${filled ? "slot--filled" : "slot--empty"}`}>
-                  <span className="slot-joint">{JOINT_LABELS[joint]}</span>
+                  <span className="slot-joint">{JOINT_DISPLAY[joint].name}</span>
                   <span className="slot-state">{filled ? "参加中" : "空き"}</span>
                 </li>
               );
