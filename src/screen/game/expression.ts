@@ -3,7 +3,7 @@ import type { Expression } from "./art.ts";
 import { NEUTRAL_INPUTS } from "./body.ts";
 import type { GameResult, JointInputs } from "./types.ts";
 
-const STRAIN_THRESHOLD = 1.8;
+const STRAIN_THRESHOLD = 1.4;
 /** 力む顔が出たり消えたりしないよう、しきい値を下回ってからも保つ時間 */
 const STRAIN_HOLD_MS = 500;
 
