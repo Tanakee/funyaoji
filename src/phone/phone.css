@@ -756,3 +756,65 @@ body {
   line-height: 16px;
   text-align: center;
 }
+
+/* ルームコードの入力。ボタンは入力欄の近くに置き、キーボード表示中も使える */
+.room-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.room-entry h1 {
+  margin: 1em 0 0.5em;
+  font-size: 28px;
+}
+.room-entry label {
+  font-weight: 700;
+}
+.room-entry input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid var(--fg);
+  border-radius: 12px;
+  background: white;
+  color: var(--fg);
+  font: inherit;
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+}
+.room-entry p {
+  margin: 0;
+  color: #a82d23;
+  font-weight: 700;
+}
+.room-entry-submit {
+  min-height: 64px;
+  border: 2px solid var(--fg);
+  border-radius: 14px;
+  background: var(--fg);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 24px;
+  font-weight: 900;
+}
+.room-entry-submit:disabled {
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+}
+.room-entry-submit.is-checking {
+  border-style: solid;
+  background: var(--figure-line);
+  color: var(--accent-fg);
+  transform: translateY(2px);
+}
+.room-entry-submit:active {
+  transform: translateY(2px);
+}
+.room-reenter {
+  display: block;
+  padding: 14px;
+  text-align: center;
+  text-decoration: none;
+}

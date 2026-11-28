@@ -90,6 +90,14 @@ export class Room extends DurableObject<Env> {
     return true;
   }
 
+  /** 参加枠を取らず、終了していないルームかを調べる */
+  async exists(): Promise<boolean> {
+    return (
+      (await this.ctx.storage.get<string>(ROOM_CODE_KEY)) !== undefined &&
+      !(await this.ctx.storage.get<boolean>(CLOSED_KEY))
+    );
+  }
+
   /** 呼ばれた回数を数える（/api/ping 用） */
   async countCall(): Promise<number> {
     this.ctx.storage.sql.exec(
