@@ -1,4 +1,11 @@
 name: Deploy
+# 本番のデプロイでは、デプロイするコミットの1行目と SHA を run の名前に入れる。
+# workflow_run で動いた run の head_sha は、そのときの main の最新になり、デプロイするコミットと違うことがある。
+# Discord の通知（.github/discord/payload.jq）は、この名前からコミットを読む
+run-name: >-
+  ${{ github.event_name == 'workflow_run'
+    && format('{0} ({1})', github.event.workflow_run.display_title, github.event.workflow_run.head_sha)
+    || github.event.pull_request.title }}
 
 on:
   pull_request:

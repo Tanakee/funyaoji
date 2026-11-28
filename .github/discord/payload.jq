@@ -81,14 +81,17 @@ def workflow_run_embed:
     elif $w.name == "Deploy" and $w.conclusion == "success" then ["本番にデプロイした", green]
     elif $w.name == "Deploy" and ($w.conclusion | failed) then ["本番へのデプロイが落ちた", red]
     else empty end
+  # Deploy の head_sha は、動き出したときの main の最新で、デプロイしたコミットと違うことがある。
+  # Deploy は run の名前を「<コミットの1行目> (<SHA>)」にしているので、そこから読む
+  | ($w.display_title | capture("^(?<message>.*) \\((?<sha>[0-9a-f]{40})\\)$")
+      // {message: ($w.head_commit.message // $w.display_title), sha: $w.head_sha}) as $c
   | {
       title: (.[0]),
       url: $w.html_url,
-      # workflow_run で動く Deploy の display_title は「Deploy」になるので、コミットの1行目を使う
-      description: ($w.head_commit.message // $w.display_title | split("\n")[0] | cut(4096)),
+      description: ($c.message | split("\n")[0] | cut(4096)),
       color: (.[1]),
       author: ($w.actor | who),
-      fields: [{name: "コミット", value: ("`" + $w.head_sha[0:7] + "`"), inline: true}]
+      fields: [{name: "コミット", value: ("`" + $c.sha[0:7] + "`"), inline: true}]
     };
 
 if $event == "pull_request_target" then pull_request_embed
