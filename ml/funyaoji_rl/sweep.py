@@ -1,7 +1,8 @@
 """学習を何本も、決まった本数まで同時に流す。
 
 1本の学習は、Node のプロセスを並べても、毎ステップ全部の返事を待つので、CPU を使い切れない。
-本数を増やして、空いている CPU を埋める。動画まで終わった run（runs/<名前>/progress.mp4）は飛ばす。
+本数を増やして、空いている CPU を埋める。レジストリへの登録まで終わった run（runs/<名前>/registered がある）は飛ばす。
+失敗した run があれば、0 以外で終わる。
 
 使い方（ml/ で）：
   uv run python -m funyaoji_rl.sweep --parallel 8 --plan first   # 最初の実験（③ の 12 run と ② の (R1)）
@@ -17,8 +18,11 @@ import tempfile
 import sys
 import time
 from pathlib import Path
+from typing import IO
 
 RUNS = Path("runs")
+# 学習・評価・レジストリへの登録まで終わった run に付ける印
+DONE = "registered"
 
 
 def plan_first(base: str) -> list[tuple[str, list[str]]]:
@@ -45,6 +49,9 @@ def plan_bench(base: str, n: int) -> list[tuple[str, list[str]]]:
 
 
 def main() -> None:
+    # Windows でも、日本語の表示が文字化けや例外にならないようにする
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--parallel", type=int, default=8)
     ap.add_argument("--plan", choices=["first", "bench"], default="first")
@@ -60,28 +67,51 @@ def main() -> None:
     plan = plan_first(args.base_gait) if args.plan == "first" else plan_bench(args.base_gait, args.parallel)
     common = ["--workers", str(args.workers), "--envs-per-worker", str(args.envs_per_worker),
               "--torch-threads", str(args.torch_threads)]
-    queue = [(name, extra) for name, extra in plan if not (RUNS / name / "progress.mp4").exists()]
-    running: dict[str, tuple[subprocess.Popen, float]] = {}
+    queue = [(name, extra) for name, extra in plan if not (RUNS / name / DONE).exists()]
+    running: dict[str, tuple[subprocess.Popen, IO[str], float]] = {}
+    failed: list[str] = []
     RUNS.mkdir(exist_ok=True)
     t0 = time.time()
-    while queue or running:
-        while queue and len(running) < args.parallel:
-            name, extra = queue.pop(0)
-            steps = [] if "--steps" in extra else ["--steps", str(args.steps)]
-            cmd = [sys.executable, "-m", "funyaoji_rl.train", "--name", name, *steps, *common, *extra]
-            log = open(RUNS / f"{name}.log", "w", encoding="utf-8")
-            env = dict(os.environ)
-            if args.separate_db:
-                db = Path(tempfile.gettempdir()) / f"funyaoji-{name}.db"
-                env["MLFLOW_TRACKING_URI"] = "sqlite:///" + db.as_posix()
-            running[name] = (subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env), time.time())
-            print(f"start {name} {time.strftime('%H:%M')}", flush=True)
-        for name, (p, started) in list(running.items()):
-            if p.poll() is not None:
-                print(f"end {name} exit {p.returncode} {round(time.time() - started)}s {time.strftime('%H:%M')}", flush=True)
+    try:
+        while queue or running:
+            while queue and len(running) < args.parallel:
+                name, extra = queue.pop(0)
+                steps = [] if "--steps" in extra else ["--steps", str(args.steps)]
+                cmd = [sys.executable, "-m", "funyaoji_rl.train", "--name", name, *steps, *common, *extra]
+                env = dict(os.environ)
+                env["PYTHONIOENCODING"] = "utf-8"
+                if args.separate_db:
+                    db = Path(tempfile.gettempdir()) / f"funyaoji-{name}.db"
+                    env["MLFLOW_TRACKING_URI"] = "sqlite:///" + db.as_posix()
+                log = open(RUNS / f"{name}.log", "w", encoding="utf-8")
+                try:
+                    p = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
+                except BaseException:
+                    log.close()
+                    raise
+                running[name] = (p, log, time.time())
+                print(f"start {name} {time.strftime('%H:%M')}", flush=True)
+            for name, (p, log, started) in list(running.items()):
+                if p.poll() is None:
+                    continue
+                log.close()
                 del running[name]
-        time.sleep(5)
+                print(f"end {name} exit {p.returncode} {round(time.time() - started)}s {time.strftime('%H:%M')}", flush=True)
+                # train.py は、評価してレジストリに載せるところまで終わってから 0 で終わる
+                if p.returncode == 0:
+                    (RUNS / name / DONE).write_text(time.strftime("%Y-%m-%d %H:%M:%S") + "\n", encoding="utf-8")
+                else:
+                    failed.append(name)
+            time.sleep(5)
+    finally:
+        for p, log, _ in running.values():
+            p.terminate()
+            p.wait()
+            log.close()
     print(f"all done {round(time.time() - t0)}s", flush=True)
+    if failed:
+        print(f"失敗した run：{', '.join(failed)}", flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

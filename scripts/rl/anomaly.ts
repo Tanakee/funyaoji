@@ -58,6 +58,13 @@ function lowest(name: (typeof PART_NAMES)[number], pose: Pose): number {
 }
 
 export function measure(record: InputRecord): Anomaly {
+  // 1回の入力を、物理の何ステップに割るか。割り切れないと、刻みが再生（Sim.advance）とずれるので止める
+  const sub = Math.round(1 / record.hz / STEP_S);
+  if (Math.abs(1 / record.hz / STEP_S - sub) > 1e-9) {
+    throw new Error(
+      `入力の間隔（1/${record.hz} 秒）が、物理の1ステップ（${STEP_S} 秒）で割り切れない`,
+    );
+  }
   const sim = new Sim();
   sim.start();
   const a: Anomaly = {
@@ -73,7 +80,6 @@ export function measure(record: InputRecord): Anomaly {
   };
   let overRun = 0;
   let penRun = 0;
-  const sub = Math.round(1 / record.hz / STEP_S);
   try {
     outer: for (const values of record.inputs) {
       const inputs = toJointInputs(values.map(quantize));
