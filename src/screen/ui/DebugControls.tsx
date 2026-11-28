@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
+import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
-import { GAME_COLORS, KEYBOARD_KEYS } from "../game/index.ts";
-import { JOINT_LABELS } from "./labels.ts";
+import { KEYBOARD_KEYS } from "../game/index.ts";
 import { keyboardDrives, type ScreenSession, type ScreenView } from "./session.ts";
 
 /** つまみの上端・下端が、その関節の何にあたるか（docs/game.md の「関節の入力」） */
@@ -11,8 +11,6 @@ const ENDS: Record<Joint, { top: string; bottom: string }> = {
   rightKnee: { top: "曲げる", bottom: "伸ばす" },
   leftKnee: { top: "曲げる", bottom: "伸ばす" },
 };
-
-const jointColor = (joint: Joint) => `#${GAME_COLORS.joint[joint].toString(16).padStart(6, "0")}`;
 
 /**
  * 1人で確かめるための操作。?debug のとき、ゲームの下に出す。
@@ -160,16 +158,16 @@ function Strip({
   return (
     <div
       className={phone ? "strip strip--phone" : "strip"}
-      style={{ "--joint-color": jointColor(joint) } as React.CSSProperties}
+      style={{ "--joint-color": JOINT_DISPLAY[joint].color } as React.CSSProperties}
     >
       <div className="strip-name">
-        {JOINT_LABELS[joint]}
+        {JOINT_DISPLAY[joint].name}
         <small>{driver}</small>
       </div>
       <div
         className="strip-track"
         role="slider"
-        aria-label={`${JOINT_LABELS[joint]}の入力`}
+        aria-label={`${JOINT_DISPLAY[joint].name}の入力`}
         aria-orientation="vertical"
         aria-valuemin={0}
         aria-valuemax={1}
