@@ -24,7 +24,7 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   view.onFrame((dtSec) => {
     if (!stopped) sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
     const state = sim.state();
-    view.render(state);
+    view.render(state, inputs, dtSec);
     if (import.meta.env.DEV) {
       window.__funyaojiGame = {
         distanceM: state.distanceM,

@@ -1,4 +1,4 @@
-// PixiJS の描画。SimState を読んで描くだけで、物理にも Rapier にも触れない
+// PixiJS の描画。SimState と関節の入力を読んで描くだけで、物理にも Rapier にも触れない
 import {
   Application,
   BitmapFont,
@@ -16,10 +16,12 @@ import {
   STRING_ANCHORS,
   TORSO_SIZE,
   type PartName,
+  type ShapeSpec,
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
-import type { Seats, SeatState } from "./types.ts";
+import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
+import type { JointInputs, Seats, SeatState } from "./types.ts";
 
 /** 色はここに集める。見た目は、あとで人が決める。部位ごとの色は shared/joints.ts */
 const COLORS = {
@@ -83,12 +85,25 @@ export interface View {
   /** 描画のたびに呼ばれる。dtSec は前のフレームからの実時間 */
   onFrame(callback: (dtSec: number) => void): void;
   setSeats(seats: Seats): void;
-  render(state: SimState): void;
+  render(state: SimState, inputs: JointInputs, dtSec: number): void;
   destroy(): void;
 }
 
 /** 部位の形を描く。m のまま描くと曲線が粗くなるので、cm で描いて 0.01 倍にする */
 const CM = 100;
+
+function drawShape(g: Graphics, shape: ShapeSpec): Graphics {
+  if (shape.kind === "box") {
+    return g.roundRect(
+      (shape.ox - shape.hw) * CM,
+      (shape.oy - shape.hh) * CM,
+      shape.hw * 2 * CM,
+      shape.hh * 2 * CM,
+      Math.min(shape.hw, shape.hh) * 0.5 * CM,
+    );
+  }
+  return g.circle(shape.ox * CM, shape.oy * CM, shape.r * CM);
+}
 
 function drawPart(g: Graphics, name: PartName, limbColor: ColorSource = COLORS.emptyLimb): void {
   g.clear();
@@ -101,18 +116,7 @@ function drawPart(g: Graphics, name: PartName, limbColor: ColorSource = COLORS.e
           : name === "torso"
             ? COLORS.torso
             : limbColor;
-    if (shape.kind === "box") {
-      g.roundRect(
-        (shape.ox - shape.hw) * CM,
-        (shape.oy - shape.hh) * CM,
-        shape.hw * 2 * CM,
-        shape.hh * 2 * CM,
-        Math.min(shape.hw, shape.hh) * 0.5 * CM,
-      );
-    } else {
-      g.circle(shape.ox * CM, shape.oy * CM, shape.r * CM);
-    }
-    g.fill(color).stroke({ width: 1.4, color: COLORS.outline });
+    drawShape(g, shape).fill(color).stroke({ width: 1.4, color: COLORS.outline });
   }
   if (name === "torso") {
     // 顔。進む向き（右）を向いている
@@ -174,19 +178,36 @@ function drawString(
   cx: number,
   x: number,
   y: number,
-  color: ColorSource,
-  slack: boolean,
+  color: number,
+  glowColor: number,
+  look: StringLook,
+  glow: number,
 ): void {
-  const controlX = (cx + x) / 2 + (x < cx ? 84 : -84);
-  const controlY = (TAG_BOTTOM + y) / 2 + 68;
-  const path = () => {
-    line.moveTo(cx, TAG_BOTTOM);
-    if (slack) line.quadraticCurveTo(controlX, controlY, x, y);
-    else line.lineTo(x, y);
-    return line;
+  const control = {
+    x: (cx + x) / 2 + look.slack * (x < cx ? 84 : -84),
+    y: (TAG_BOTTOM + y) / 2 + look.slack * 68,
   };
-  path().stroke({ width: slack ? 4 : 5.5, color: COLORS.seatOutline, cap: "round" });
-  path().stroke({ width: slack ? 2.5 : 3.5, color, cap: "round" });
+  const stroke = (width: number, color: number, alpha: number) => {
+    line.moveTo(cx, TAG_BOTTOM).quadraticCurveTo(control.x, control.y, x, y).stroke({
+      width,
+      color,
+      alpha,
+      cap: "round",
+    });
+  };
+  const glowAlpha = 0.55 * glow;
+  if (glow > 0) stroke(look.coreWidth + 10, glowColor, glowAlpha);
+  stroke(look.outlineWidth, COLORS.seatOutline, look.alpha);
+  stroke(look.coreWidth, mixRgb(color, COLORS.sky, look.skyBlend), look.alpha);
+
+  const knot = quadraticBezierPoint({ x: cx, y: TAG_BOTTOM }, control, { x, y }, look.knotPosition);
+  if (glow > 0) {
+    line.circle(knot.x, knot.y, look.knotRadius + 6).fill({ color: glowColor, alpha: glowAlpha });
+  }
+  line
+    .circle(knot.x, knot.y, look.knotRadius)
+    .fill({ color, alpha: look.alpha })
+    .stroke({ width: 2, color: COLORS.seatOutline, alpha: look.alpha });
 }
 
 export async function createView(container: HTMLElement): Promise<View> {
@@ -249,8 +270,19 @@ export async function createView(container: HTMLElement): Promise<View> {
   const markers = new Container();
   const tags = new Container();
   seatLayer.addChild(strings, markers, tags);
+  const tiltGlow = new TiltGlow();
   const seatGraphics = SEATS.map((joint) => {
-    const { color, name } = JOINT_DISPLAY[joint];
+    const { color: hexColor, name } = JOINT_DISPLAY[joint];
+    const color = Number.parseInt(hexColor.slice(1), 16);
+    const glowColor = mixRgb(color, 0xffffff, 0.5);
+    const { part } = STRING_ANCHORS[joint];
+    const partGlow = new Graphics();
+    partGlow.scale.set(1 / CM);
+    partGlow.visible = false;
+    for (const shape of PART_SHAPES[part]) {
+      if (shape.tag === "limb") drawShape(partGlow, shape).stroke({ width: 12, color: glowColor });
+    }
+    world.addChildAt(partGlow, world.getChildIndex(partGraphics[part]));
     const line = new Graphics();
     const marker = new Graphics()
       .circle(0, 0, 14)
@@ -278,7 +310,19 @@ export async function createView(container: HTMLElement): Promise<View> {
     markers.addChild(marker);
     tags.addChild(tag, captions);
     const state = { kind: "empty" } as SeatState;
-    return { line, marker, tag, captions, nameText, detail, keyBox, state };
+    return {
+      line,
+      marker,
+      tag,
+      captions,
+      nameText,
+      detail,
+      keyBox,
+      state,
+      color,
+      glowColor,
+      partGlow,
+    };
   });
 
   app.stage.addChild(ruler, labelLayer, world, seatLayer, hud);
@@ -289,7 +333,7 @@ export async function createView(container: HTMLElement): Promise<View> {
       const graphics = seatGraphics[i];
       const occupied = state.kind !== "empty";
       if (occupied !== (graphics.state.kind !== "empty")) {
-        const color = occupied ? JOINT_DISPLAY[joint].color : undefined;
+        const color = occupied ? graphics.color : undefined;
         const { part } = STRING_ANCHORS[joint];
         drawPart(partGraphics[part], part, color);
         drawTag(graphics.tag, color);
@@ -312,7 +356,7 @@ export async function createView(container: HTMLElement): Promise<View> {
     });
   }
 
-  function render(state: SimState): void {
+  function render(state: SimState, inputs: JointInputs, dtSec: number): void {
     const { width: w, height: h } = app.screen;
     const groundY = h * LAYOUT.groundY;
     const pxPerM = Math.min(w / LAYOUT.visibleWidthM, groundY / LAYOUT.visibleHeightM);
@@ -335,21 +379,38 @@ export async function createView(container: HTMLElement): Promise<View> {
     seatLayer.scale.set(ui);
     seatLayer.x = w / 2;
     SEATS.forEach((joint, i) => {
-      const { state: seat, line, marker, tag, captions } = seatGraphics[i];
+      const {
+        state: seat,
+        line,
+        marker,
+        tag,
+        captions,
+        color,
+        glowColor,
+        partGlow,
+      } = seatGraphics[i];
       const cx = SEAT_OFFSETS[i];
       tag.x = cx;
       captions.position.set(cx, TAG_BOTTOM + 6 + (i % 2) * LABEL_LINE);
       line.clear();
-      if (seat.kind === "empty") return;
+
       const anchor = STRING_ANCHORS[joint];
       const pose = state.poses[anchor.part];
+      const input = seat.kind === "joined" ? inputs[joint] : undefined;
+      const glow = tiltGlow.update(joint, input, dtSec);
+      partGlow.position.set(pose.x, pose.y);
+      partGlow.rotation = pose.rot;
+      partGlow.visible = glow > 0;
+      partGlow.alpha = glow * line.alpha;
+
+      if (seat.kind === "empty") return;
       const cos = Math.cos(pose.rot);
       const sin = Math.sin(pose.rot);
       const wx = pose.x + anchor.x * cos - anchor.y * sin;
       const wy = pose.y + anchor.x * sin + anchor.y * cos;
       const x = (screenX(wx) - seatLayer.x) / ui;
       const y = (groundY - wy * pxPerM) / ui;
-      drawString(line, cx, x, y, JOINT_DISPLAY[joint].color, seat.kind === "reserved");
+      drawString(line, cx, x, y, color, glowColor, stringLook(input ?? 0), glow);
       marker.position.set(x, y);
     });
 
