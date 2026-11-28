@@ -30,9 +30,21 @@ declare global {
   }
 }
 
-export async function createGame({ container, inputs, onEnd, art }: GameOptions): Promise<Game> {
+/** 読み込みの段階の数：物理（Rapier）、おじさんの画像、PixiJS の用意、フォント */
+const LOAD_STEPS = 4;
+
+export async function createGame({
+  container,
+  inputs,
+  onEnd,
+  art,
+  onProgress,
+}: GameOptions): Promise<Game> {
+  let loaded = 0;
+  const step = () => onProgress?.(++loaded / LOAD_STEPS);
   await initPhysics();
-  const view = await createView(container, art ?? UNCLE_ART);
+  step();
+  const view = await createView(container, art ?? UNCLE_ART, step);
   let sim = new Sim();
   let practicing = false;
   // いまの走りのモード。物理演算（Sim）にはまだ渡していない。ハードの物理ができたら、reset で渡す

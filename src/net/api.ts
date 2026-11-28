@@ -16,12 +16,21 @@ const REJECTED_MESSAGES: Record<CreateRoomRejected["reason"], string> = {
   "daily-limit": "今日はもう作れません。日本時間の朝9時に戻ります",
 };
 
+/** ルームの作成を、理由を付けて断られた（429） */
+export class CreateRoomError extends Error {
+  readonly reason: CreateRoomRejected["reason"];
+  constructor(reason: CreateRoomRejected["reason"]) {
+    super(REJECTED_MESSAGES[reason]);
+    this.reason = reason;
+  }
+}
+
 /** ルームを作り、ルームコードを返す（POST /api/rooms） */
 export async function createRoom(signal?: AbortSignal): Promise<string> {
   const response = await fetch("/api/rooms", { method: "POST", signal });
   if (response.status === 429) {
     const rejected = v.safeParse(CreateRoomRejected, await response.json().catch(() => null));
-    if (rejected.success) throw new Error(REJECTED_MESSAGES[rejected.output.reason]);
+    if (rejected.success) throw new CreateRoomError(rejected.output.reason);
   }
   if (!response.ok) {
     throw new Error(`/api/rooms が ${response.status} を返しました`);

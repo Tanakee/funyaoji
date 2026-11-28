@@ -265,8 +265,14 @@ function drawString(
     .stroke({ width: 2, color: COLORS.seatOutline, alpha: look.alpha });
 }
 
-export async function createView(container: HTMLElement, art: UncleArt = {}): Promise<View> {
+/** onStep は、画像の読み込み、PixiJS の用意、フォントの読み込み（待つのは最大3秒）が終わるたびに呼ぶ */
+export async function createView(
+  container: HTMLElement,
+  art: UncleArt = {},
+  onStep?: () => void,
+): Promise<View> {
   const loaded = await loadUncleArt(art);
+  onStep?.();
   const app = new Application();
   await app.init({
     resizeTo: container,
@@ -275,6 +281,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     autoDensity: true,
     resolution: window.devicePixelRatio || 1,
   });
+  onStep?.();
   // PixiJS の Text と BitmapFont は作った時点のフォントで字形を描き、あとでフォントが届いても描き直さない
   const fontsLoaded = loadViewFonts();
   let timeout = 0;
@@ -283,6 +290,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   });
   const fontState = await Promise.race([fontsLoaded, loadTimeout]);
   window.clearTimeout(timeout);
+  onStep?.();
   const hudFont = hudFontName(fontState === true ? "loaded" : "fallback");
   app.canvas.style.display = "block";
   container.appendChild(app.canvas);

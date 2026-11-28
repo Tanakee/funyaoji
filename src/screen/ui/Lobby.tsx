@@ -1,4 +1,3 @@
-import type { ConnectionState } from "../../net/client.ts";
 import { TEAM_NAME_MAX_LENGTH } from "../../shared/api.ts";
 import {
   INPUT_METHODS,
@@ -9,7 +8,7 @@ import {
 } from "../../shared/messages.ts";
 import { isFull } from "./flow.ts";
 import { QrCode } from "./QrCode.tsx";
-import { canOperate, type RoomState, type ScreenSession, type ScreenView } from "./session.ts";
+import { canOperate, type ScreenSession, type ScreenView } from "./session.ts";
 
 /** モードの呼び名（docs/game.md の「モード」） */
 export const MODE_LABELS: Record<Mode, string> = { normal: "ノーマル", hard: "ハード" };
@@ -26,7 +25,6 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
   const { room, joints } = view;
   const full = isFull(joints);
   const ready = full && view.teamName !== undefined;
-  const notice = noticeText(view);
   return (
     <main className="overlay lobby">
       <header className="screen-header">
@@ -40,11 +38,7 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
       <div className="lobby-layout">
         <section className="lobby-join" aria-label="参加の方法">
           <p className="lobby-lead">スマホで QR コードを読んで参加</p>
-          {room.status === "ready" ? (
-            <Join roomCode={room.roomCode} />
-          ) : (
-            <RoomPending room={room} />
-          )}
+          {room.status === "ready" && <Join roomCode={room.roomCode} />}
         </section>
 
         <section className="lobby-players" aria-label="参加している人">
@@ -136,7 +130,6 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
           </p>
         </fieldset>
       </footer>
-      {notice && <p className="lobby-notice">{notice}</p>}
     </main>
   );
 }
@@ -154,48 +147,4 @@ function Join({ roomCode }: { roomCode: string }) {
       <p className="lobby-manual-url">QR を読めないとき：{url.origin}/play</p>
     </>
   );
-}
-
-function RoomPending({ room }: { room: Exclude<RoomState, { status: "ready" }> }) {
-  return (
-    <p className="room-pending">
-      {room.status === "creating"
-        ? "ルームを作成中"
-        : `ルームを作成できません（${room.message}）。ページを読み込み直してください`}
-    </p>
-  );
-}
-
-/** ロビーの下に出す、うまくいっていないときの知らせ */
-function noticeText(view: ScreenView): string | undefined {
-  if (view.game === "failed") return "ゲームを読み込めませんでした。ページを読み込み直してください";
-  if (view.room.status === "ready") {
-    const text = connectionNotice(view.room.connection, view.room.rejected);
-    if (text) return text;
-  }
-  if (view.game === "loading") return "ゲームを読み込み中";
-  return undefined;
-}
-
-/** 断られた理由（docs/api.md の rejected）を、画面に出す言葉にする */
-const REJECT_TEXT: Record<string, string> = {
-  full: "満員です",
-  playing: "プレイ中です",
-  "no-room": "ルームがありません",
-};
-
-function connectionNotice(
-  state: ConnectionState,
-  rejected: string | undefined,
-): string | undefined {
-  switch (state.status) {
-    case "connecting":
-      return "サーバーにつないでいます";
-    case "open":
-      return undefined;
-    case "reconnecting":
-      return `サーバーとの接続が切れたので、つなぎ直しています（${state.attempt}回目）`;
-    case "closed":
-      return `サーバーとの接続が切れました（${rejected ? (REJECT_TEXT[rejected] ?? rejected) : `close コード ${state.code}`}）。ページを読み込み直してください`;
-  }
 }
