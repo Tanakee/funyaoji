@@ -1,8 +1,11 @@
 // 強化学習の環境のサーバー。おじさんを n 体持ち、標準入力の1行（JSON）ごとに処理して、1行で返す。
 // Python（ml/funyaoji_rl/vec_env.py）が、このプロセスを CPU のコアの数だけ並べる。
 //
-// 使い方：node scripts/rl/server.ts
-//   {"cmd":"init","n":8,"config":{...}}   → {"obs":[[...], ...], "obsDim":23, "actorObs":22, "fingerprint":"...", "rapier":"0.21.0", "shapes":{...}}
+// 1つのプロセスは、1つのモード（src/screen/game/modes.ts の一覧）だけを扱う。どのコマンドも、そのモードの設定の Sim で動く。
+//
+// 使い方：node scripts/rl/server.ts [--mode normal]
+//   --mode：モード。省くとノーマル
+//   {"cmd":"init","n":8,"config":{...}}   → {"obs":[[...], ...], "obsDim":23, "actorObs":22, "mode":"normal", "fingerprint":"...", "rapier":"0.21.0", "shapes":{...}}
 //   {"cmd":"step","a":[[a,a,a,a], ...]}   → {"obs":..., "rew":[...], "done":[...], "info":[...]}
 //   {"cmd":"replay","inputs":[[u,u,u,u], ...]} → {"frames":[{poses}...], "result":{...}, "elapsedMs":...}
 //   {"cmd":"check","inputs":[[u,u,u,u], ...]} → {"jointOvershoot", "penetration", "jump", "peakSpeed", ...}（物理の不具合の量）
@@ -10,12 +13,14 @@
 //   行動 a は AI の出力（-1〜1 が4つ、JOINTS の順）。終わったおじさんは、その場で最初からやり直す。
 //   obs はやり直したあとの観測で、終わる直前の観測は info.final に入る
 import { createInterface } from "node:readline";
+import { parseArgs } from "node:util";
 import { JOINTS } from "../../src/shared/messages.ts";
 import { PART_SHAPES } from "../../src/screen/game/body.ts";
 import { ACTION_HZ, CRITIC_EXTRA_OBS } from "../../src/screen/game/ai/observe.ts";
 import { gaitRecord, type Gait } from "../../src/screen/game/ai/gait.ts";
 import { measure } from "./anomaly.ts";
 import { replay } from "../../src/screen/game/ai/record.ts";
+import { DEFAULT_SIM_MODE, modeSimOptions, toSimMode } from "../../src/screen/game/modes.ts";
 import { initPhysics } from "../../src/screen/game/sim.ts";
 import {
   DEFAULT_CONFIG,
@@ -26,6 +31,12 @@ import {
   type EpisodeInfo,
 } from "./env.ts";
 
+const { values } = parseArgs({
+  options: { mode: { type: "string", default: DEFAULT_SIM_MODE } },
+});
+const mode = toSimMode(values.mode);
+const simOptions = modeSimOptions(mode);
+
 await initPhysics();
 
 let envs: Env[] = [];
@@ -33,7 +44,8 @@ let envs: Env[] = [];
 interface Message {
   cmd: string;
   n?: number;
-  config?: Partial<EnvConfig>;
+  // mode は一覧に無い名前も届きうるので、文字列で受けて確かめる
+  config?: Omit<Partial<EnvConfig>, "mode"> & { mode?: string };
   a?: number[][];
   inputs?: number[][];
   stepS?: number;
@@ -47,13 +59,18 @@ const GAIT_MAX_S = DEFAULT_CONFIG.maxTimeS;
 function handle(msg: Message): unknown {
   if (msg.cmd === "init") {
     for (const e of envs) e.free();
-    const cfg = { ...DEFAULT_CONFIG, ...msg.config };
+    // モードはプロセスで決める（--mode）。config で別のモードを渡されたら止める
+    if (msg.config?.mode !== undefined && msg.config.mode !== mode) {
+      throw new Error(`このプロセスのモードは ${mode}。config.mode（${msg.config.mode}）とは違う`);
+    }
+    const cfg: EnvConfig = { ...DEFAULT_CONFIG, ...msg.config, mode };
     envs = Array.from({ length: msg.n ?? 1 }, () => new Env(cfg));
     return {
       obs: envs.map((e) => e.obs()),
       obsDim: actorObs(cfg) + CRITIC_EXTRA_OBS,
       actorObs: actorObs(cfg),
-      ...physicsFingerprint(),
+      mode,
+      ...physicsFingerprint(mode),
       shapes: PART_SHAPES,
     };
   }
@@ -75,7 +92,7 @@ function handle(msg: Message): unknown {
     const frames: unknown[] = [];
     const end = replay(
       { hz: ACTION_HZ, joints: JOINTS, inputs: msg.inputs ?? [] },
-      msg.stepS === undefined ? {} : { stepS: msg.stepS },
+      msg.stepS === undefined ? simOptions : { ...simOptions, stepS: msg.stepS },
       (s) => frames.push({ poses: s.poses, distanceM: s.distanceM, elapsedMs: s.elapsedMs }),
     );
     return {
@@ -88,7 +105,7 @@ function handle(msg: Message): unknown {
   if (msg.cmd === "gait") {
     const results = (msg.gaits ?? []).map((g) => {
       const record = gaitRecord(g, GAIT_MAX_S);
-      const end = replay(record);
+      const end = replay(record, simOptions);
       const outcome = end.result?.outcome ?? "timeout";
       return {
         outcome,
@@ -104,7 +121,7 @@ function handle(msg: Message): unknown {
   }
   if (msg.cmd === "check") {
     // 記録を物理の1ステップずつ再生し、不具合の量を測る（anomaly.ts）
-    return measure({ hz: ACTION_HZ, joints: JOINTS, inputs: msg.inputs ?? [] });
+    return measure({ hz: ACTION_HZ, joints: JOINTS, inputs: msg.inputs ?? [] }, mode);
   }
   throw new Error(`知らない cmd: ${msg.cmd}`);
 }
