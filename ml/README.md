@@ -48,8 +48,8 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 |---|---|
 | パラメータ | 学習の設定、報酬（`reward`・`goal`・`k`）、`gamma`、乱数の種、土台の歩き方 |
 | タグ | コミット、物理の指紋（`physics_fingerprint`）、Rapier の版、方法（`method`） |
-| メトリクス | 学習の経過（`goal_rate`・`distance`・`goal_time`・`best_time`）、Stable-Baselines3 の損失や `train.explained_variance`、評価（`eval_exact_time`・`eval_time_median`・`eval_goal_rate`） |
-| 成果物 | 50 万ステップごとの記録（`snapshots/`）、評価の記録（`records/`）、途中の走りを並べた動画（`video/progress.gif`・`progress.mp4`） |
+| メトリクス | 学習の経過（`goal_rate`・`distance`・`goal_time`・`best_time`）、Stable-Baselines3 の損失や `train.explained_variance`、評価（`eval_exact_time`・`eval_time_median`・`eval_goal_rate`、(E2) を通った記録の数 `eval_e2_count`、ずらして入力が実際に変わった回数 `eval_perturbed_changed`） |
+| 成果物 | 50 万ステップごとの記録（`snapshots/`）、評価の記録（`records/`。PPO はそのままの1回 `record_exact.json` と、(E1)・(E2) の最速 `record_best_e1.json`・`record_best_e2.json`。探索は上位5つ `record_top1〜5.json`）、途中の走りを並べた動画（`video/progress.gif`・`progress.mp4`） |
 
 ## 最初の実験の結果
 
@@ -103,7 +103,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 ## 理論値
 
-**6.804 秒**（(E1)・(E2) とも同じ記録）。③・(R1)・γ 0.99・種 0 の、出力の層の bias をずらした1回（レジストリの `funyaoji-10m-record` v35）。条件は「毎秒30回・4つの関節を同時に切り替える」（docs/ml.md の「理論値の定義」）。記録は `src/screen/game/ai/theory.json` にあり、`npm run check` のテスト（`theory.test.ts`）が、再生して同じタイムになることを確かめる。
+**6.804 秒**（(E1)・(E2) とも同じ記録）。③・(R1)・γ 0.99・種 0 の、出力の層の bias をずらした1回（レジストリの `funyaoji-10m-record` v78。物理の指紋の作り方を変えたので、v35 から登録し直した）。条件は「毎秒30回・4つの関節を同時に切り替える」（docs/ml.md の「理論値の定義」）。記録は `src/screen/game/ai/theory.json` にあり、`npm run check` のテスト（`theory.test.ts`）が、再生して同じタイムになることを確かめる。
 
 ### 物理の不具合（(E2) の判定）
 
