@@ -110,6 +110,15 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
           detail={REJECT_NOTICES[state.reason].detail}
         />
       );
+    case "ended":
+      return (
+        <Center>
+          {state.joint && <p className="joint-name">{JOINT_LABELS[state.joint].name}</p>}
+          <h1 className="notice-title">このルームは終了しました</h1>
+          <p className="lead">遊んでくれてありがとう！</p>
+          <p className="lead">また遊ぶときは、スクリーンのQRを読み取ろう</p>
+        </Center>
+      );
     case "closed":
       return (
         <Notice

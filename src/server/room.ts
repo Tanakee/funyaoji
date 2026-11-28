@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   HEARTBEAT,
+  ROOM_CLOSED_CODE,
   JOINTS,
   PhoneToServerMessage,
   ScreenToServerMessage,
@@ -49,6 +50,8 @@ const CLIENT_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 /** ストレージのキー。休止から戻っても残るように、メモリではなくストレージに置く */
 const ROOM_CODE_KEY = "roomCode";
+/** 閉じたコードは再利用しない。休止から戻っても新しい参加を断る。 */
+const CLOSED_KEY = "closed";
 /** スクリーンから最後に受信した phase */
 const PHASE_KEY = "phase";
 /** 誰もいないルームを消す時刻（ミリ秒）。誰かが接続しているあいだは無い */
@@ -103,7 +106,7 @@ export class Room extends DurableObject<Env> {
     const phase = await this.ctx.storage.get<PhaseMessage>(PHASE_KEY);
 
     // 断る理由は no-room → playing → full の順に調べる。戻ってきたスマホは playing・full では断らない
-    if (roomCode === undefined) {
+    if (roomCode === undefined || (await this.ctx.storage.get<boolean>(CLOSED_KEY))) {
       this.reject(server, "no-room");
     } else if (role === "screen") {
       this.acceptScreen(server, roomCode, phase);
@@ -231,18 +234,18 @@ export class Room extends DurableObject<Env> {
     this.log({ event: "reserved", joint });
   }
 
-  override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     // 形の違うメッセージでも、届いたなら接続は生きている
     this.lastMessageAt.set(ws, Date.now());
     // 閉じかけの接続から届いたものは捨てる。置き換えた古いスクリーンが新しいスクリーンの状態を上書きしたり、
     // タイムアウトで関節を空けたスマホの入力が、その関節に入った別のスマホの入力と重なったりしないように
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.readyState !== WebSocket.OPEN || isDeparted(ws)) return;
     // 送信元が送れないメッセージ・形の違うメッセージは、何も返さずに捨てる
     const attachment = ws.deserializeAttachment() as Attachment | null;
     if (attachment?.role === "phone") {
       this.receiveFromPhone(attachment.joint, message);
     } else if (attachment?.role === "screen") {
-      this.receiveFromScreen(message);
+      await this.receiveFromScreen(message);
     }
   }
 
@@ -263,10 +266,13 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  private receiveFromScreen(message: string | ArrayBuffer): void {
+  private async receiveFromScreen(message: string | ArrayBuffer): Promise<void> {
     const received = parseMessage(ScreenToServerMessage, message);
     if (received === undefined) return;
     switch (received.type) {
+      case "close-room":
+        await this.closeRoom();
+        break;
       case "phase":
         // プレイ中の参加を断るためと、あとから接続した人に送るために保持する。
         // put を待たずに送る。送信は書き込みが確定するまで止められ（output gate）、次のメッセージより先に中継される
@@ -286,6 +292,25 @@ export class Room extends DurableObject<Env> {
       case "heartbeat":
         break;
     }
+  }
+
+  /** 終了を永続化してから通知する。切断の処理で席の予約を作らせない。 */
+  private async closeRoom(): Promise<void> {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      await this.ctx.storage.put(CLOSED_KEY, true);
+      await this.ctx.storage.delete([PHASE_KEY, RESERVATIONS_KEY, DELETE_AT_KEY]);
+      await this.ctx.storage.deleteAlarm();
+      for (const ws of this.ctx.getWebSockets()) {
+        markDeparted(ws);
+        send(ws, { type: "room-closed" });
+        try {
+          ws.close(ROOM_CLOSED_CODE, "room-closed");
+        } catch {
+          /* 閉じかけの接続 */
+        }
+      }
+      this.log({ event: "room-closed" });
+    });
   }
 
   override async webSocketClose(
@@ -320,6 +345,10 @@ export class Room extends DurableObject<Env> {
    * 誰もいなくなったら、DELETE_AT_KEY の時刻にルームを消す
    */
   override async alarm(): Promise<void> {
+    if (await this.ctx.storage.get<boolean>(CLOSED_KEY)) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
     const now = Date.now();
     const nextCheckAt = await this.closeStaleSockets(now);
     if (nextCheckAt !== undefined) {
