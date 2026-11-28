@@ -27,6 +27,11 @@ export interface Connection<Send> {
   send(message: Send): boolean;
   /** 閉じる。もうつなぎ直さない */
   close(): void;
+  /**
+   * つなぎ直すのを待っているなら、shouldReconnect を聞き直し、false なら閉じる。
+   * トランスポートを開いている途中なら、その結果を待つ（切れたら、つなぎ直す前に聞く）
+   */
+  checkReconnect(): void;
   readonly state: ConnectionState;
 }
 
@@ -39,7 +44,7 @@ export interface ConnectOptions<Receive extends { type: string }> {
   onMessage: (message: Exclude<Receive, HeartbeatMessage>) => void;
   onStateChange?: (state: ConnectionState) => void;
   /**
-   * つなぎ直すたび、トランスポートを開く前に聞く。false なら開かずに閉じる（code は 1000）。
+   * 切れてつなぎ直すときと、トランスポートを開く前に聞く。false なら開かずに閉じる（code は 1000）。
    * 省くと、時間では諦めない。初めの接続では聞かない
    */
   shouldReconnect?: () => boolean;
@@ -129,6 +134,10 @@ export function connect<Receive extends { type: string }, Send>(
   const scheduleReconnect = () => {
     clearTimeout(liveness);
     liveness = undefined;
+    if (options.shouldReconnect?.() === false) {
+      finish(NORMAL_CLOSURE, "");
+      return;
+    }
     attempt++;
     const delays = RECONNECT_DELAYS_MS;
     const delay = delays[Math.min(attempt, delays.length) - 1];
@@ -223,6 +232,10 @@ export function connect<Receive extends { type: string }, Send>(
       } finally {
         options.onStateChange?.(closed);
       }
+    },
+    checkReconnect() {
+      if (retry === undefined || options.shouldReconnect?.() !== false) return;
+      finish(NORMAL_CLOSURE, "");
     },
     get state() {
       return state;

@@ -68,9 +68,10 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
         }
         if (state.status === "reconnecting" && holdingJoint && reconnectingSince === undefined) {
           reconnectingSince = aliveAt;
-          // 待つあいだに60秒を過ぎたら、つなぎ直しの途中でもやめる。残り秒数が 0 になるのと同じ時刻
+          // 60秒で、つなぎ直すのを待っていればやめる。残り秒数が 0 になるのと同じ時刻。
+          // 開いている途中の接続は切らない。サーバーが関節を返したあとに切ると、その関節をまた60秒予約させてしまう
           giveUp = setTimeout(
-            () => connection.close(),
+            () => connection.checkReconnect(),
             Math.max(0, reconnectingSince + RECONNECT_GRACE_MS - Date.now()),
           );
         }
