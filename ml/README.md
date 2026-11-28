@@ -4,6 +4,8 @@
 
 物理演算は、ゲームと同じコード（`src/screen/game/sim.ts`）を Node で動かす。Python は、その Node のプロセスに行動を送り、観測と報酬を受け取る。
 
+どのコマンドも `--mode <モード>` でモードを選べる（省くとノーマル）。選べるモードは、モードの一覧（`src/screen/game/modes.ts`。docs/ml.md の「モードの一覧」）にあるもの。そのモードの物理で学習・評価・再生し、run のタグ `mode` に残す。
+
 ## 準備
 
 - Node（リポジトリのルートで `npm install` を済ませる）
@@ -31,14 +33,14 @@ uv run python -m funyaoji_rl.train --reward r2 --gamma 0.99 --seed 0 \
 # 最初の実験（③ の 12 run と ② の (R1)）を、決まった本数まで同時に流す
 uv run python -m funyaoji_rl.sweep --parallel 8 --plan first
 
-# 物理が変わったときに、理論値の記録を作り直す（① → ③ → 登録 → 書き出し）。CI（.github/workflows/ml-retrain.yml）もこれを流す
-uv run python -m funyaoji_rl.pipeline --steps 20000000
+# 物理が変わったときに、理論値の記録を作り直す（① → ③ → 登録 → 書き出し）。CI（.github/workflows/ml-retrain.yml）もこれを、変わったモードごとに流す
+uv run python -m funyaoji_rl.pipeline --mode normal --steps 20000000
 
 # 記録を評価してレジストリに載せ、別名（theory・theory-any）を移す。学習と探索の終わりにも自動で行う
 uv run python -m funyaoji_rl.registry submit
 uv run python -m funyaoji_rl.registry list
-# theory の記録を src/screen/game/ai/theory.json に書き出す（コミットして PR に入れる）
-uv run python -m funyaoji_rl.registry export
+# theory の記録を src/screen/game/ai/theory/<モード>.json に書き出す（コミットして PR に入れる）
+uv run python -m funyaoji_rl.registry --mode normal export
 
 # 記録を並べて動画にする
 uv run python -m funyaoji_rl.render --out runs/x/video runs/a/record_exact.json runs/b/record_exact.json
@@ -49,8 +51,8 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 | 残るもの | 内容 |
 |---|---|
-| パラメータ | 学習の設定、報酬（`reward`・`goal`・`k`）、`gamma`、乱数の種、土台の歩き方 |
-| タグ | コミット、物理の指紋（`physics_fingerprint`）、Rapier の版、方法（`method`） |
+| パラメータ | モード（`mode`）、学習の設定、報酬（`reward`・`goal`・`k`）、`gamma`、乱数の種、土台の歩き方 |
+| タグ | モード（`mode`）、コミット、物理の指紋（`physics_fingerprint`）、Rapier の版、方法（`method`） |
 | メトリクス | 学習の経過（`goal_rate`・`distance`・`goal_time`・`best_time`）、Stable-Baselines3 の損失や `train.explained_variance`、評価（`eval_exact_time`・`eval_time_median`・`eval_goal_rate`、(E2) を通った記録の数 `eval_e2_count`、ずらして入力が実際に変わった回数 `eval_perturbed_changed`） |
 | 成果物 | 50 万ステップごとの記録（`snapshots/`）、評価の記録（`records/`。PPO はそのままの1回 `record_exact.json` と、(E1)・(E2) の最速 `record_best_e1.json`・`record_best_e2.json`。探索は上位5つ `record_top1〜5.json`）、途中の走りを並べた動画（`video/progress.gif`・`progress.mp4`） |
 
@@ -106,7 +108,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 ## 理論値
 
-**6.804 秒**（(E1)・(E2) とも同じ記録）。③・(R1)・γ 0.99・種 0 の、出力の層の bias をずらした1回（レジストリの `funyaoji-10m-record` v78。物理の指紋の作り方を変えたので、v35 から登録し直した）。条件は「毎秒30回・4つの関節を同時に切り替える」（docs/ml.md の「理論値の定義」）。記録は `src/screen/game/ai/theory.json` にあり、`npm run check` のテスト（`theory.test.ts`）が、再生して同じタイムになることを確かめる。
+**6.804 秒**（(E1)・(E2) とも同じ記録）。③・(R1)・γ 0.99・種 0 の、出力の層の bias をずらした1回（レジストリの `funyaoji-10m-record` v78。物理の指紋の作り方を変えたので、v35 から登録し直した）。条件は「毎秒30回・4つの関節を同時に切り替える」（docs/ml.md の「理論値の定義」）。記録は `src/screen/game/ai/theory/normal.json` にあり、`npm run check` のテスト（`theory.test.ts`）が、再生して同じタイムになることを確かめる。
 
 ### 物理の不具合（(E2) の判定）
 
@@ -138,21 +140,21 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 ## 物理が変わったとき
 
-スマホ向けの難しさの調整などで物理（`sim.ts`・`body.ts`・Rapier）が変わると、理論値の記録（`theory.json`）は同じタイムを出さなくなり、`theory.test.ts` が落ちる。
+スマホ向けの難しさの調整などで物理（`sim.ts`・`body.ts`・Rapier）が変わると、理論値の記録（`src/screen/game/ai/theory/<モード>.json`）は同じタイムを出さなくなり、`theory.test.ts` が落ちる。モードの一覧（`src/screen/game/modes.ts`）にモードを足したときも、そのモードの記録が無いので、同じ流れで記録ができる。
 
-1. PR で物理に関わるファイルが変わると、ワークフロー「理論値の記録の作り直し」が、マージした結果の物理で `theory.json` を確かめる（`node scripts/rl/fingerprint.ts`）。物理の指紋が違うか、再生して記録したタイムでゴールしなければ、「変わった」とする
-2. 変わっていれば、同じマージした結果で `pipeline.py` を流す（GitHub のマシンで数時間）。このジョブは読むだけの権限で動く。終わったら、新しい記録で `theory.test.ts` と `fingerprint.ts` が通ることを確かめる
-3. 新しい `theory.json` を入れた PR（ブランチ `chore/retrain-<PR の番号>`。元の PR のブランチから切る）が、元の PR のブランチに向けて出る。PR を出すジョブは、PR のコードを動かさない
-4. 成果物 `theory-<実行の番号>` の動画（`ml/runs/theory-export/theory.gif`・`theory.mp4`。書き出した記録だけを再生したもの）で走りを見てから、その PR をマージする。元の PR の `theory.test.ts` が通るようになる
+1. PR で物理に関わるファイルが変わると、ワークフロー「理論値の記録の作り直し」が、マージした結果の物理で、一覧のモードごとに記録を確かめる（`node scripts/rl/fingerprint.ts`）。記録が無いか、物理の指紋が違うか、再生して記録したタイムでゴールしなければ、そのモードは「変わった」とする
+2. 変わったモードがあれば、同じマージした結果で、そのモードごとに別のマシンで並べて `pipeline.py --mode <モード>` を流す（GitHub のマシンで数時間）。このジョブは読むだけの権限で動く。終わったら、新しい記録で、そのモードの `theory.test.ts` と `fingerprint.ts` が通ることを確かめる
+3. 変わった全部のモードの新しい記録を1つのコミットに入れた PR（ブランチ `chore/retrain-<PR の番号>`。元の PR のブランチから切る）が、元の PR のブランチに向けて出る。PR を出すジョブは、PR のコードを動かさない。どれかのモードの学習が落ちたら PR は出ないので、落ちたジョブだけを「Re-run failed jobs」で流し直す
+4. 成果物 `theory-<実行の番号>-<モード>` の動画（`ml/runs/theory-export/<モード>/theory.gif`・`theory.mp4`。書き出した記録だけを再生したもの）で走りを見てから、その PR をマージする。元の PR の `theory.test.ts` が通るようになる
 
 - 新しい物理では前の記録と比べないので、前より遅くても差し替える
 - 元の PR を直しても、物理が同じなら学習はやり直さない。同じ物理の学習が進んでいればそれに任せ、前に出した PR の記録が今の物理で使えれば、その PR をマージすればよい。物理が変わったときだけ、進んでいる学習を止めて始め直す
 - 同じ PR でもう一度流すと、前に出した PR を更新する（本文のタイムと成果物のリンクも新しくなる）
-- 物理が同じでも学習し直したいときは、Actions の画面から手で流し、`force` を付ける
+- 物理が同じでも学習し直したいときは、Actions の画面から手で流し、`force` を付ける（一覧の全部のモードを学習し直す）
 - フォークからの PR では流れない
 - ワークフローが出した PR では、GitHub の決まりで CI が自動では流れない。必要なら閉じて開き直す
 - ワークフローに PR を作らせるには、リポジトリの設定（Settings → Actions → General）の「Allow GitHub Actions to create and approve pull requests」が要る。切ってあると、ブランチを push したところで止まり、手で PR を作るリンクをエラーに出す
-- 手元で流してもよい：`uv run python -m funyaoji_rl.pipeline` のあと、`theory.json` をコミットする
+- 手元で流してもよい：`uv run python -m funyaoji_rl.pipeline --mode <モード>` のあと、`src/screen/game/ai/theory/<モード>.json` をコミットする
 
 ### 成果物の見方
 
@@ -160,7 +162,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 | 成果物 | 中身 |
 |---|---|
-| `theory-<実行の番号>` | 新しい `theory.json` と、それだけを再生した動画（`ml/runs/theory-export/`） |
-| `ml-retrain-<実行の番号>` | 学習の記録（`ml/mlflow.db`・`ml/mlartifacts/`）と、`ml/runs/` の記録・動画 |
+| `theory-<実行の番号>-<モード>` | そのモードの新しい記録（`src/screen/game/ai/theory/<モード>.json`）と、それだけを再生した動画（`ml/runs/theory-export/<モード>/`） |
+| `ml-retrain-<実行の番号>-<モード>` | そのモードの学習の記録（`ml/mlflow.db`・`ml/mlartifacts/`）と、`ml/runs/` の記録・動画 |
 
 - `mlflow.db` を手元の `mlflow ui` で開くと、パラメータとメトリクスは見える。ただし成果物の場所が CI のマシンのパスになっているので、MLflow の画面からは動画や記録を開けない。動画と記録は、展開した成果物の `ml/runs/<run の名前>/` を直接見る
