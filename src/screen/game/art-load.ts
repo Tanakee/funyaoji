@@ -4,6 +4,7 @@ import { EXPRESSIONS, type Expression, type PartImage, type UncleArt } from "./a
 export interface LoadedImage {
   image: PartImage;
   texture: Texture;
+  lines?: Texture;
 }
 
 export interface LoadedArt {
@@ -23,7 +24,9 @@ export async function loadUncleArt(
   onProgress?: (progress: number) => void,
 ): Promise<LoadedArt> {
   const images = [art.torso, art.thigh, art.shin, ...EXPRESSIONS.map((e) => art.head?.[e])];
-  const urls = [...new Set(images.flatMap((image) => (image ? [image.src] : [])))];
+  const urls = [
+    ...new Set(images.flatMap((image) => (image ? [image.src, image.lines] : []))),
+  ].filter((url) => url !== undefined);
   if (urls.length === 0) {
     onProgress?.(1);
     return {};
@@ -44,7 +47,10 @@ export async function loadUncleArt(
   const loadedImage = (image?: PartImage): LoadedImage | undefined => {
     if (!image) return undefined;
     const texture = textures[image.src];
-    return texture instanceof Texture ? { image, texture } : undefined;
+    if (!(texture instanceof Texture)) return undefined;
+    if (image.lines === undefined) return { image, texture };
+    const lines = textures[image.lines];
+    return lines instanceof Texture ? { image, texture, lines } : undefined;
   };
 
   const normal = loadedImage(art.head?.normal);

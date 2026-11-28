@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import { imagePointInPart, type ArtSlot, type PartImage } from "./art.ts";
+import {
+  EXPRESSIONS,
+  imagePointInPart,
+  imageTransform,
+  type ArtSlot,
+  type PartImage,
+} from "./art.ts";
 import { PART_SHAPES, type Pose, type ShapeSpec } from "./body.ts";
 import { PLACEHOLDER_ART } from "./uncle-art/placeholder/placeholder.ts";
+import { UNCLE_ART } from "./uncle-art/uncle-art.ts";
 
 function bounds(shapes: ShapeSpec[]) {
   const extent = (shape: ShapeSpec) =>
@@ -81,5 +88,62 @@ describe("部位画像と物理形状の位置合わせ", () => {
       { x: right, y: top },
       { x: right, y: bottom },
     ]);
+  });
+});
+
+const pngs = import.meta.glob<string>("./uncle-art/*.png", {
+  eager: true,
+  import: "default",
+  query: "?inline",
+});
+
+function pngSize(src: string) {
+  const filename = new URL(src).pathname.split("/").at(-1);
+  const url = pngs[`./uncle-art/${filename}`];
+  // PNG の先頭24バイトに、画像の幅と高さが入る
+  const start = url.indexOf(",") + 1;
+  const header = Uint8Array.from(atob(url.slice(start, start + 32)), (char) => char.charCodeAt(0));
+  const view = new DataView(header.buffer);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+describe("町内会のお父さんの部位画像", () => {
+  const { torso, thigh, shin, head } = UNCLE_ART;
+  const torsoCenter = PART_SHAPES.torso.find((shape) => shape.tag === "torso")!;
+  const headCenter = PART_SHAPES.torso.find((shape) => shape.tag === "head")!;
+
+  it.each([
+    { slot: "torso", image: torso, px: 135.1, py: 195.9, center: torsoCenter },
+    { slot: "thigh", image: thigh, px: 74.5, py: 199.7, center: PART_SHAPES.rightThigh[0] },
+    { slot: "shin", image: shin, px: 51.0, py: 143.6, center: PART_SHAPES.rightShin[0] },
+    ...EXPRESSIONS.map((expression) => ({
+      slot: "head" as const,
+      image: head[expression],
+      px: 125.4,
+      py: 114.5,
+      center: headCenter,
+    })),
+  ] as const)("$slot の画像の基準点が物理形状の中心に重なる", (test) => {
+    const size = pngSize(test.image.src);
+    const point = imagePointInPart(
+      test.image,
+      size,
+      test.slot,
+      test.px / size.width,
+      test.py / size.height,
+    );
+    expect(point.x).toBeCloseTo(test.center.ox, 9);
+    expect(point.y).toBeCloseTo(test.center.oy, 9);
+  });
+
+  it("4つの頭の画像は寸法と置き方がそろっている", () => {
+    const size = { width: 237, height: 243 };
+    const normal = imageTransform(head.normal, size, "head");
+    expect(head.normal.width).toBe(237 / 512);
+    for (const expression of EXPRESSIONS) {
+      const image = head[expression];
+      expect(pngSize(image.src)).toEqual(size);
+      expect(imageTransform(image, size, "head")).toEqual(normal);
+    }
   });
 });

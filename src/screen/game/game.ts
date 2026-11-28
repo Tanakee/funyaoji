@@ -3,6 +3,7 @@ import type { Joint, Mode } from "../../shared/messages.ts";
 import type { Expression } from "./art.ts";
 import type { Pose } from "./body.ts";
 import type { Scene } from "./camera.ts";
+import { UncleExpression } from "./expression.ts";
 import { Sim, initPhysics } from "./sim.ts";
 import type { Game, GameOptions } from "./types.ts";
 import { UNCLE_ART } from "./uncle-art/uncle-art.ts";
@@ -41,6 +42,7 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
   let stopped = false;
   let destroyed = false;
   let expression: Expression = "normal";
+  let uncleExpression = new UncleExpression();
   let scene: Scene = "lobby";
 
   function setScene(next: Scene): void {
@@ -50,13 +52,22 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
     if (import.meta.env.DEV && window.__funyaojiGame) window.__funyaojiGame.scene = scene;
   }
 
+  function setExpression(next: Expression): void {
+    if (expression === next) return;
+    expression = next;
+    view.setExpression(expression);
+  }
+
+  function resetExpression(): void {
+    uncleExpression = new UncleExpression();
+    setExpression("normal");
+  }
+
   view.onFrame((dtSec) => {
     if (!stopped) sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
     const state = sim.state();
-    const nextExpression = state.result?.outcome === "fell" ? "fell" : "normal";
-    if (expression !== nextExpression) {
-      expression = nextExpression;
-      view.setExpression(expression);
+    if (!stopped) {
+      setExpression(uncleExpression.update(inputs, performance.now(), state.result?.outcome));
     }
     view.render(state, inputs, dtSec);
     if (import.meta.env.DEV) {
@@ -92,6 +103,7 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
       practicing = false;
       reported = false;
       stopped = false;
+      resetExpression();
       setScene("countdown");
     },
     start() {
@@ -104,6 +116,7 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
       practicing = true;
       reported = false;
       stopped = false;
+      resetExpression();
       setScene("lobby");
     },
     stop(options) {

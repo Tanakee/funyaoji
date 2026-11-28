@@ -12,7 +12,13 @@ import {
 } from "pixi.js";
 import { JOINT_DISPLAY, SEATS } from "../../shared/joints.ts";
 import { loadUncleArt, type LoadedImage } from "./art-load.ts";
-import { imageTransform, type ArtSlot, type Expression, type UncleArt } from "./art.ts";
+import {
+  imagePointInPart,
+  imageTransform,
+  type ArtSlot,
+  type Expression,
+  type UncleArt,
+} from "./art.ts";
 import { BACKDROP_COLORS, createBackdrop } from "./backdrop.ts";
 import {
   INITIAL_POSES,
@@ -125,6 +131,7 @@ export interface View {
 
 /** 部位の形を描く。m のまま描くと曲線が粗くなるので、cm で描いて 0.01 倍にする */
 const CM = 100;
+const IMAGE_GLOW_MARGIN_M = 0.05;
 
 function drawShape(g: Graphics, shape: ShapeSpec): Graphics {
   if (shape.kind === "box") {
@@ -185,6 +192,31 @@ function createPartNode(image: LoadedImage | undefined, slot: ArtSlot): Graphics
 function paintPart(node: Graphics | Sprite, name: PartName, color = COLORS.emptyLimb): void {
   if (node instanceof Graphics) drawPart(node, name, color);
   else if (name !== "torso") node.tint = color;
+}
+
+function createPartGlow(
+  part: PartName,
+  image: LoadedImage | undefined,
+  glowColor: number,
+): Graphics | Sprite {
+  if (image) {
+    const slot = PART_ART_SLOTS[part];
+    const sprite = new Sprite(image.texture);
+    placeImage(sprite, image, slot);
+    // 基準点が画像の中心からずれていても、両側へ同じだけ広げる
+    const center = imagePointInPart(image.image, image.texture, slot, 0.5, 0.5);
+    sprite.position.set(center.x, center.y);
+    sprite.anchor.set(0.5);
+    sprite.setSize(sprite.width + 2 * IMAGE_GLOW_MARGIN_M, sprite.height + 2 * IMAGE_GLOW_MARGIN_M);
+    sprite.tint = glowColor;
+    return sprite;
+  }
+  const graphics = new Graphics();
+  graphics.scale.set(1 / CM);
+  for (const shape of PART_SHAPES[part]) {
+    if (shape.tag === "limb") drawShape(graphics, shape).stroke({ width: 12, color: glowColor });
+  }
+  return graphics;
 }
 
 function label(text: string, size: number, color: ColorSource, bold = false): Text {
@@ -315,16 +347,33 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   for (const name of DRAW_ORDER) {
     const node = new Container();
     const slot = PART_ART_SLOTS[name];
-    const body = createPartNode(loaded[slot], slot);
+    const image = loaded[slot];
+    const body = createPartNode(image, slot);
     paintPart(body, name);
     node.position.set(INITIAL_POSES[name].x, INITIAL_POSES[name].y);
     node.addChild(body);
+    if (image?.lines) {
+      const lines = new Sprite(image.lines);
+      placeImage(lines, image, slot);
+      node.addChild(lines);
+    }
     parts[name] = { node, body };
     world.addChild(node);
   }
   const head = createPartNode(loaded.head?.normal, "head");
-  if (head instanceof Graphics) drawHead(head);
-  parts.torso.node.addChild(head);
+  if (head instanceof Graphics) {
+    drawHead(head);
+    parts.torso.node.addChild(head);
+  } else {
+    // 首の下を、胴の画像のシャツの襟で隠す
+    parts.torso.node.addChildAt(head, 0);
+  }
+  function setExpression(expression: Expression): void {
+    if (!(head instanceof Sprite) || !loaded.head) return;
+    const image = loaded.head[expression];
+    head.texture = image.texture;
+    placeImage(head, image, "head");
+  }
 
   const hud = new Container();
   const hudText = (text: string, size: number, color: number) =>
@@ -393,14 +442,13 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     const { color: hexColor, name } = JOINT_DISPLAY[joint];
     const color = Number.parseInt(hexColor.slice(1), 16);
     const glowColor = mixRgb(color, 0xffffff, 0.5);
-    const { part } = STRING_ANCHORS[joint];
-    const partGlow = new Graphics();
-    partGlow.scale.set(1 / CM);
+    const physicsAnchor = STRING_ANCHORS[joint];
+    const { part } = physicsAnchor;
+    const image = loaded[PART_ART_SLOTS[part]];
+    const stringAt = image?.image.stringAt ?? physicsAnchor;
+    const partGlow = createPartGlow(part, image, glowColor);
     partGlow.visible = false;
-    for (const shape of PART_SHAPES[part]) {
-      if (shape.tag === "limb") drawShape(partGlow, shape).stroke({ width: 12, color: glowColor });
-    }
-    world.addChildAt(partGlow, world.getChildIndex(parts[part].node));
+    parts[part].node.addChildAt(partGlow, 0);
     const line = new Graphics();
     const marker = new Graphics()
       .circle(0, 0, 14)
@@ -436,6 +484,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       color,
       glowColor,
       partGlow,
+      stringAt,
     };
   });
 
@@ -551,26 +600,24 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
         color,
         glowColor,
         partGlow,
+        stringAt,
       } = seatGraphics[i];
       const cx = SEAT_OFFSETS[i];
       tag.x = cx;
       captions.position.set(cx, TAG_BOTTOM + 6 + (i % 2) * LABEL_LINE);
       line.clear();
 
-      const anchor = STRING_ANCHORS[joint];
-      const pose = state.poses[anchor.part];
+      const pose = state.poses[STRING_ANCHORS[joint].part];
       const input = seat.kind === "joined" ? inputs[joint] : undefined;
       const glow = tiltGlow.update(joint, input, dtSec);
-      partGlow.position.set(pose.x, pose.y);
-      partGlow.rotation = pose.rot;
       partGlow.visible = glow > 0;
       partGlow.alpha = glow * line.alpha;
 
       if (seat.kind === "empty") return;
       const cos = Math.cos(pose.rot);
       const sin = Math.sin(pose.rot);
-      const wx = pose.x + anchor.x * cos - anchor.y * sin;
-      const wy = pose.y + anchor.x * sin + anchor.y * cos;
+      const wx = pose.x + stringAt.x * cos - stringAt.y * sin;
+      const wy = pose.y + stringAt.x * sin + stringAt.y * cos;
       const x = (screenX(wx) - seatLayer.x) / ui;
       const y = (groundY - wy * pxPerM) / ui;
       drawString(line, cx, x, y, color, glowColor, stringLook(input ?? 0), glow);
@@ -651,13 +698,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     },
     render,
     setSeats,
-    setExpression(expression) {
-      if (head instanceof Sprite && loaded.head) {
-        const image = loaded.head[expression];
-        head.texture = image.texture;
-        placeImage(head, image, "head");
-      }
-    },
+    setExpression,
     destroy() {
       observer.disconnect();
       backdrop.destroy();
