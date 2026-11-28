@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { ScreenReceived, ScreenSent } from "../../net/client.ts";
 import type { Joint } from "../../shared/messages.ts";
 import type { GameOptions, JointInputs } from "../game/types.ts";
+import type { ScreenAudio } from "./audio.ts";
 
 const sent: ScreenSent[] = [];
 let connectionOpen = true;
@@ -77,9 +78,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const fire = (type: string, code: string) => {
+const fire = (type: string, code = "", patch: Partial<KeyboardEvent> = {}) => {
   for (const f of listeners[type] ?? [])
-    f({ code, repeat: false, preventDefault() {}, target: null });
+    f({ code, repeat: false, preventDefault() {}, target: null, ...patch });
 };
 /** キーを押して、すぐ離す */
 const press = (code: string) => {
@@ -96,9 +97,9 @@ const frames = (n: number) => {
 const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "ABCD", joints });
 const inputs = (): JointInputs => game.inputs;
 
-async function open() {
+async function open(audio?: ScreenAudio) {
   const { ScreenSession } = await import("./session.ts");
-  const session = new ScreenSession({} as HTMLElement);
+  const session = new ScreenSession({} as HTMLElement, false, audio);
   session.open();
   await vi.advanceTimersByTimeAsync(10);
   handlers.onStateChange?.({ status: "open" });
@@ -106,6 +107,95 @@ async function open() {
 }
 
 describe("ScreenSession", () => {
+  it("M キーで全音を切り替え、キーの長押しでは切り替えを繰り返さない", async () => {
+    const audio = {
+      unlock: vi.fn(),
+      play: vi.fn(),
+      setPlaying: vi.fn(),
+      setMuted: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = await open(audio);
+    press("KeyM");
+    expect(session.getSnapshot().audio.muted).toBe(true);
+    fire("keydown", "KeyM", { repeat: true });
+    expect(audio.setMuted.mock.calls).toEqual([[true]]);
+    press("KeyM");
+    expect(audio.setMuted.mock.calls).toEqual([[true], [false]]);
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    session.dispose();
+  });
+
+  it("参加状態の再通知で参加音を重複させず、戻った関節では鳴らす", async () => {
+    const audio = {
+      unlock: vi.fn(),
+      play: vi.fn(),
+      setPlaying: vi.fn(),
+      setMuted: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = await open(audio);
+    room(["rightHip"]);
+    room(["rightHip"]);
+    room(["rightHip", "leftHip"]);
+    room(["leftHip"]);
+    room(["rightHip", "leftHip"]);
+    expect(audio.play.mock.calls).toEqual([["join"], ["join"], ["join"]]);
+    session.dispose();
+    expect(audio.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("キーで音を有効にし、カウントダウン・開始・終了と BGM を進行に合わせる", async () => {
+    const audio = {
+      unlock: vi.fn(),
+      play: vi.fn(),
+      setPlaying: vi.fn(),
+      setMuted: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = await open(audio);
+    press("Enter");
+    expect(audio.unlock).toHaveBeenCalledOnce();
+    expect(audio.play.mock.calls).toEqual([["countdown"]]);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(audio.play.mock.calls).toEqual([["countdown"], ["countdown"], ["countdown"], ["start"]]);
+    expect(audio.setPlaying).toHaveBeenLastCalledWith(true);
+    press("KeyR");
+    expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
+    await vi.advanceTimersByTimeAsync(3000);
+    game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    expect(audio.play).toHaveBeenLastCalledWith("goal");
+    expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
+    press("KeyR");
+    await vi.advanceTimersByTimeAsync(3000);
+    game.onEnd({ outcome: "fell", distanceM: 1 });
+    expect(audio.play).toHaveBeenLastCalledWith("fell");
+    session.dispose();
+  });
+
+  it("ロビーのクリックでも音を有効にでき、切断の結果で BGM を止める", async () => {
+    const audio = {
+      unlock: vi.fn(),
+      play: vi.fn(),
+      setPlaying: vi.fn(),
+      setMuted: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = await open(audio);
+    fire("click");
+    expect(audio.unlock).toHaveBeenCalledOnce();
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    room(["rightHip"]);
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    audio.play.mockClear();
+    room([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(audio.play).not.toHaveBeenCalled();
+    expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
+    session.dispose();
+  });
+
   it("終わったときに切れていたら、つなぎ直したときに結果を送り直し、結果の画面を残す", async () => {
     const session = await open();
     room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
