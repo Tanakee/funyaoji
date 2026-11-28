@@ -7,7 +7,12 @@
 # 3. publish：全部のモードの新しい記録を、元の PR のブランチから切ったブランチに1つのコミットで入れ、元の PR のブランチに向けて PR を出す。
 #    書き込みの権限を持つので、PR のコード（npm・uv・学習）は動かさない
 # 4. 人が動画（このワークフローの成果物）を見て、マージする
+#
+# 実行の照らし合わせと concurrency のキーは、PR の番号（pr-<番号>）。手で流したときは dispatch-<ブランチ>。
+# 同じ head のブランチから別の base に出した PR や、手で流した実行どうしが、互いの学習を止めないようにする
 name: 理論値の記録の作り直し
+# 末尾の [キー] で、同じ PR の実行を見分ける（fingerprint の「同じ物理の学習が進んでいるか」）
+run-name: 理論値の記録の作り直し [${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('dispatch-{0}', github.ref_name) }}]
 
 on:
   pull_request:
@@ -32,6 +37,8 @@ permissions:
 
 env:
   RETRAIN_BRANCH: chore/retrain-${{ github.event.pull_request.number || github.run_id }}
+  # 実行の照らし合わせのキー。run-name の末尾と同じ
+  KEY: ${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('dispatch-{0}', github.ref_name) }}
 
 # ワークフロー全体の concurrency は付けない。付けると、PR を直すたびに数時間の学習も止まる。ジョブごとに付ける
 jobs:
@@ -43,10 +50,12 @@ jobs:
     permissions:
       contents: read
       actions: read # 同じ物理の学習が、別の実行で進んでいるかを見る
+      pull-requests: read # 前に出した PR が開いているかを見る
     concurrency:
-      group: ml-retrain-fingerprint-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+      group: ml-retrain-fingerprint-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('dispatch-{0}', github.ref_name) }}
       cancel-in-progress: true
     outputs:
+      key: ${{ env.KEY }}
       # 一覧の全部のモードの、今の物理の指紋（{"normal":"..."}）
       fingerprints: ${{ steps.fp.outputs.fingerprints }}
       # 学習し直すモード（["normal"]）。学習し直さないときは []
@@ -92,24 +101,45 @@ jobs:
           # ジョブの名前に入れる「（モード・指紋）」。下の「同じ物理の学習が進んでいるか」は、これを見る
           labels=$(jq -r --argjson fp "$FPS" '.[] | "（\(.)・\($fp[.])）"' <<<"$retrain")
           if [ "$run" = true ] && [ "$FORCE" != "true" ]; then
-            # 学習し直すモードの全部が、同じ物理で、別の1つの実行で学習されている（か PR を出すところ）なら、それに任せる。
-            # 1つでも違えば、全部を学習し直す（前の実行の学習は、下の retrain の concurrency が止める。
-            # 前の実行は全部のモードがそろわないと PR を出さないので、一部だけ任せると、そのモードの記録が PR に入らない）
-            for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ml-retrain.yml/runs?branch=$REF&status=in_progress" \
-                --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id"); do
-              names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
-                --jq '.jobs[] | select(.status != "completed") | .name')
+            # 同じキー（同じ PR）の、終わっていない別の実行のうち、学習し直すモードの全部を同じ物理で受け持っているものがあれば、それに任せる。
+            # 1つでも違えば、全部を学習し直す（前の実行の学習は、下の retrain の concurrency が止める）。
+            # 受け持っているとみなすのは、そのモードの学習・PR を出すジョブが進んでいるか、
+            # 学習が成功して終わり、その記録が成果物に残っているとき。
+            # 失敗・取り消しで終わったジョブがある実行は、PR まで進まないので任せない
+            while IFS=$'\t' read -r id title; do
+              [ -n "$id" ] || continue
+              [ "$id" != "$GITHUB_RUN_ID" ] || continue
+              [[ "$title" == *"[$KEY]" ]] || continue
+              jobs=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
+                --jq '.jobs[] | [.status, (.conclusion // ""), .name] | @tsv')
+              if awk -F'\t' '$1 == "completed" && ($2 == "failure" || $2 == "cancelled" || $2 == "timed_out") { bad = 1 } END { exit !bad }' <<<"$jobs"; then
+                continue
+              fi
+              artifacts=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" -f per_page=100 \
+                --jq '.artifacts[] | select(.expired | not) | .name')
               all=true
-              while IFS= read -r label; do
-                grep -qF "$label" <<<"$names" || all=false
-              done <<<"$labels"
+              for mode in $(jq -r '.[]' <<<"$retrain"); do
+                label="（${mode}・$(jq -r --arg m "$mode" '.[$m]' <<<"$FPS")）"
+                if awk -F'\t' -v l="$label" '$1 != "completed" && index($3, l) { found = 1 } END { exit !found }' <<<"$jobs"; then
+                  continue
+                fi
+                if awk -F'\t' -v n="学習し直す$label" '$1 == "completed" && $2 == "success" && $3 == n { found = 1 } END { exit !found }' <<<"$jobs" \
+                    && grep -qxF "theory-$id-$mode" <<<"$artifacts"; then
+                  continue
+                fi
+                all=false
+              done
               if [ "$all" = true ]; then
-                echo "::notice::同じ物理（$(tr -d '\n' <<<"$labels")）の学習が、別の実行（$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id）で進んでいるので、そちらに任せる"
+                echo "::notice::同じ物理（$(tr -d '\n' <<<"$labels")）の学習を、別の実行（$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id）が受け持っているので、そちらに任せる"
                 run=false
               fi
-            done
-            # 前に出した PR の記録が、学習し直すモードの全部で今の物理で使えるなら、学習し直さずに、その PR をマージすればよい
-            if [ "$run" = true ] && git fetch --depth=1 origin "$RETRAIN_BRANCH" 2>/dev/null; then
+            done < <(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ml-retrain.yml/runs" -f "branch=$REF" -f per_page=100 \
+              --jq '.workflow_runs[] | select(.status != "completed") | [.id, .display_title] | @tsv')
+            # 前に出した PR が開いていて、その記録が学習し直すモードの全部で今の物理で使えるなら、学習し直さずに、その PR をマージすればよい。
+            # ブランチだけが残っている（PR を閉じた）ときは、学習し直して出し直す
+            if [ "$run" = true ] \
+                && [ "$(gh pr list --head "$RETRAIN_BRANCH" --state open --json number --jq 'length')" -gt 0 ] \
+                && git fetch --depth=1 origin "refs/heads/$RETRAIN_BRANCH" 2>/dev/null; then
               usable=true
               for mode in $(jq -r '.[]' <<<"$retrain"); do
                 if ! git show "FETCH_HEAD:src/screen/game/ai/theory/$mode.json" > "$RUNNER_TEMP/retrained-$mode.json" 2>/dev/null \
@@ -118,7 +148,7 @@ jobs:
                 fi
               done
               if [ "$usable" = true ]; then
-                echo "::notice::$RETRAIN_BRANCH の記録が今の物理で使えるので、学習し直さない。その PR をマージする"
+                echo "::notice::開いている PR（$RETRAIN_BRANCH）の記録が今の物理で使えるので、学習し直さない。その PR をマージする"
                 run=false
               fi
             fi
@@ -145,10 +175,10 @@ jobs:
       fail-fast: false
       matrix:
         mode: ${{ fromJSON(needs.fingerprint.outputs.retrain) }}
-    # 同じ PR・同じモードの学習は1つだけ。新しく始まるのは、物理が違うときだけ（同じなら fingerprint で run=false になる）なので、前のものを止める。
+    # 同じ PR（キー）・同じモードの学習は1つだけ。新しく始まるのは、物理が違うときだけ（同じなら fingerprint で run=false になる）なので、前のものを止める。
     # 飛ばしたジョブが前の学習を止めないように、飛ばすときは別のグループにする
     concurrency:
-      group: ${{ needs.fingerprint.outputs.run == 'true' && format('ml-retrain-train-{0}-{1}-{2}', github.event.pull_request.head.repo.full_name || github.repository, github.head_ref || github.ref_name, matrix.mode) || format('ml-retrain-skip-{0}', github.run_id) }}
+      group: ${{ needs.fingerprint.outputs.run == 'true' && format('ml-retrain-train-{0}-{1}', needs.fingerprint.outputs.key, matrix.mode) || format('ml-retrain-skip-{0}', github.run_id) }}
       cancel-in-progress: true
     env:
       STEPS: ${{ inputs.steps || '20000000' }}
@@ -222,7 +252,7 @@ jobs:
       contents: write
       pull-requests: write
     concurrency:
-      group: ml-retrain-publish-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+      group: ml-retrain-publish-${{ needs.fingerprint.outputs.key }}
       cancel-in-progress: false
     env:
       BASE_BRANCH: ${{ github.head_ref || github.ref_name }}
