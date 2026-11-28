@@ -238,6 +238,37 @@ describe("ScreenSession", () => {
     expect(session.getSnapshot().room).toMatchObject({ roomCode: "ABCD" });
   });
 
+  it("4人そろっていても、ボタンのSpaceとメニュー・確認画面のキーは開始ややり直しに使わない", async () => {
+    const session = await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    const button = Object.assign(new HTMLElement(), {
+      tagName: "BUTTON",
+      closest: (selector: string): HTMLElement | null => (selector === "button" ? button : null),
+    });
+    fire("keydown", "Space", { target: button });
+    fire("keyup", "Space", { target: button });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    const menu = Object.assign(new HTMLElement(), {
+      tagName: "BUTTON",
+      closest: (selector: string): HTMLElement | null =>
+        selector.includes("[role=menu]") ? menu : null,
+    });
+    fire("keydown", "Enter", { target: menu });
+    fire("keyup", "Enter", { target: menu });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    press("Space");
+    await vi.advanceTimersByTimeAsync(3000);
+    const dialog = Object.assign(new HTMLElement(), {
+      tagName: "BUTTON",
+      closest: (selector: string): HTMLElement | null =>
+        selector.includes("dialog") ? dialog : null,
+    });
+    fire("keydown", "KeyR", { target: dialog });
+    fire("keyup", "KeyR", { target: dialog });
+    expect(session.getSnapshot().flow.kind).toBe("playing");
+    session.dispose();
+  });
+
   it("M キーで全音を切り替え、キーの長押しでは切り替えを繰り返さない", async () => {
     const audio = {
       unlock: vi.fn(),
