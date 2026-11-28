@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, inject, test } from "vite-plus/test";
+import * as v from "valibot";
 import type { CreateRoomResponse, PingResponse } from "../shared/api.ts";
+import { PhaseMessage } from "../shared/messages.ts";
 import { ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, isRoomCode } from "../shared/room.ts";
 
 // src/server/test-server.ts が立てた開発サーバーに、HTTP と WebSocket でつないで確かめる
@@ -412,6 +414,52 @@ describe("GET /api/rooms/:roomCode/ws", () => {
       }
       void phones[1]!.close();
       await closeAll([screen, phones[2]!, phones[3]!, returned, replaced]);
+    });
+
+    test("スマホが戻ったときはカウントダウンの残り時間を送り、開始後は playing だけを送る", async () => {
+      const roomCode = await createRoom();
+      const screen = new Client(roomCode, "screen");
+      await screen.next(); // room
+      const phone = new Client(roomCode, "phone", "a");
+      await phone.next(); // joined
+      await phone.next(); // room
+      await screen.next(); // room
+
+      const playing = { type: "phase", phase: "playing", mode: "10m" };
+      const countdown = {
+        kind: "readyGo",
+        durationMs: 1_500,
+        remainingMs: 1_500,
+        delayMs: { rightHip: 42 },
+      };
+      const phase = { ...playing, countdown };
+      await screen.send(JSON.stringify(phase));
+      expect(await phone.next()).toEqual(phase);
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const returned = new Client(roomCode, "phone", "a");
+      expect(await returned.next()).toEqual({ type: "joined", joint: "rightHip" });
+      const replay = v.parse(PhaseMessage, await returned.next());
+      expect(replay).toEqual({
+        ...phase,
+        countdown: { ...countdown, remainingMs: expect.any(Number) },
+      });
+      if (replay.phase !== "playing" || replay.countdown === undefined) {
+        throw new Error("カウントダウンの残り時間が届きません");
+      }
+      const { remainingMs } = replay.countdown;
+      expect(remainingMs).toBeGreaterThan(0);
+      expect(remainingMs).toBeLessThan(countdown.remainingMs);
+
+      await new Promise((resolve) => setTimeout(resolve, remainingMs + 5));
+      const afterGo = new Client(roomCode, "phone", "a");
+      expect(await afterGo.next()).toEqual({ type: "joined", joint: "rightHip" });
+      expect(await afterGo.next()).toEqual(playing);
+
+      const returnedScreen = new Client(roomCode, "screen");
+      await returnedScreen.next(); // room
+      expect(await returnedScreen.next()).toEqual(phase);
+      await closeAll([screen, phone, returned, afterGo, returnedScreen]);
     });
   });
 });

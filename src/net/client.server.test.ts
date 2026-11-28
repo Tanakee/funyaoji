@@ -135,3 +135,32 @@ test("スクリーンが ping を送り、スマホが自動で返した pong �
   while (latency.rightHip === undefined) latency = await latencyInbox.next();
   expect(latency.rightHip.latest).toBeGreaterThanOrEqual(0);
 });
+
+test("pong が返ったら、次の ping を待たずに遅延を渡す", async () => {
+  const roomCode = await createRoom();
+  const screenInbox = new Inbox<ScreenReceived>();
+  const reports: { at: number; latency: Partial<Record<string, Latency>> }[] = [];
+  const screen = connectScreen(
+    roomCode,
+    {
+      onMessage: screenInbox.push,
+      onLatency: (latency) => reports.push({ at: performance.now(), latency }),
+    },
+    { baseUrl: serverUrl },
+  );
+  openConnections.add(screen);
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: [] });
+  const phone = connectPhone(roomCode, { onMessage: () => {} }, { baseUrl: serverUrl });
+  openConnections.add(phone);
+  expect(await screenInbox.next()).toEqual({ type: "room", roomCode, joints: ["rightHip"] });
+
+  const deadline = performance.now() + TIMEOUT;
+  let index = -1;
+  while (index < 0 && performance.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    index = reports.findIndex(({ latency }) => latency.rightHip?.latest != null);
+  }
+  expect(index).toBeGreaterThan(0);
+  // 直前の通知は、ping を送ったとき。手元のサーバーなら、pong はすぐ返る
+  expect(reports[index]!.at - reports[index - 1]!.at).toBeLessThan(500);
+});

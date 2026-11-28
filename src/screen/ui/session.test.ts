@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createRoom } from "../../net/api.ts";
-import type { ConnectionState, ScreenReceived, ScreenSent } from "../../net/client.ts";
+import type { ConnectionState, Latency, ScreenReceived, ScreenSent } from "../../net/client.ts";
+import { GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import type { Joint } from "../../shared/messages.ts";
 import type { GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
 
 const sent: ScreenSent[] = [];
+const FOUR: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
 const connections: {
   roomCode: string;
   handlers: typeof handlers;
@@ -13,7 +15,11 @@ const connections: {
   closed: boolean;
 }[] = [];
 let connectionOpen = true;
-let handlers: { onMessage: (m: ScreenReceived) => void; onStateChange?: (s: unknown) => void };
+let handlers: {
+  onMessage: (m: ScreenReceived) => void;
+  onStateChange?: (s: unknown) => void;
+  onLatency: (latency: Partial<Record<Joint, Latency>>) => void;
+};
 let game: GameOptions;
 const calls: string[] = [];
 let stopDistance = 3.2;
@@ -396,12 +402,13 @@ describe("ScreenSession", () => {
     expect(audio.setPlaying).toHaveBeenLastCalledWith(true);
     press("KeyR");
     expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(audio.play.mock.calls.slice(-2)).toEqual([["countdown"], ["start"]]);
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
     expect(audio.play).toHaveBeenLastCalledWith("goal");
     expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
     press("KeyR");
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1500);
     game.onEnd({ outcome: "fell", distanceM: 1 });
     expect(audio.play).toHaveBeenLastCalledWith("fell");
     session.dispose();
@@ -572,7 +579,6 @@ describe("ScreenSession", () => {
   });
 
   describe("プレイ中に切れたスマホ", () => {
-    const FOUR: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
     async function startPlaying() {
       const session = await open();
       room(FOUR);
@@ -651,23 +657,129 @@ describe("ScreenSession", () => {
       calls.length = 0;
       press("KeyR");
 
-      expect(session.getSnapshot().flow).toEqual({ kind: "countdown", count: 3, players: FOUR });
+      expect(session.getSnapshot().flow).toEqual({
+        kind: "countdown",
+        countdownKind: "readyGo",
+        step: { label: "よーい" },
+        players: FOUR,
+      });
       expect(calls).toEqual(["reset"]);
       expect(session.getSnapshot().absent).toEqual({ leftKnee: 60 });
-      await vi.advanceTimersByTimeAsync(3_000 + 30_000);
+      await vi.advanceTimersByTimeAsync(1_500 + 30_000);
       expect(session.getSnapshot().flow.kind).toBe("playing");
     });
 
-    it("カウントダウン中のやり直しも、カウントを 3 からやり直す", async () => {
+    it("カウントダウン中のやり直しでは、元のタイマーを止めて「よーい」から始める", async () => {
       const session = await open();
       room(FOUR);
       press("Space");
       await vi.advanceTimersByTimeAsync(2_000);
-      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 1 });
+      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", step: { label: "1" } });
       press("Space");
-      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 3 });
-      await vi.advanceTimersByTimeAsync(2_500);
-      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 1 });
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect(session.getSnapshot().flow).toMatchObject({
+        kind: "countdown",
+        step: { label: "よーい" },
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(session.getSnapshot()).toMatchObject({
+        flow: { kind: "playing" },
+        startLabel: "ドン！",
+      });
     });
+  });
+
+  it("開始とやり直しのたびに、その時点の関節ごとの片道の遅延を送る", async () => {
+    const session = await open();
+    handlers.onLatency({
+      rightHip: { median: 42.4, latest: 50, missed: 0 },
+      leftKnee: { median: null, latest: 129.7, missed: 0 },
+      leftHip: { median: null, latest: null, missed: 1 },
+    });
+    session.startDebug();
+    handlers.onLatency({});
+    session.restart();
+    expect(sent.filter((message) => message.type === "phase")).toEqual([
+      {
+        type: "phase",
+        phase: "playing",
+        mode: "10m",
+        countdown: {
+          kind: "count",
+          durationMs: 3_000,
+          // いちばん遅い leftKnee の 130ms だけ、最初の表示を待つ
+          remainingMs: 3_130,
+          delayMs: { rightHip: 42, leftKnee: 130 },
+        },
+      },
+      {
+        type: "phase",
+        phase: "playing",
+        mode: "10m",
+        countdown: { kind: "readyGo", durationMs: 1_500, remainingMs: 1_500, delayMs: {} },
+      },
+    ]);
+  });
+
+  it("いちばん遅いスマホの遅延のぶん、最初の数字と音を待つ", async () => {
+    const audio = {
+      unlock: vi.fn(),
+      play: vi.fn(),
+      setPlaying: vi.fn(),
+      setMuted: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const session = await open(audio);
+    handlers.onLatency({ rightHip: { median: 200, latest: 200, missed: 0 } });
+    session.startDebug();
+    expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", step: { label: "" } });
+    expect(audio.play).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(199);
+    expect(session.getSnapshot().flow).toMatchObject({ step: { label: "" } });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getSnapshot().flow).toMatchObject({ step: { label: "3" } });
+    expect(audio.play.mock.calls).toEqual([["countdown"]]);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(session.getSnapshot().flow.kind).toBe("playing");
+  });
+
+  it("カウントダウン中にスマホが1台切れても、数え続けて GO! を出す", async () => {
+    const session = await open();
+    room(FOUR);
+    session.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    room(FOUR.filter((joint) => joint !== "leftKnee"));
+    expect(session.getSnapshot().flow).toMatchObject({
+      kind: "countdown",
+      step: { label: "2" },
+      players: FOUR,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(session.getSnapshot()).toMatchObject({
+      flow: { kind: "playing", players: FOUR },
+      startLabel: "GO!",
+      absent: { leftKnee: 58 },
+    });
+    await vi.advanceTimersByTimeAsync(GO_DISPLAY_MS - 1);
+    expect(session.getSnapshot().startLabel).toBe("GO!");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getSnapshot().startLabel).toBeUndefined();
+  });
+
+  it("タイマーが遅れても、次の数字と開始は最初の時刻から数える", async () => {
+    const session = await open();
+    session.startDebug();
+    const now = performance.now.bind(performance);
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + 250);
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(session.getSnapshot().flow).toMatchObject({ step: { label: "2" } });
+      await vi.advanceTimersByTimeAsync(750);
+      expect(session.getSnapshot().flow).toMatchObject({ step: { label: "1" } });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(session.getSnapshot().flow.kind).toBe("playing");
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

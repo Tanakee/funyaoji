@@ -54,6 +54,8 @@ const ROOM_CODE_KEY = "roomCode";
 const CLOSED_KEY = "closed";
 /** スクリーンから最後に受信した phase */
 const PHASE_KEY = "phase";
+/** サーバーの時計でカウントダウンが終わる時刻（ミリ秒） */
+const COUNTDOWN_ENDS_AT_KEY = "countdownEndsAt";
 /** 誰もいないルームを消す時刻（ミリ秒）。誰かが接続しているあいだは無い */
 const DELETE_AT_KEY = "deleteAt";
 /** 関節の予約（Reservation[]）。期限を過ぎたものは、読むときに消す */
@@ -103,7 +105,10 @@ export class Room extends DurableObject<Env> {
     }
     const { 0: client, 1: server } = new WebSocketPair();
     const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
-    const phase = await this.ctx.storage.get<PhaseMessage>(PHASE_KEY);
+    const [phase, countdownEndsAt] = await Promise.all([
+      this.ctx.storage.get<PhaseMessage>(PHASE_KEY),
+      role === "phone" ? this.ctx.storage.get<number>(COUNTDOWN_ENDS_AT_KEY) : undefined,
+    ]);
 
     // 断る理由は no-room → playing → full の順に調べる。戻ってきたスマホは playing・full では断らない
     if (roomCode === undefined || (await this.ctx.storage.get<boolean>(CLOSED_KEY))) {
@@ -126,7 +131,15 @@ export class Room extends DurableObject<Env> {
           if (returning?.reservation !== undefined) {
             await this.saveReservations(reservations.filter((r) => r !== returning.reservation));
           }
-          this.acceptPhone(server, roomCode, phase, joint, clientId, returning !== undefined);
+          this.acceptPhone(
+            server,
+            roomCode,
+            phase,
+            countdownEndsAt,
+            joint,
+            clientId,
+            returning !== undefined,
+          );
           await this.cancelDeletion();
         }
       }
@@ -277,6 +290,14 @@ export class Room extends DurableObject<Env> {
         // プレイ中の参加を断るためと、あとから接続した人に送るために保持する。
         // put を待たずに送る。送信は書き込みが確定するまで止められ（output gate）、次のメッセージより先に中継される
         void this.ctx.storage.put(PHASE_KEY, received);
+        if (received.phase === "playing" && received.countdown !== undefined) {
+          void this.ctx.storage.put(
+            COUNTDOWN_ENDS_AT_KEY,
+            Date.now() + received.countdown.remainingMs,
+          );
+        } else {
+          void this.ctx.storage.delete(COUNTDOWN_ENDS_AT_KEY);
+        }
         this.log({ event: "phase", phase: received.phase });
         this.sendToPhones(received);
         break;
@@ -482,6 +503,7 @@ export class Room extends DurableObject<Env> {
     ws: WebSocket,
     roomCode: string,
     phase: PhaseMessage | undefined,
+    countdownEndsAt: number | undefined,
     joint: Joint,
     clientId: string | undefined,
     returning: boolean,
@@ -502,7 +524,17 @@ export class Room extends DurableObject<Env> {
       returning,
     });
     send(ws, { type: "joined", joint } satisfies JoinedMessage);
-    if (phase !== undefined) send(ws, phase);
+    if (phase?.phase === "playing" && phase.countdown !== undefined) {
+      const remaining = (countdownEndsAt ?? 0) - Date.now();
+      send(
+        ws,
+        remaining > 0
+          ? { ...phase, countdown: { ...phase.countdown, remainingMs: Math.round(remaining) } }
+          : { type: "phase", phase: "playing", mode: phase.mode },
+      );
+    } else if (phase !== undefined) {
+      send(ws, phase);
+    }
     // 置き換えのときは関節が変わらないが、新しい接続に room を届けるために送る
     this.broadcastRoom(roomCode);
   }

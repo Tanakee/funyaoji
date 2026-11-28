@@ -11,9 +11,10 @@ import { JumpFilter, toAngle } from "./tilt.ts";
 
 const run = (events: PhoneEvent[], from: PhoneState = initialState("K7Q2")) =>
   events.reduce(reduce, from);
-const message = (m: Extract<PhoneEvent, { type: "message" }>["message"]): PhoneEvent => ({
+const message = (m: Extract<PhoneEvent, { type: "message" }>["message"], at = 0): PhoneEvent => ({
   type: "message",
   message: m,
+  at,
 });
 
 const connection = (
@@ -73,6 +74,61 @@ describe("JumpFilter", () => {
 });
 
 describe("reduce", () => {
+  const playing = { type: "phase", phase: "playing", mode: "10m" } as const;
+  const countdown = { kind: "count", durationMs: 3_000, remainingMs: 2_000 } as const;
+
+  it("自分の関節の遅延だけを引き、新しい countdown が来たら開始時刻を置き換える", () => {
+    const state = run([
+      ...joinedEvents,
+      message(
+        { ...playing, countdown: { ...countdown, delayMs: { rightHip: 42, leftKnee: 130 } } },
+        500,
+      ),
+    ]);
+    expect(state).toMatchObject({
+      phase: { kind: "playing", countdown: { kind: "count", durationMs: 3_000, endsAt: 2_370 } },
+    });
+    expect(
+      run(
+        [
+          message(
+            {
+              ...playing,
+              countdown: {
+                kind: "readyGo",
+                durationMs: 1_500,
+                remainingMs: 1_500,
+                delayMs: { rightHip: 42 },
+              },
+            },
+            1_000,
+          ),
+        ],
+        state,
+      ),
+    ).toMatchObject({
+      phase: { kind: "playing", countdown: { kind: "readyGo", durationMs: 1_500, endsAt: 2_500 } },
+    });
+  });
+
+  it("片道の遅延は1000msまで引き、受信した時点で開始の時刻に達していればプレイを表示する", () => {
+    const delayMs = { leftKnee: 1_300 };
+    const state = run([
+      ...joinedEvents,
+      message({ ...playing, countdown: { ...countdown, delayMs } }, 500),
+    ]);
+    expect(state).toMatchObject({ phase: { countdown: { endsAt: 1_500 } } });
+    for (const remainingMs of [999, 1_000]) {
+      const next = reduce(
+        state,
+        message({ ...playing, countdown: { ...countdown, remainingMs, delayMs } }, 600),
+      );
+      expect(next.kind === "joined" && next.phase).toEqual({ kind: "playing" });
+    }
+    const next = reduce(state, message(playing, 600));
+    expect(next.kind === "joined" && next.phase).toEqual({ kind: "playing" });
+  });
+
   it("参加していたスマホがつなぎ直して断られたら、断られた理由を出す", () => {
     const state = run([
       ...joinedEvents,

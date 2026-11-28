@@ -181,6 +181,45 @@ const rejected: { name: string; message: unknown }[] = [
 ];
 
 describe("メッセージのスキーマ", () => {
+  const playing = { type: "phase", phase: "playing", mode: "10m" };
+  const countdown = {
+    kind: "count",
+    durationMs: 3_000,
+    remainingMs: 2_192,
+    delayMs: { rightHip: 42, leftKnee: 130 },
+  };
+
+  test.each([countdown, { kind: "readyGo", durationMs: 1_500, remainingMs: 0, delayMs: {} }])(
+    "phase の countdown をスクリーンとサーバーとスマホが受け取れる",
+    (value) => {
+      const message = { ...playing, countdown: value };
+      expect(acceptedBy(message)).toEqual([
+        "ServerToPhoneMessage",
+        "ServerToScreenMessage",
+        "ScreenToServerMessage",
+      ]);
+      expect(v.parse(ScreenToServerMessage, message)).toEqual(message);
+    },
+  );
+
+  test.each([
+    null,
+    { ...countdown, kind: "unknown" },
+    { ...countdown, durationMs: undefined },
+    { ...countdown, durationMs: -1 },
+    { ...countdown, durationMs: Infinity },
+    { ...countdown, remainingMs: 10_001 },
+    { ...countdown, remainingMs: -1 },
+    { ...countdown, remainingMs: NaN },
+    { ...countdown, delayMs: undefined },
+    { ...countdown, delayMs: { head: 42 } },
+    { ...countdown, delayMs: { rightHip: -1 } },
+    { ...countdown, delayMs: { rightHip: 0.5 } },
+    { ...countdown, delayMs: { rightHip: Infinity } },
+  ])("形の違う countdown はどの方向でも拒否する (%j)", (value) => {
+    expect(acceptedBy({ ...playing, countdown: value })).toEqual([]);
+  });
+
   test("関節の順番は参加順の割り当て", () => {
     expect(JOINTS).toEqual(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
   });
