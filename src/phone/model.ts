@@ -41,9 +41,9 @@ export type PhoneState =
    * もう一度求めても許可の画面を出さずにすぐ断るので、ページからはやり直せない。Safari を開き直してもらう
    */
   | { kind: "permission-denied" }
-  /** つないでいる。joined か rejected を待つ */
+  /** つないでいる。joined か queued か rejected を待つ */
   | { kind: "connecting" }
-  /** 満員（full）かプレイ中（playing）。席が空くまで自動でつなぎ直す。reason は最後に断られた理由 */
+  /** 参加列に並んでいる。満員（full）かプレイ中（playing）。席が空けば、サーバーが joined を送ってくる。reason は最後に届いた queued の理由 */
   | { kind: "waiting"; reason: "full" | "playing" }
   | {
       kind: "joined";
@@ -219,7 +219,6 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
       if (state.kind === "joined" && state.leaving) {
         return { kind: "ended", reason: "left", joint: state.joint };
       }
-      // 参加していたスマホも、つなぎ直したときに断られることがある（60秒を過ぎて、次のプレイが始まっていたなど）
       if (
         state.kind !== "connecting" &&
         state.kind !== "joined" &&
@@ -228,8 +227,15 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
       ) {
         return state;
       }
-      if (message.reason === "no-room") {
-        return state.kind === "rejected" ? state : { kind: "rejected", reason: message.reason };
+      return state.kind === "rejected" ? state : { kind: "rejected", reason: message.reason };
+    case "queued":
+      // 抜けるを押したあと、つなぎ直して列に並べられた。session が leave を送り直すので、抜けたものとして扱う
+      if (state.kind === "joined" && state.leaving) {
+        return { kind: "ended", reason: "left", joint: state.joint };
+      }
+      // 参加していたスマホも、つなぎ直したときに列に並べられることがある（60秒を過ぎて、次のプレイが始まっていたなど）
+      if (state.kind !== "connecting" && state.kind !== "joined" && state.kind !== "waiting") {
+        return state;
       }
       return state.kind === "waiting" && state.reason === message.reason
         ? state

@@ -128,7 +128,7 @@ test("抜けるの受け付けを待つあいだに切れたら、joined を受�
   session.stop();
 });
 
-test("抜けるを押してからつなぎ直しを断られたら、rejected を渡して閉じる", () => {
+test("抜けるを押してからつなぎ直して列に並べられたら、queued を渡して leave を送り直す", () => {
   const events: PhoneEvent[] = [];
   const session = startSession("K7Q2", (event) => events.push(event));
   opened[0]!.handlers.onOpen();
@@ -138,15 +138,28 @@ test("抜けるを押してからつなぎ直しを断られたら、rejected �
   vi.advanceTimersByTime(1_000);
   const next = opened[1]!;
   next.handlers.onOpen();
-  next.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
-  expect(events.slice(-2)).toMatchObject([
-    { type: "message", message: { type: "rejected", reason: "playing" } },
-    { type: "connection", state: { status: "closed" } },
-  ]);
-  expect(next.closed).toBe(true);
+  next.handlers.onMessage(JSON.stringify({ type: "queued", reason: "playing" }));
+  expect(events.at(-1)).toMatchObject({
+    type: "message",
+    message: { type: "queued", reason: "playing" },
+  });
+  expect(next.sent).toEqual(['{"type":"leave"}']);
+  next.handlers.onMessage(JSON.stringify({ type: "left" }));
+  expect(events.at(-1)).toMatchObject({ type: "connection", state: { status: "closed" } });
   vi.advanceTimersByTime(60_000);
   expect(opened).toHaveLength(2);
   session.stop();
+});
+
+test("順番待ちをやめると、leave を送ってから閉じる", () => {
+  const session = startSession("K7Q2", () => {});
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onMessage(JSON.stringify({ type: "queued", reason: "full" }));
+  session.withdraw();
+  expect(opened[0]!.sent).toEqual(['{"type":"leave"}']);
+  expect(opened[0]!.closed).toBe(true);
+  vi.advanceTimersByTime(60_000);
+  expect(opened).toHaveLength(1);
 });
 
 function joinThenDrop() {
@@ -191,7 +204,7 @@ test("60秒より前に開き始めたトランスポートは、60秒で切ら�
   stop();
 });
 
-test("60秒より前に開き始めたトランスポートが、60秒を過ぎて full で断られたら、つなぎ直さない", () => {
+test("参加していたスマホが、つなぎ直して列に並べられたら、60秒で諦めずに列で待つ", () => {
   const { stop, closed } = joinThenDrop();
   vi.advanceTimersByTime(1_000);
   for (const [i, delay] of [2_000, 4_000, 8_000, 10_000, 10_000, 10_000, 10_000].entries()) {
@@ -201,11 +214,19 @@ test("60秒より前に開き始めたトランスポートが、60秒を過ぎ�
   vi.advanceTimersByTime(5_500); // 60.5秒
   const last = opened.at(-1)!;
   last.handlers.onOpen();
-  last.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "full" }));
-  last.handlers.onClose({ code: 4001, reason: "" });
-  expect(closed()).toBe(true);
-  vi.advanceTimersByTime(60_000);
-  expect(opened).toHaveLength(9);
+  last.handlers.onMessage(JSON.stringify({ type: "queued", reason: "full" }));
+  // ハートビートの返事が届くあいだは、つないだまま待つ
+  for (let i = 0; i < 8; i++) {
+    vi.advanceTimersByTime(9_000);
+    last.handlers.onMessage(JSON.stringify({ type: "heartbeat" }));
+  }
+  expect(closed()).toBe(false);
+  expect(last.closed).toBe(false);
+  // 列で待つあいだに切れても、つなぎ直す
+  last.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  expect(opened).toHaveLength(10);
+  expect(closed()).toBe(false);
   stop();
 });
 
@@ -223,22 +244,33 @@ test("60秒より前に開き始めたトランスポートが失敗したら、
   stop();
 });
 
-test.each(["full", "playing"])("%s で断られたスマホは、60秒を過ぎてもつなぎ直す", (reason) => {
-  const events: PhoneEvent[] = [];
-  const session = startSession("K7Q2", (event) => events.push(event));
-  for (let i = 0; i < 12; i++) {
-    const { handlers } = opened[i]!;
-    handlers.onOpen();
-    handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
-    handlers.onClose({ code: 4001, reason: "" });
-    vi.advanceTimersByTime(10_000);
-  }
-  expect(opened).toHaveLength(13);
-  expect(events.some((e) => e.type === "connection" && e.state.status === "closed")).toBe(false);
-  opened[12]!.handlers.onOpen();
-  opened[12]!.handlers.onMessage(JSON.stringify({ type: "rejected", reason }));
-  opened[12]!.handlers.onClose({ code: 4001, reason: "" });
+test.each(["full", "playing"])(
+  "queued（%s）で並んだスマホは、切れても60秒を過ぎてもつなぎ直す",
+  (reason) => {
+    const events: PhoneEvent[] = [];
+    const session = startSession("K7Q2", (event) => events.push(event));
+    for (let i = 0; i < 12; i++) {
+      const { handlers } = opened[i]!;
+      handlers.onOpen();
+      handlers.onMessage(JSON.stringify({ type: "queued", reason }));
+      handlers.onClose({ code: 1006, reason: "" });
+      vi.advanceTimersByTime(10_000);
+    }
+    expect(opened).toHaveLength(13);
+    expect(events.some((e) => e.type === "connection" && e.state.status === "closed")).toBe(false);
+    session.stop();
+    vi.advanceTimersByTime(60_000);
+    expect(opened).toHaveLength(13);
+  },
+);
+
+test("列で待っているあいだに joined が届いたら、同じ接続で送れるようになる", () => {
+  const session = startSession("K7Q2", () => {});
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onMessage(JSON.stringify({ type: "queued", reason: "full" }));
+  expect(session.send({ type: "start" })).toBe(false);
+  opened[0]!.handlers.onMessage(JOINED);
+  expect(session.send({ type: "start" })).toBe(true);
+  expect(opened).toHaveLength(1);
   session.stop();
-  vi.advanceTimersByTime(60_000);
-  expect(opened).toHaveLength(13);
 });

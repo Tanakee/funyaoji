@@ -16,11 +16,22 @@ export const JoinedMessage = v.object({
 });
 export type JoinedMessage = v.InferOutput<typeof JoinedMessage>;
 
+/** 断られた。断るのはルームが無いときだけ。満員とプレイ中は、断らずに参加列に並べる（queued） */
 export const RejectedMessage = v.object({
   type: v.literal("rejected"),
-  reason: v.picklist(["full", "playing", "no-room"]),
+  reason: v.picklist(["no-room"]),
 });
 export type RejectedMessage = v.InferOutput<typeof RejectedMessage>;
+
+/**
+ * 参加列に並べた。満員（full）かプレイ中（playing）で、席に入れなかったスマホに送る。接続はつないだまま。
+ * 待っている理由が変わったら送り直す。席が空いたら、同じ接続に joined が届く
+ */
+export const QueuedMessage = v.object({
+  type: v.literal("queued"),
+  reason: v.picklist(["full", "playing"]),
+});
+export type QueuedMessage = v.InferOutput<typeof QueuedMessage>;
 
 export const RoomMessage = v.object({
   type: v.literal("room"),
@@ -162,6 +173,7 @@ export const ServerToPhoneMessage = v.variant("type", [
   JoinedMessage,
   RoomClosedMessage,
   RejectedMessage,
+  QueuedMessage,
   RoomMessage,
   PhaseMessage,
   HowtoMessage,

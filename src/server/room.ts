@@ -11,6 +11,7 @@ import {
   type JoinedMessage,
   type LeftMessage,
   type PhaseMessage,
+  type QueuedMessage,
   type RejectedMessage,
   type RelayedPongMessage,
   type RelayedTiltMessage,
@@ -24,15 +25,25 @@ import { upgradeStoredPhase, type StoredPhase } from "./stored-phase.ts";
 /**
  * WebSocket に付けておく情報。休止（Hibernation）から戻っても残る。connectedAt は接続した時刻（ミリ秒）。
  * clientId は、スマホが接続の URL の client に付けてきた ID。付けていなければ無い。
+ * スマホは、関節（joint）を持つか、参加列に並んでいる（queuedAt）かのどちらか。queuedAt は列に入った時刻で、小さいほど前。
  * departed は、切断を処理した、抜けるを受け付けた、または置き換えた接続のとき true
  */
 type Attachment = { connectedAt: number; departed?: true } & (
   | { role: "screen" }
-  | { role: "phone"; joint: Joint; clientId?: string }
+  | ({ role: "phone"; clientId?: string } & (
+      | { joint: Joint; queuedAt?: undefined }
+      | { joint?: undefined; queuedAt: number }
+    ))
 );
+
+type SeatedAttachment = Attachment & { role: "phone"; joint: Joint };
+type QueuedAttachment = Attachment & { role: "phone"; joint?: undefined; queuedAt: number };
 
 /** 切れたスマホのためにとっておく関節。expiresAt（ミリ秒）を過ぎたら無いものとして扱う */
 type Reservation = { clientId: string; joint: Joint; expiresAt: number };
+
+/** 参加列に並んでいて切れたスマホのためにとっておく、列の位置。expiresAt（ミリ秒）を過ぎたら無いものとして扱う */
+type QueueReservation = { clientId: string; queuedAt: number; expiresAt: number };
 
 /** スクリーン・スマホを、同じ相手の新しい接続で置き換えたときの close コード */
 const CLOSE_REPLACED = 4000;
@@ -66,6 +77,8 @@ const COUNTDOWN_ENDS_AT_KEY = "countdownEndsAt";
 const DELETE_AT_KEY = "deleteAt";
 /** 関節の予約（Reservation[]）。期限を過ぎたものは、読むときに消す */
 const RESERVATIONS_KEY = "reservations";
+/** 参加列の位置の予約（QueueReservation[]）。期限を過ぎたものは、読むときに消す */
+const QUEUE_RESERVATIONS_KEY = "queueReservations";
 
 /** ルームごとに1つ。WebSocket の接続を持ち、スマホとスクリーンの間でメッセージを中継する */
 export class Room extends DurableObject<Env> {
@@ -126,7 +139,7 @@ export class Room extends DurableObject<Env> {
     ]);
     const phase = upgradeStoredPhase(storedPhase);
 
-    // 断る理由は no-room → playing → full の順に調べる。戻ってきたスマホは playing・full では断らない
+    // 断るのは no-room だけ。戻ってきたスマホには関節を返し、ほかのスマホは参加列に並べてから、来た順に席を渡す
     if (roomCode === undefined || (await this.ctx.storage.get<boolean>(CLOSED_KEY))) {
       this.reject(server, "no-room");
     } else if (role === "screen") {
@@ -134,34 +147,115 @@ export class Room extends DurableObject<Env> {
       await this.cancelDeletion();
     } else {
       const clientId = parseClientId(params.get("client"));
-      const reservations = await this.liveReservations(Date.now());
+      const now = Date.now();
+      const reservations = await this.liveReservations(now);
       const returning = this.findReturning(clientId, reservations);
-      if (returning === undefined && phase?.phase === "playing") {
-        this.reject(server, "playing");
+      if (returning !== undefined) {
+        if (returning.old !== undefined) this.replacePhone(returning.old);
+        if (returning.reservation !== undefined) {
+          await this.saveReservations(reservations.filter((r) => r !== returning.reservation));
+        }
+        this.ctx.acceptWebSocket(server, ["phone"]);
+        this.seatPhone(server, roomCode, phase, countdownEndsAt, howto, returning.joint, clientId, {
+          returning: true,
+        });
       } else {
-        const joint = returning?.joint ?? this.freeJoint(reservations);
-        if (joint === undefined) {
-          this.reject(server, "full");
-        } else {
-          if (returning?.old !== undefined) this.replacePhone(returning.old);
-          if (returning?.reservation !== undefined) {
-            await this.saveReservations(reservations.filter((r) => r !== returning.reservation));
-          }
-          this.acceptPhone(
-            server,
-            roomCode,
-            phase,
-            countdownEndsAt,
-            howto,
-            joint,
-            clientId,
-            returning !== undefined,
-          );
-          await this.cancelDeletion();
+        const queuedAt = await this.takeQueuePosition(clientId, now);
+        this.ctx.acceptWebSocket(server, ["phone"]);
+        server.serializeAttachment({
+          role: "phone",
+          ...(clientId !== undefined && { clientId }),
+          queuedAt,
+          connectedAt: now,
+        } satisfies Attachment);
+        // 前に並んでいるスマホから席を渡す。この接続に席が回らなければ、並んで待つ
+        await this.admitQueued(roomCode, phase, countdownEndsAt, howto, reservations);
+        if (server.deserializeAttachment()?.joint === undefined) {
+          const reason = queueReason(phase);
+          this.log({ event: "queued", reason, hasClientId: clientId !== undefined, queuedAt });
+          send(server, { type: "queued", reason } satisfies QueuedMessage);
+          await this.scheduleReservationCheck(reservations);
         }
       }
+      await this.cancelDeletion();
     }
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * 参加列に入るスマホの位置（queuedAt）。同じ ID のスマホが列に並んでいれば（開いた接続か、切断を処理していない閉じかけの接続）、
+   * その接続を置き換えて位置を引き継ぐ。切れて位置を予約していれば、それを引き継ぐ。どちらも無ければ、列の後ろにつく
+   */
+  private async takeQueuePosition(clientId: string | undefined, now: number): Promise<number> {
+    if (clientId === undefined) return now;
+    const old = this.ctx
+      .getWebSockets("phone")
+      .filter((ws) => !isDeparted(ws) && isQueued(ws) && phoneAttachment(ws).clientId === clientId)
+      .sort((a, b) => queuedAttachment(a).queuedAt - queuedAttachment(b).queuedAt)[0];
+    if (old !== undefined) {
+      this.replacePhone(old);
+      return queuedAttachment(old).queuedAt;
+    }
+    const all = await this.liveQueueReservations(now);
+    const reservation = all.find((r) => r.clientId === clientId);
+    if (reservation === undefined) return now;
+    await this.saveQueueReservations(all.filter((r) => r !== reservation));
+    return reservation.queuedAt;
+  }
+
+  /**
+   * 空いた席を、参加列の前から順に渡す。プレイ中は渡さない。
+   * 切れて位置を予約しているだけのスマホは待たず、次のスマホに渡す
+   */
+  private async admitQueued(
+    roomCode: string,
+    phase: PhaseMessage | undefined,
+    countdownEndsAt: number | undefined,
+    howto: HowtoMessage | undefined,
+    reservations?: Reservation[],
+  ): Promise<void> {
+    if (phase?.phase === "playing") return;
+    const queue = this.queuedPhones();
+    if (queue.length === 0) return;
+    const live = reservations ?? (await this.liveReservations(Date.now()));
+    for (const ws of queue) {
+      const joint = this.freeJoint(live);
+      if (joint === undefined) break;
+      const { clientId } = queuedAttachment(ws);
+      this.seatPhone(ws, roomCode, phase, countdownEndsAt, howto, joint, clientId, {
+        returning: false,
+        // 列で待つあいだにメッセージを受け取ったので、接続した時刻はそのまま残す
+        connectedAt: queuedAttachment(ws).connectedAt,
+      });
+      // 遊び方の間に席に入ると、seatPhone が howto を書き換える。次のスマホにはそれを送る
+      howto = (await this.ctx.storage.get<HowtoMessage>(HOWTO_KEY)) ?? howto;
+    }
+  }
+
+  /** 席が空いたかもしれないときに呼ぶ。保持している phase と howto で、参加列の前から席を渡す */
+  private async admitQueuedFromStorage(): Promise<void> {
+    if (this.queuedPhones().length === 0) return;
+    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
+    if (roomCode === undefined || (await this.ctx.storage.get<boolean>(CLOSED_KEY))) return;
+    const [storedPhase, countdownEndsAt, howto] = await Promise.all([
+      this.ctx.storage.get<StoredPhase>(PHASE_KEY),
+      this.ctx.storage.get<number>(COUNTDOWN_ENDS_AT_KEY),
+      this.ctx.storage.get<HowtoMessage>(HOWTO_KEY),
+    ]);
+    await this.admitQueued(roomCode, upgradeStoredPhase(storedPhase), countdownEndsAt, howto);
+  }
+
+  /**
+   * 参加列に並んでいるスマホがいて、関節の予約があるときは、いちばん早く切れる予約の期限にアラームを置く。
+   * 予約が切れて席が空いたら、待たずに列のスマホに渡すため。並んでいなければ置かない（予約は読むときに消す）
+   */
+  private async scheduleReservationCheck(reservations?: Reservation[]): Promise<void> {
+    if (this.queuedPhones().length === 0) return;
+    const live = reservations ?? (await this.liveReservations(Date.now()));
+    if (live.length === 0) return;
+    const expiresAt = Math.min(...live.map((r) => r.expiresAt));
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > expiresAt) await this.ctx.storage.setAlarm(expiresAt);
   }
 
   /**
@@ -177,7 +271,7 @@ export class Room extends DurableObject<Env> {
     reservations: Reservation[],
   ): { joint: Joint; old?: WebSocket; reservation?: Reservation } | undefined {
     if (clientId === undefined) return undefined;
-    const old = this.openPhones().find((ws) => phoneAttachment(ws).clientId === clientId);
+    const old = this.openPhones().find((ws) => seatedAttachment(ws).clientId === clientId);
     if (old !== undefined) return { joint: phoneJoint(old), old };
     const held = this.phoneJoints();
     const reservation = reservations.find(
@@ -191,6 +285,7 @@ export class Room extends DurableObject<Env> {
       .filter(
         (ws) =>
           !isDeparted(ws) &&
+          !isQueued(ws) &&
           phoneAttachment(ws).clientId === clientId &&
           !held.includes(phoneJoint(ws)) &&
           !reserved.includes(phoneJoint(ws)),
@@ -247,6 +342,38 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  /** 期限内の、参加列の位置の予約。期限を過ぎた予約があれば、ストレージから消す */
+  private async liveQueueReservations(now: number): Promise<QueueReservation[]> {
+    const all = (await this.ctx.storage.get<QueueReservation[]>(QUEUE_RESERVATIONS_KEY)) ?? [];
+    const live = all.filter((r) => now < r.expiresAt);
+    if (live.length !== all.length) await this.saveQueueReservations(live);
+    return live;
+  }
+
+  private async saveQueueReservations(reservations: QueueReservation[]): Promise<void> {
+    if (reservations.length === 0) {
+      await this.ctx.storage.delete(QUEUE_RESERVATIONS_KEY);
+    } else {
+      await this.ctx.storage.put(QUEUE_RESERVATIONS_KEY, reservations);
+    }
+  }
+
+  /**
+   * 参加列に並んでいて切れたスマホの位置を、同じ ID のスマホのために RESERVATION_TTL_MS のあいだとっておく。
+   * 同じ ID の別の接続が開いていれば、とっておかない
+   */
+  private async reserveQueuePosition(ws: WebSocket, clientId: string, queuedAt: number) {
+    const others = this.openSockets(ws, "phone");
+    if (others.some((other) => phoneAttachment(other).clientId === clientId)) return;
+    const now = Date.now();
+    const reservations = (await this.liveQueueReservations(now)).filter(
+      (r) => r.clientId !== clientId,
+    );
+    reservations.push({ clientId, queuedAt, expiresAt: now + RESERVATION_TTL_MS });
+    await this.saveQueueReservations(reservations);
+    this.log({ event: "queue-reserved" });
+  }
+
   /**
    * 切れたスマホの関節を、同じ ID のスマホのために RESERVATION_TTL_MS のあいだとっておく。
    * 同じ ID の別の接続が開いていれば、とっておかない。
@@ -262,6 +389,7 @@ export class Room extends DurableObject<Env> {
     reservations.push({ clientId, joint, expiresAt: now + RESERVATION_TTL_MS });
     await this.saveReservations(reservations);
     this.log({ event: "reserved", joint });
+    await this.scheduleReservationCheck(reservations);
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -282,7 +410,9 @@ export class Room extends DurableObject<Env> {
       }
       return;
     }
-    if (attachment?.role === "phone") {
+    if (attachment?.role === "phone" && attachment.joint === undefined) {
+      await this.receiveFromQueued(ws, message);
+    } else if (attachment?.role === "phone") {
       await this.receiveFromPhone(ws, attachment.joint, message);
     } else if (attachment?.role === "screen") {
       await this.receiveFromScreen(message);
@@ -318,20 +448,31 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  private async leave(ws: WebSocket, joint: Joint): Promise<void> {
-    // あとの切断処理で関節を予約しない
+  /** 参加列に並んでいるスマホから届いたもの。受け付けるのは leave だけで、ほかは捨てる */
+  private async receiveFromQueued(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (parseMessage(PhoneToServerMessage, message)?.type === "leave") {
+      await this.leave(ws, undefined);
+    }
+  }
+
+  /** 抜けるを受け付ける。joint が無いのは、参加列に並んでいたスマホ。列から外し、位置を予約しない */
+  private async leave(ws: WebSocket, joint: Joint | undefined): Promise<void> {
+    // あとの切断処理で関節や列の位置を予約しない
     markDeparted(ws);
-    this.log({ event: "left", joint });
-    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
-    // 閉じかけの接続の関節は、切断を処理する前でも新しいスマホに渡ることがある。そのときは空いていない
-    const vacated = this.phoneJoints(ws).includes(joint) ? undefined : joint;
-    if (roomCode !== undefined) this.broadcastRoom(roomCode, ws, vacated);
+    this.log({ event: "left", ...(joint !== undefined ? { joint } : { queued: true }) });
+    if (joint !== undefined) {
+      const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
+      // 閉じかけの接続の関節は、切断を処理する前でも新しいスマホに渡ることがある。そのときは空いていない
+      const vacated = this.phoneJoints(ws).includes(joint) ? undefined : joint;
+      if (roomCode !== undefined) this.broadcastRoom(roomCode, ws, vacated);
+    }
     send(ws, { type: "left" } satisfies LeftMessage);
     try {
       ws.close(LEFT_CODE, "left");
     } catch {
       /* 閉じかけの接続 */
     }
+    if (joint !== undefined) await this.admitQueuedFromStorage();
     if (this.openSockets(ws).length === 0) await this.scheduleDeletion(Date.now());
   }
 
@@ -357,6 +498,7 @@ export class Room extends DurableObject<Env> {
         }
         this.log({ event: "phase", phase: received.phase });
         this.sendToPhones(received);
+        await this.onPhaseForQueue(received);
         break;
       case "howto":
         void this.ctx.storage.put(HOWTO_KEY, received);
@@ -376,11 +518,31 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  /**
+   * phase が変わったときの参加列。プレイ中でなくなったら、空いた席を前から渡す。
+   * 残ったスマホには、待っている理由（満員かプレイ中か）を送り直す
+   */
+  private async onPhaseForQueue(phase: PhaseMessage): Promise<void> {
+    if (this.queuedPhones().length === 0) return;
+    const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
+    if (roomCode === undefined) return;
+    // 受け取った phase は put を待たずに使う。howto は phase で消したので無い
+    await this.admitQueued(roomCode, phase, undefined, undefined);
+    const message = { type: "queued", reason: queueReason(phase) } satisfies QueuedMessage;
+    for (const ws of this.queuedPhones()) send(ws, message);
+  }
+
   /** 終了を永続化してから通知する。切断の処理で席の予約を作らせない。 */
   private async closeRoom(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
       await this.ctx.storage.put(CLOSED_KEY, true);
-      await this.ctx.storage.delete([PHASE_KEY, HOWTO_KEY, RESERVATIONS_KEY, DELETE_AT_KEY]);
+      await this.ctx.storage.delete([
+        PHASE_KEY,
+        HOWTO_KEY,
+        RESERVATIONS_KEY,
+        QUEUE_RESERVATIONS_KEY,
+        DELETE_AT_KEY,
+      ]);
       await this.ctx.storage.deleteAlarm();
       for (const ws of this.ctx.getWebSockets()) {
         markDeparted(ws);
@@ -421,9 +583,10 @@ export class Room extends DurableObject<Env> {
   }
 
   /**
-   * 1つのアラームで、2つの仕事をする。
+   * 1つのアラームで、3つの仕事をする。
    * 接続があるあいだは、いちばん古い接続が期限を迎える時刻に起きて、切れた接続を閉じる。
    * ハートビートが5秒ごとに届くので、起きるのはおよそ10〜15秒ごと。5秒ごとに調べるより、リクエストと起きている時間が減る。
+   * 参加列に並んでいるスマホがいれば、関節の予約が切れる時刻にも起きて、空いた席を渡す。
    * 誰もいなくなったら、DELETE_AT_KEY の時刻にルームを消す
    */
   override async alarm(): Promise<void> {
@@ -433,8 +596,11 @@ export class Room extends DurableObject<Env> {
     }
     const now = Date.now();
     const nextCheckAt = await this.closeStaleSockets(now);
+    // 関節の予約が切れていれば、参加列のスマホに席を渡す
+    await this.admitQueuedFromStorage();
     if (nextCheckAt !== undefined) {
       await this.ctx.storage.setAlarm(Math.max(nextCheckAt, now + MIN_STALE_CHECK_INTERVAL_MS));
+      await this.scheduleReservationCheck();
       return;
     }
     const deleteAt = await this.ctx.storage.get<number>(DELETE_AT_KEY);
@@ -501,12 +667,18 @@ export class Room extends DurableObject<Env> {
     if (isDeparted(ws)) return false;
     markDeparted(ws);
     const attachment = ws.deserializeAttachment() as Attachment | null;
-    if (attachment?.role === "phone") {
+    if (attachment?.role === "phone" && attachment.joint === undefined) {
+      if (attachment.clientId !== undefined) {
+        await this.reserveQueuePosition(ws, attachment.clientId, attachment.queuedAt);
+      }
+    } else if (attachment?.role === "phone") {
       if (attachment.clientId !== undefined) {
         await this.reserve(ws, attachment.clientId, attachment.joint);
       }
       const roomCode = await this.ctx.storage.get<string>(ROOM_CODE_KEY);
       if (roomCode !== undefined) this.broadcastRoom(roomCode, ws);
+      // ID の無いスマホの関節は、予約せずにすぐ空く
+      await this.admitQueuedFromStorage();
     }
     return true;
   }
@@ -557,10 +729,12 @@ export class Room extends DurableObject<Env> {
   }
 
   /**
+   * 受け付けた接続（acceptWebSocket 済み）に関節を渡す。参加列から席に入るときも使う。
    * 保存済みの phase と howto があれば、joined のあとにこの順で送る。
-   * returning は、予約か置き換えで、同じ ID のスマホに関節を返したとき true
+   * returning は、予約か置き換えで、同じ ID のスマホに関節を返したとき true。
+   * connectedAt を省くと、いまの時刻にする
    */
-  private acceptPhone(
+  private seatPhone(
     ws: WebSocket,
     roomCode: string,
     phase: PhaseMessage | undefined,
@@ -568,14 +742,13 @@ export class Room extends DurableObject<Env> {
     howto: HowtoMessage | undefined,
     joint: Joint,
     clientId: string | undefined,
-    returning: boolean,
+    { returning, connectedAt = Date.now() }: { returning: boolean; connectedAt?: number },
   ): void {
-    this.ctx.acceptWebSocket(ws, ["phone"]);
     ws.serializeAttachment({
       role: "phone",
       joint,
       ...(clientId !== undefined && { clientId }),
-      connectedAt: Date.now(),
+      connectedAt,
     } satisfies Attachment);
     // ID そのものは書かない。付いていたかと、予約か置き換えで関節を取り戻したかだけを書く
     this.log({
@@ -621,11 +794,11 @@ export class Room extends DurableObject<Env> {
     ws.close(CLOSE_REJECTED, reason);
   }
 
-  /** 参加者が変わったことを、スクリーンとすべてのスマホに知らせる */
+  /** 参加者が変わったことを、スクリーンと、関節を持つすべてのスマホに知らせる。参加列のスマホには送らない */
   private broadcastRoom(roomCode: string, closing?: WebSocket, vacated?: Joint): void {
     const message = this.roomMessage(roomCode, closing, vacated);
     for (const ws of this.ctx.getWebSockets()) {
-      if (ws !== closing) send(ws, message);
+      if (ws !== closing && !isQueued(ws)) send(ws, message);
     }
   }
 
@@ -644,9 +817,16 @@ export class Room extends DurableObject<Env> {
     return this.openPhones(closing).map(phoneJoint);
   }
 
-  /** 接続中のスマホ。閉じかけ・閉じた接続と、departed の接続は除く */
+  /** 関節を持つ、接続中のスマホ。閉じかけ・閉じた接続と、departed の接続、参加列のスマホは除く */
   private openPhones(closing?: WebSocket): WebSocket[] {
-    return this.openSockets(closing, "phone");
+    return this.openSockets(closing, "phone").filter((ws) => !isQueued(ws));
+  }
+
+  /** 参加列に並んでいる、接続中のスマホ。前（queuedAt が小さい順）から並べる */
+  private queuedPhones(): WebSocket[] {
+    return this.openSockets(undefined, "phone")
+      .filter(isQueued)
+      .sort((a, b) => queuedAttachment(a).queuedAt - queuedAttachment(b).queuedAt);
   }
 
   /** 接続中のスクリーンとスマホ。閉じかけ・閉じた接続と、departed の接続は除く */
@@ -688,17 +868,38 @@ function phoneAttachment(ws: WebSocket): Attachment & { role: "phone" } {
   return ws.deserializeAttachment() as Attachment & { role: "phone" };
 }
 
+function seatedAttachment(ws: WebSocket): SeatedAttachment {
+  return ws.deserializeAttachment() as SeatedAttachment;
+}
+
+function queuedAttachment(ws: WebSocket): QueuedAttachment {
+  return ws.deserializeAttachment() as QueuedAttachment;
+}
+
+/** 参加列に並んでいるスマホの接続か */
+function isQueued(ws: WebSocket): boolean {
+  const attachment = ws.deserializeAttachment() as Attachment | null;
+  return attachment?.role === "phone" && attachment.joint === undefined;
+}
+
+/** 参加列で待っている理由。プレイ中（カウントダウンを含む）なら playing、それ以外は満員なので full */
+function queueReason(phase: PhaseMessage | undefined): QueuedMessage["reason"] {
+  return phase?.phase === "playing" ? "playing" : "full";
+}
+
 /** ログに書く、接続の役割と関節 */
 function socketFields(ws: WebSocket): { role?: Attachment["role"]; joint?: Joint } {
   const attachment = ws.deserializeAttachment() as Attachment | null;
   if (attachment === null) return {};
-  return attachment.role === "phone"
+  if (attachment.role === "screen") return { role: "screen" };
+  return attachment.joint !== undefined
     ? { role: "phone", joint: attachment.joint }
-    : { role: "screen" };
+    : { role: "phone" };
 }
 
+/** 関節を持つスマホの関節。参加列のスマホには使わない */
 function phoneJoint(ws: WebSocket): Joint {
-  return phoneAttachment(ws).joint;
+  return seatedAttachment(ws).joint;
 }
 
 /** 接続の URL の client。形が合わなければ、付いていないものとして扱う */
