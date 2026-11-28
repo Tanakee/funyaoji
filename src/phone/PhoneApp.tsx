@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef } from "react";
+import { Countdown } from "./Countdown.tsx";
 import { Entry } from "./Entry.tsx";
 import { Lobby } from "./Lobby.tsx";
 import { initialState, reduce, type PhoneState, type RejectReason } from "./model.ts";
@@ -127,7 +128,17 @@ function Body({
             {state.phase.kind === "lobby" ? (
               <Lobby room={room} joint={state.joint} count={state.count} />
             ) : state.phase.kind === "playing" ? (
-              <Playing joint={state.joint} active={state.active} />
+              state.phase.countdown === undefined ? (
+                <Playing joint={state.joint} active={state.active} />
+              ) : (
+                <Countdown
+                  key={state.phase.countdown.endsAt}
+                  countdown={state.phase.countdown}
+                  joint={state.joint}
+                >
+                  <Playing joint={state.joint} active={state.active} />
+                </Countdown>
+              )
             ) : (
               <Result joint={state.joint} result={state.phase.result} />
             )}

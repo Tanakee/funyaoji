@@ -1,14 +1,22 @@
 // スマホのページの状態。React の外に置く、純粋な関数だけ
 import type { ConnectionState, PhoneReceived } from "../net/client.ts";
+import { MAX_DELAY_MS, type CountdownKind } from "../shared/countdown.ts";
 import { isRoomCode, normalizeRoomCode } from "../shared/room.ts";
 import type { Joint, PhaseMessage, PlayResult, RejectedMessage } from "../shared/messages.ts";
 
 export type RejectReason = RejectedMessage["reason"];
 
+export interface PhoneCountdown {
+  kind: CountdownKind;
+  durationMs: number;
+  /** スマホの performance.now() で数えた開始時刻 */
+  endsAt: number;
+}
+
 /** ルームの進行。サーバーが phase を送らないうちは lobby とみなす */
 export type RoomPhase =
   | { kind: "lobby" }
-  | { kind: "playing" }
+  | { kind: "playing"; countdown?: PhoneCountdown }
   | { kind: "result"; result: PlayResult };
 
 /** ページが取りうる状態は、この中のどれか1つだけ */
@@ -58,7 +66,7 @@ export type PhoneEvent =
   | { type: "tilt-check"; supported: boolean }
   /** at は、接続の状態が変わった時刻（ミリ秒） */
   | { type: "connection"; state: ConnectionState; at: number }
-  | { type: "message"; message: PhoneReceived };
+  | { type: "message"; message: PhoneReceived; at: number };
 
 /** サーバーが、同じ ID の新しい接続に置き換えて閉じたときの close コード（docs/api.md） */
 const REPLACED = 4000;
@@ -96,7 +104,7 @@ export function reduce(state: PhoneState, event: PhoneEvent): PhoneState {
     case "connection":
       return onConnection(state, event.state, event.at);
     case "message":
-      return onMessage(state, event.message);
+      return onMessage(state, event.message, event.at);
   }
 }
 
@@ -121,7 +129,7 @@ function onConnection(state: PhoneState, connection: ConnectionState, at: number
   }
 }
 
-function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
+function onMessage(state: PhoneState, message: PhoneReceived, at: number): PhoneState {
   switch (message.type) {
     case "joined":
       if (state.kind === "joined") {
@@ -156,7 +164,7 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
       return state.kind === "joined" ? { ...state, count: message.joints.length } : state;
     case "phase":
       return state.kind === "joined"
-        ? { ...state, phase: toRoomPhase(message), active: false }
+        ? { ...state, phase: toRoomPhase(message, state.joint, at), active: false }
         : state;
     case "status": {
       if (state.kind !== "joined") return state;
@@ -166,12 +174,19 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
   }
 }
 
-function toRoomPhase(message: PhaseMessage): RoomPhase {
+function toRoomPhase(message: PhaseMessage, joint: Joint, at: number): RoomPhase {
   switch (message.phase) {
     case "lobby":
       return { kind: "lobby" };
-    case "playing":
-      return { kind: "playing" };
+    case "playing": {
+      if (message.countdown === undefined) return { kind: "playing" };
+      const { kind, durationMs, remainingMs, delayMs } = message.countdown;
+      const delay = Math.min(MAX_DELAY_MS, Math.max(0, delayMs[joint] ?? 0));
+      const endsAt = at + remainingMs - delay;
+      return endsAt > at
+        ? { kind: "playing", countdown: { kind, durationMs, endsAt } }
+        : { kind: "playing" };
+    }
     case "result":
       return { kind: "result", result: message.result };
   }

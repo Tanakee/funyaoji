@@ -9,6 +9,7 @@ import {
   type ScreenReceived,
   type ScreenSent,
 } from "../../net/client.ts";
+import { COUNTDOWNS, countdownLeadMs, GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import {
   JOINTS,
   type Joint,
@@ -32,8 +33,6 @@ export const ACTIVE_WINDOW_MS = 500;
 const STATUS_INTERVAL_MS = 1_000;
 /** active の集合が変わったかを調べる間隔 */
 const ACTIVE_CHECK_MS = 100;
-/** カウントダウンの1つぶん */
-const COUNT_MS = 1_000;
 /**
  * プレイ中に切れたスマホを待つ時間。サーバーが関節を取っておく60秒と同じ（docs/game.md の「切断と、つなぎ直し」）。
  * サーバーは予約が切れたことを知らせないので、スクリーンが、関節が room から抜けたときから数える
@@ -68,6 +67,8 @@ export interface DebugState {
 export interface ScreenView {
   room: RoomState;
   flow: Flow;
+  /** プレイが始まった直後だけ重ねる合図 */
+  startLabel?: string;
   /** 接続中のスマホの関節（room の joints） */
   joints: readonly Joint[];
   /** 直近 0.5 秒に tilt が届いた関節 */
@@ -127,6 +128,8 @@ export class ScreenSession {
   /** 関節ごとに最後に tilt が届いた時刻（performance.now()） */
   private readonly lastTiltAt = new Map<Joint, number>();
   private countdownTimer: ReturnType<typeof setTimeout> | undefined;
+  /** カウントダウンの最初の表示（「3」「よーい」）を出す時刻（performance.now()） */
+  private countdownStartedAt = 0;
   /**
    * プレイを始めた関節のうち、room から抜けて、つなぎ直しを待っているもの。
    * since は抜けたとき（performance.now()）、timer は RECONNECT_WAIT_MS 後に結果を出す予約
@@ -340,17 +343,38 @@ export class ScreenSession {
 
   /** 4人そろっているときの開始 */
   start(): void {
-    this.operate({ type: "start", joints: this.view.joints, debug: false });
+    this.operate({
+      type: "start",
+      joints: this.view.joints,
+      debug: false,
+      delayMs: this.measuredDelays(),
+    });
   }
 
   /** いるスマホだけで始める。いない関節は、キーボードか画面のつまみで動かす */
   startDebug(): void {
-    this.operate({ type: "start", joints: this.view.joints, debug: true });
+    this.operate({
+      type: "start",
+      joints: this.view.joints,
+      debug: true,
+      delayMs: this.measuredDelays(),
+    });
   }
 
   /** 同じ担当でもう一度。結果の画面からも、動けなくなったプレイ中・カウントダウン中からも */
   restart(): void {
-    this.operate({ type: "restart" });
+    this.operate({ type: "restart", delayMs: this.measuredDelays() });
+  }
+
+  /** 関節ごとの、いま分かっている片道の遅延（整数のミリ秒）。中央値、無ければ直近の値。計測できていない関節は含めない */
+  private measuredDelays(): Partial<Record<Joint, number>> {
+    const delayMs: Partial<Record<Joint, number>> = {};
+    for (const joint of JOINTS) {
+      const latency = this.debug.latency[joint];
+      const delay = latency?.median ?? latency?.latest;
+      if (delay != null) delayMs[joint] = Math.round(delay);
+    }
+    return delayMs;
   }
 
   /** お手本の自動操作を入れる・切る。スマホのいない関節だけが動く */
@@ -419,8 +443,12 @@ export class ScreenSession {
     const prev = this.view.flow;
     const next = reduce(prev, event);
     if (next === prev) return;
-    this.update({ flow: next });
-    this.runEffects(prev, next);
+    const startLabel =
+      prev.kind === "countdown" && next.kind === "playing"
+        ? COUNTDOWNS[prev.countdownKind].startLabel
+        : undefined;
+    this.update({ flow: next, startLabel });
+    this.runEffects(next, event);
     this.syncAbsent();
   }
 
@@ -477,14 +505,14 @@ export class ScreenSession {
     this.dispatch({ type: "ended", result: { outcome: "disconnected", distanceM } });
   }
 
-  /** 遷移（prev → next）に合わせた副作用 */
-  private runEffects(prev: Flow, next: Flow): void {
+  /** 遷移に合わせた副作用 */
+  private runEffects(next: Flow, event: FlowEvent): void {
     this.audio.setPlaying(next.kind === "playing");
     switch (next.kind) {
       case "countdown":
-        this.audio.play("countdown");
-        // 始まりは、ロビー・結果・やり直し（count が 3 に戻る）。tick は 2・1 にしか進まない
-        if (prev.kind !== "countdown" || next.count === 3) {
+        // 最初の表示の前（遅いスマホに届くのを待つあいだ）は鳴らさない
+        if (next.step.label !== "") this.audio.play("countdown");
+        if (event.type === "start" || event.type === "restart") {
           // 始めに phase を送り、スマホの画面を切り替えて、途中参加を断る
           // 前の走りのキーボードの入力を持ち越さない。スマホの関節は、次の tilt で上書きされる
           clearTimeout(this.countdownTimer);
@@ -494,16 +522,32 @@ export class ScreenSession {
           // 前の走りで離したキーの戻りも持ち越さない。押したままのキーは、次のフレームからまた効く
           this.keyboard?.reset();
           this.game?.reset();
-          this.send({ type: "phase", phase: "playing", mode: "10m" });
+          const kind = next.countdownKind;
+          const { durationMs } = COUNTDOWNS[kind];
+          const delayMs = event.delayMs ?? {};
+          // いちばん遅いスマホに phase が届くまで、最初の表示を待つ。スマホは遅延を引くので、同じ時に出る
+          const leadMs = countdownLeadMs(delayMs);
+          this.countdownStartedAt = performance.now() + leadMs;
+          this.send({
+            type: "phase",
+            phase: "playing",
+            mode: "10m",
+            countdown: { kind, durationMs, remainingMs: leadMs + durationMs, delayMs },
+          });
+          this.scheduleCountdown();
         }
-        this.countdownTimer = setTimeout(() => this.dispatch({ type: "tick" }), COUNT_MS);
         break;
       case "playing":
         this.audio.play("start");
         this.playStartedAt = performance.now();
+        this.countdownTimer = setTimeout(
+          () => this.update({ startLabel: undefined }),
+          GO_DISPLAY_MS,
+        );
         this.game?.start();
         break;
       case "result":
+        clearTimeout(this.countdownTimer);
         if (next.result.outcome === "goal" || next.result.outcome === "fell") {
           this.audio.play(next.result.outcome);
         }
@@ -517,6 +561,21 @@ export class ScreenSession {
         this.send({ type: "phase", phase: "lobby" });
         break;
     }
+  }
+
+  private scheduleCountdown(): void {
+    const { flow } = this.view;
+    if (flow.kind !== "countdown") return;
+    const untilMs = flow.step.untilMs ?? COUNTDOWNS[flow.countdownKind].durationMs;
+    // タイマーが遅れても、次の表示は最初の表示の時刻から数える
+    const delay = Math.ceil(this.countdownStartedAt + untilMs - performance.now());
+    this.countdownTimer = setTimeout(
+      () => {
+        this.dispatch({ type: "tick", elapsedMs: performance.now() - this.countdownStartedAt });
+        this.scheduleCountdown();
+      },
+      Math.max(0, delay),
+    );
   }
 
   // 入力の状態。変わったとき、または1秒に1回、status を送る

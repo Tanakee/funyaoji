@@ -1,4 +1,10 @@
 // スクリーンの進行（docs/game.md の「状態の遷移」）。副作用の無い遷移だけをここに置く
+import {
+  COUNTDOWNS,
+  countdownLeadMs,
+  countdownStep,
+  type CountdownKind,
+} from "../../shared/countdown.ts";
 import { JOINTS, type Joint, type PlayResult } from "../../shared/messages.ts";
 
 /**
@@ -7,17 +13,30 @@ import { JOINTS, type Joint, type PlayResult } from "../../shared/messages.ts";
  */
 export type Flow =
   | { kind: "lobby" }
-  | { kind: "countdown"; count: 3 | 2 | 1; players: readonly Joint[] }
+  | {
+      kind: "countdown";
+      countdownKind: CountdownKind;
+      step: ReturnType<typeof countdownStep>;
+      players: readonly Joint[];
+    }
   | { kind: "playing"; players: readonly Joint[] }
   | { kind: "result"; result: PlayResult; players: readonly Joint[] };
 
 export type FlowEvent =
-  /** 開始のキー。debug はスマホが4台そろっていなくても始める */
-  | { type: "start"; joints: readonly Joint[]; debug: boolean }
+  /**
+   * 開始のキー。debug はスマホが4台そろっていなくても始める。
+   * delayMs は関節ごとの片道の遅延。いちばん遅いスマホのぶん、最初の表示を待つ（countdownLeadMs）
+   */
+  | {
+      type: "start";
+      joints: readonly Joint[];
+      debug: boolean;
+      delayMs?: Partial<Record<Joint, number>>;
+    }
   /** やり直しのキー。結果・プレイ中・カウントダウン中のどこからでも、同じ players で始める */
-  | { type: "restart" }
-  /** カウントダウンが1秒進んだ */
-  | { type: "tick" }
+  | { type: "restart"; delayMs?: Partial<Record<Joint, number>> }
+  /** カウントダウンのタイマーが動いた。elapsedMs は最初の表示からの経過時間。その前は負 */
+  | { type: "tick"; elapsedMs: number }
   /** 終わった。ゴール・転倒はゲームが、切断はスクリーンが決める */
   | { type: "ended"; result: PlayResult }
   /** room が変わった。joints は接続中のスマホの関節 */
@@ -37,14 +56,28 @@ export function reduce(flow: Flow, event: FlowEvent): Flow {
     case "start":
       if (flow.kind !== "lobby") return flow;
       if (!event.debug && !isFull(event.joints)) return flow;
-      return { kind: "countdown", count: 3, players: event.joints };
+      return {
+        kind: "countdown",
+        countdownKind: "count",
+        step: countdownStep("count", -countdownLeadMs(event.delayMs ?? {})),
+        players: event.joints,
+      };
     case "restart":
       if (flow.kind === "lobby") return flow;
-      return { kind: "countdown", count: 3, players: flow.players };
-    case "tick":
+      return {
+        kind: "countdown",
+        countdownKind: "readyGo",
+        step: countdownStep("readyGo", -countdownLeadMs(event.delayMs ?? {})),
+        players: flow.players,
+      };
+    case "tick": {
       if (flow.kind !== "countdown") return flow;
-      if (flow.count === 1) return { kind: "playing", players: flow.players };
-      return { ...flow, count: flow.count === 3 ? 2 : 1 };
+      if (event.elapsedMs >= COUNTDOWNS[flow.countdownKind].durationMs) {
+        return { kind: "playing", players: flow.players };
+      }
+      const step = countdownStep(flow.countdownKind, event.elapsedMs);
+      return step === flow.step ? flow : { ...flow, step };
+    }
     case "ended":
       if (flow.kind !== "playing") return flow;
       return { kind: "result", result: event.result, players: flow.players };
