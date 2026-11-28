@@ -24,6 +24,7 @@ import {
   type ShapeSpec,
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
+import { createHowtoLabels } from "./howto-labels.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
 import { bottomRightControlsLeft, SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
@@ -104,7 +105,7 @@ async function loadViewFonts(): Promise<boolean> {
     const faces = await Promise.all([
       document.fonts.load('900 64px "Zen Old Mincho"', "0123456789.m秒"),
       document.fonts.load('700 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
-      document.fonts.load('900 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
+      document.fonts.load('900 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざももOK!"),
     ]);
     return faces.every((face) => face.length > 0);
   } catch {
@@ -382,6 +383,9 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   const markers = new Container();
   const tags = new Container();
   seatLayer.addChild(strings, markers, tags);
+  const howtoLabels = createHowtoLabels(seatLayer, COLORS, (text, color) =>
+    label(text, 20, color, true),
+  );
   const tiltGlow = new TiltGlow();
   const seatCaption = (text: string) => {
     const caption = label(text, 20, COLORS.seatText, true);
@@ -500,6 +504,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       graphics.captions.addChild(graphics.detail);
     });
     if (currentSeats) setSeats(currentSeats);
+    howtoLabels.rebuildTexts();
   }
   if (fontState === "timeout") {
     void fontsLoaded.then((loaded) => {
@@ -561,6 +566,16 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       const pose = state.poses[anchor.part];
       const input = seat.kind === "joined" ? inputs[joint] : undefined;
       const glow = tiltGlow.update(joint, input, dtSec);
+      howtoLabels.update(
+        joint,
+        currentSeats?.[joint],
+        {
+          x: (screenX(pose.x) - seatLayer.x) / ui,
+          y: (groundY - pose.y * pxPerM) / ui,
+        },
+        glow,
+        dtSec,
+      );
       partGlow.position.set(pose.x, pose.y);
       partGlow.rotation = pose.rot;
       partGlow.visible = glow > 0;
@@ -576,6 +591,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       drawString(line, cx, x, y, color, glowColor, stringLook(input ?? 0), glow);
       marker.position.set(x, y);
     });
+    howtoLabels.finishFrame();
 
     // 1m ごとの杭は backdrop が描く。数字はプレイ中だけ、紙色の下地を敷いて出す
     ruler.clear();
@@ -661,6 +677,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     destroy() {
       observer.disconnect();
       backdrop.destroy();
+      howtoLabels.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };

@@ -11,13 +11,49 @@ function run(events: FlowEvent[], from: Flow = INITIAL_FLOW): Flow {
 }
 
 describe("reduce", () => {
-  it("4台そろえば、スペースで開始できる", () => {
+  it("4台そろえば、遊び方に入る", () => {
     expect(run([{ type: "start", joints: all, debug: false }])).toEqual({
+      kind: "howto",
+      ready: [],
+    });
+  });
+
+  it("遊び方で4台そろえば、その時点の担当と遅延でカウントダウンに進める", () => {
+    const flow: Flow = { kind: "howto", ready: [] };
+    expect(run([{ type: "begin", joints: ["leftHip"] }], flow)).toBe(flow);
+    expect(run([{ type: "begin", joints: all }], flow)).toEqual({
       kind: "countdown",
       countdownKind: "count",
       step: { label: "3", untilMs: 1_000 },
       players: all,
     });
+    expect(run([{ type: "begin", joints: all, delayMs: { rightHip: 200 } }], flow)).toMatchObject({
+      step: { label: "", untilMs: 0 },
+    });
+  });
+
+  it("遊び方の準備OKは重複せず、サーバーの一覧で置き換える", () => {
+    const flow = run([
+      { type: "start", joints: all, debug: false },
+      { type: "ready", joint: "leftKnee" },
+    ]);
+    expect(run([{ type: "ready", joint: "leftKnee" }], flow)).toBe(flow);
+    expect(run([{ type: "howto", ready: ["rightKnee"] }], flow)).toEqual({
+      kind: "howto",
+      ready: ["rightKnee"],
+    });
+    expect(run([{ type: "restart" }, { type: "room", joints: [] }], flow)).toBe(flow);
+    expect(run([{ type: "toLobby" }], flow)).toBe(INITIAL_FLOW);
+  });
+
+  it("遊び方の外で ready、howto、begin を無視する", () => {
+    expect(
+      run([
+        { type: "ready", joint: "leftKnee" },
+        { type: "howto", ready: ["leftKnee"] },
+        { type: "begin", joints: all },
+      ]),
+    ).toBe(INITIAL_FLOW);
   });
 
   it("4台そろっていないと、通常の開始はできない。デバッグの開始はできる", () => {
@@ -30,6 +66,7 @@ describe("reduce", () => {
   it("3・2・1 のあとプレイになり、ゴールで結果になる", () => {
     const flow = run([
       { type: "start", joints: all, debug: false },
+      { type: "begin", joints: all },
       { type: "tick", elapsedMs: 1_000 },
       { type: "tick", elapsedMs: 2_000 },
     ]);

@@ -13,6 +13,7 @@ import { JOINTS, type Joint, type PlayResult } from "../../shared/messages.ts";
  */
 export type Flow =
   | { kind: "lobby" }
+  | { kind: "howto"; ready: readonly Joint[] }
   | {
       kind: "countdown";
       countdownKind: CountdownKind;
@@ -35,6 +36,9 @@ export type FlowEvent =
       debug: boolean;
       delayMs?: Partial<Record<Joint, number>>;
     }
+  | { type: "ready"; joint: Joint }
+  | { type: "howto"; ready: readonly Joint[] }
+  | { type: "begin"; joints: readonly Joint[]; delayMs?: Partial<Record<Joint, number>> }
   /** やり直しのキー。結果・プレイ中・カウントダウン中のどこからでも、同じ players で始める */
   | { type: "restart"; delayMs?: Partial<Record<Joint, number>> }
   /** カウントダウンのタイマーが動いた。elapsedMs は最初の表示からの経過時間。その前は負 */
@@ -55,19 +59,34 @@ export function isFull(joints: readonly Joint[]): boolean {
   return JOINTS.every((joint) => joints.includes(joint));
 }
 
+function firstCountdown(
+  joints: readonly Joint[],
+  delayMs: Partial<Record<Joint, number>> = {},
+): Flow {
+  return {
+    kind: "countdown",
+    countdownKind: "count",
+    step: countdownStep("count", -countdownLeadMs(delayMs)),
+    players: joints,
+  };
+}
+
 export function reduce(flow: Flow, event: FlowEvent): Flow {
   switch (event.type) {
     case "start":
       if (flow.kind !== "lobby") return flow;
-      if (!event.debug && !isFull(event.joints)) return flow;
-      return {
-        kind: "countdown",
-        countdownKind: "count",
-        step: countdownStep("count", -countdownLeadMs(event.delayMs ?? {})),
-        players: event.joints,
-      };
+      if (event.debug) return firstCountdown(event.joints, event.delayMs);
+      return isFull(event.joints) ? { kind: "howto", ready: [] } : flow;
+    case "ready":
+      if (flow.kind !== "howto" || flow.ready.includes(event.joint)) return flow;
+      return { kind: "howto", ready: [...flow.ready, event.joint] };
+    case "howto":
+      return flow.kind === "howto" ? { kind: "howto", ready: event.ready } : flow;
+    case "begin":
+      if (flow.kind !== "howto" || !isFull(event.joints)) return flow;
+      return firstCountdown(event.joints, event.delayMs);
     case "restart":
-      if (flow.kind === "lobby" || flow.kind === "finish") return flow;
+      if (flow.kind === "lobby" || flow.kind === "howto" || flow.kind === "finish") return flow;
       return {
         kind: "countdown",
         countdownKind: "readyGo",

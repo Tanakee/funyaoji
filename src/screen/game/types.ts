@@ -20,8 +20,12 @@ export type SeatState =
 
 export interface SeatView {
   state: SeatState;
-  /** 札の近くに部位の名前を出す（ロビー） */
+  /** 札の近くに部位の名前を出す（ロビーと遊び方） */
   showName: boolean;
+  /** 遊び方で準備OKになった部位に OK! を出す */
+  ready: boolean;
+  /** 遊び方で動かした部位の横に名前を出す */
+  moveName: boolean;
   /** キーボードで動かしているときの、キーの表示 */
   key?: string;
 }
