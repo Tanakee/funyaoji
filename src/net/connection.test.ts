@@ -142,3 +142,17 @@ test("ハートビートの返事もほかのメッセージも10秒届かなけ
   expect(opened).toHaveLength(2);
   connection.close();
 });
+
+test("ルーム終了の通知だけでも全タイマーを止め、通知が欠けても4003で再接続をやめる", () => {
+  for (const notification of [true, false]) {
+    const { connection, opened, received } = connectFake();
+    opened[0]!.handlers.onOpen();
+    if (notification) opened[0]!.handlers.onMessage(JSON.stringify({ type: "room-closed" }));
+    else opened[0]!.handlers.onClose({ code: 4003, reason: "room-closed" });
+    expect(connection.state).toEqual({ status: "closed", code: 4003, reason: "room-closed" });
+    if (notification) expect(received).toEqual([{ type: "room-closed" }]);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(opened).toHaveLength(1);
+  }
+});

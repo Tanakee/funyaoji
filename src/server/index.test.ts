@@ -445,3 +445,25 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     });
   });
 });
+
+test("スクリーンがルームを閉じると全員に終了が届き、旧コードではスクリーンもスマホも入れない", async () => {
+  const roomCode = await createRoom();
+  const { screen, phones } = await fillRoom(roomCode, ["reset-test-a", "reset-test-b"]);
+  // スマホから同じ命令を送っても、ルームは閉じられない。
+  await phones[0]!.send(JSON.stringify({ type: "close-room" }));
+  await phones[0]!.send(JSON.stringify({ type: "tilt", seq: 1, angle: 30 }));
+  expect(await screen.next()).toEqual({ type: "tilt", seq: 1, angle: 30, joint: "rightHip" });
+
+  await screen.send(JSON.stringify({ type: "close-room" }));
+  expect(await screen.next()).toEqual({ type: "room-closed" });
+  for (const phone of phones) {
+    let received = await phone.next();
+    while ((received as { type: string }).type === "room") received = await phone.next();
+    expect(received).toEqual({ type: "room-closed" });
+  }
+  // 同じ ID で戻ろうとしても、参加者のいない閉じたルームでも、復活しない。
+  for (const role of ["screen", "phone"]) {
+    const returning = new Client(roomCode, role, "reset-test-a");
+    expect(await returning.next()).toEqual({ type: "rejected", reason: "no-room" });
+  }
+});

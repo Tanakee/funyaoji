@@ -103,8 +103,15 @@ export const HEARTBEAT = JSON.stringify({ type: "heartbeat" } satisfies Heartbea
 /** スマホとスクリーンがハートビートを送る間隔 */
 export const HEARTBEAT_INTERVAL_MS = 5_000;
 
+/** 運営がルームを閉じる。room-closed は終了の通知と、スクリーンへの受け付けの返事。 */
+export const CloseRoomMessage = v.object({ type: v.literal("close-room") });
+export const RoomClosedMessage = v.object({ type: v.literal("room-closed") });
+/** このコードでも終了が分かるようにし、通知を受け取れなくても再接続しない。 */
+export const ROOM_CLOSED_CODE = 4003;
+
 export const ServerToPhoneMessage = v.variant("type", [
   JoinedMessage,
+  RoomClosedMessage,
   RejectedMessage,
   RoomMessage,
   PhaseMessage,
@@ -117,6 +124,7 @@ export type ServerToPhoneMessage = v.InferOutput<typeof ServerToPhoneMessage>;
 // スクリーンも、ルームが無いときは rejected（no-room）を受け取る。
 // 接続したときは、サーバーが保持している最後の phase を受け取る
 export const ServerToScreenMessage = v.variant("type", [
+  RoomClosedMessage,
   RejectedMessage,
   RoomMessage,
   PhaseMessage,
@@ -138,6 +146,7 @@ export const PhoneToServerMessage = v.variant("type", [
 export type PhoneToServerMessage = v.InferOutput<typeof PhoneToServerMessage>;
 
 export const ScreenToServerMessage = v.variant("type", [
+  CloseRoomMessage,
   PhaseMessage,
   StatusMessage,
   PingMessage,

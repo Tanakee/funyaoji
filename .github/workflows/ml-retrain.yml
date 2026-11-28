@@ -1,0 +1,238 @@
+# 物理が変わったら、理論値の記録を作り直して PR を出す（docs/ml.md の「物理の変更から記録の差し替えまでを自動にする」）。
+# 1. fingerprint：物理に関わるファイルが変わった PR で、マージした結果（github.sha）の物理で theory.json を確かめる
+#    （物理の指紋が同じか、再生して同じタイムでゴールするか）。読むだけ
+# 2. retrain：使えなければ、同じマージした結果で学習の流れ（ml/funyaoji_rl/pipeline.py）を流し、
+#    新しい theory.json で再生が一致するかを確かめる。読むだけの権限で動かす
+# 3. publish：新しい theory.json を、元の PR のブランチから切ったブランチにコミットし、元の PR のブランチに向けて PR を出す。
+#    書き込みの権限を持つので、PR のコード（npm・uv・学習）は動かさない
+# 4. 人が動画（このワークフローの成果物）を見て、マージする
+name: 理論値の記録の作り直し
+
+on:
+  pull_request:
+    paths:
+      - "src/screen/game/**"
+      - "src/shared/messages.ts"
+      - "scripts/rl/**"
+      - "package-lock.json"
+      - ".github/workflows/ml-retrain.yml"
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: "③ の学習のステップ数"
+        default: "20000000"
+      force:
+        description: "記録が今の物理で使えても、学習し直す"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  RETRAIN_BRANCH: chore/retrain-${{ github.event.pull_request.number || github.run_id }}
+
+# ワークフロー全体の concurrency は付けない。付けると、PR を直すたびに数時間の学習も止まる。ジョブごとに付ける
+jobs:
+  fingerprint:
+    name: 物理の指紋を比べる
+    # フォークからの PR は、書き込みの権限が無いので流さない
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # 同じ物理の学習が、別の実行で進んでいるかを見る
+    concurrency:
+      group: ml-retrain-fingerprint-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: true
+    outputs:
+      fingerprint: ${{ steps.fp.outputs.fingerprint }}
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      # ref を指定しない：pull_request ではマージした結果（github.sha）、手で流したときは選んだブランチ
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: 理論値の記録が今の物理で使えるかを確かめる
+        id: fp
+        run: node scripts/rl/fingerprint.ts --github-output
+
+      - name: 学習し直すかを決める
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGED: ${{ steps.fp.outputs.changed }}
+          FP: ${{ steps.fp.outputs.fingerprint }}
+          # pull_request では inputs が空なので false になる
+          FORCE: ${{ inputs.force == true }}
+          REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          run=false
+          if [ "$FORCE" = "true" ]; then
+            echo "force の指定があるので、学習し直す"
+            run=true
+          elif [ "$CHANGED" = "true" ]; then
+            run=true
+            # 同じ物理の学習（か PR を出すところ）が、別の実行で進んでいれば、それに任せる。
+            # 物理が違うときは、下の retrain の concurrency が、前の学習を止める
+            for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ml-retrain.yml/runs?branch=$REF&status=in_progress" \
+                --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id"); do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
+                  --jq '.jobs[] | select(.status != "completed") | .name' | grep -qF "（$FP）"; then
+                echo "::notice::同じ物理（$FP）の学習が、別の実行（$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id）で進んでいるので、そちらに任せる"
+                run=false
+              fi
+            done
+            # 前に出した PR の記録が、今の物理で使えるなら、学習し直さずに、その PR をマージすればよい
+            if [ "$run" = true ] && git fetch --depth=1 origin "$RETRAIN_BRANCH" 2>/dev/null; then
+              git show FETCH_HEAD:src/screen/game/ai/theory.json > "$RUNNER_TEMP/retrained.json"
+              if node scripts/rl/fingerprint.ts --theory "$RUNNER_TEMP/retrained.json" --expect-unchanged; then
+                echo "::notice::$RETRAIN_BRANCH の記録が今の物理で使えるので、学習し直さない。その PR をマージする"
+                run=false
+              fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  retrain:
+    # 名前に物理の指紋を入れる。fingerprint の「同じ物理の学習が進んでいるか」は、これを見る
+    name: 学習し直す（${{ needs.fingerprint.outputs.fingerprint }}）
+    needs: fingerprint
+    if: needs.fingerprint.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: read
+    # 同じ PR の学習は1つだけ。新しく始まるのは、物理が違うときだけ（同じなら fingerprint で run=false になる）なので、前のものを止める。
+    # 飛ばしたジョブが前の学習を止めないように、飛ばすときは別のグループにする
+    concurrency:
+      group: ${{ needs.fingerprint.outputs.run == 'true' && format('ml-retrain-train-{0}-{1}', github.event.pull_request.head.repo.full_name || github.repository, github.head_ref || github.ref_name) || format('ml-retrain-skip-{0}', github.run_id) }}
+      cancel-in-progress: true
+    env:
+      STEPS: ${{ inputs.steps || '20000000' }}
+    steps:
+      # fingerprint と同じく、マージした結果で学習する。書き込みの認証情報は残さない
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 依存を入れる
+        run: npm ci
+
+      - name: 動画の日本語のフォントを入れる
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Python の依存を入れる
+        working-directory: ml
+        run: uv sync
+
+      - name: 学習し直して、記録を作り直す
+        working-directory: ml
+        run: uv run python -m funyaoji_rl.pipeline --steps "$STEPS"
+
+      # ワークフローが出した PR では CI が自動で流れないので、ここで確かめてから出す
+      - name: 新しい記録で、再生が一致するかを確かめる
+        run: |
+          npx vp test run src/screen/game/ai/theory.test.ts
+          node scripts/rl/fingerprint.ts --expect-unchanged
+
+      - name: 新しい記録と、その動画を残す
+        uses: actions/upload-artifact@v4
+        with:
+          name: theory-${{ github.run_id }}
+          path: |
+            src/screen/game/ai/theory.json
+            ml/runs/theory-export/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 学習の記録と動画を残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-retrain-${{ github.run_id }}
+          path: |
+            ml/mlflow.db
+            ml/mlartifacts/
+            ml/runs/**/*.gif
+            ml/runs/**/*.mp4
+            ml/runs/**/*.json
+          retention-days: 30
+
+  publish:
+    name: PR を出す（${{ needs.fingerprint.outputs.fingerprint }}）
+    needs: [fingerprint, retrain]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: ml-retrain-publish-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+      cancel-in-progress: false
+    env:
+      BASE_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      # 元の PR のブランチから切る。このジョブでは PR のコードを動かさない（npm・uv・node scripts は使わない）
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: theory-${{ github.run_id }}
+          path: ${{ runner.temp }}/theory
+
+      - name: 新しい記録の PR を出す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$RETRAIN_BRANCH"
+          cp "$RUNNER_TEMP/theory/src/screen/game/ai/theory.json" src/screen/game/ai/theory.json
+          git add src/screen/game/ai/theory.json
+          if git diff --cached --quiet; then
+            echo "::notice::新しい記録が $BASE_BRANCH のものと同じなので、PR は出さない"
+            exit 0
+          fi
+          TIME=$(jq -r '.timeMs / 1000' src/screen/game/ai/theory.json)
+          FP=$(jq -r '.physicsFingerprint' src/screen/game/ai/theory.json)
+          git commit -m "chore: 物理の変更に合わせて、理論値の記録を作り直す（${TIME} 秒）"
+          git push --force origin "$RETRAIN_BRANCH"
+
+          SOURCE="#${SOURCE_PR}"
+          [ -n "$SOURCE_PR" ] || SOURCE="なし（$BASE_BRANCH で手で流した）"
+          TITLE="chore: 物理の変更に合わせて、理論値の記録を作り直す"
+          BODY=$(printf '%s\n' \
+            "物理が変わって前の記録が使えなくなったので、学習し直して \`src/screen/game/ai/theory.json\` を作り直した（docs/ml.md の「物理の変更から記録の差し替えまでを自動にする」）。" \
+            "" \
+            "- 元の PR：${SOURCE}" \
+            "- 新しい理論値：${TIME} 秒（物理の指紋 \`${FP}\`）" \
+            "- 書き出した記録の動画：${RUN_URL} の成果物 \`theory-${GITHUB_RUN_ID}\`。マージする前に、動画で走りを見る" \
+            "- 学習の記録：同じ実行の成果物 \`ml-retrain-${GITHUB_RUN_ID}\`" \
+            "- 再生が一致すること（\`theory.test.ts\`・\`fingerprint.ts\`）は、学習したジョブで確かめた" \
+            "- このワークフローが出した PR では CI が自動で流れないので、必要なら閉じて開き直す")
+
+          PR=$(gh pr list --head "$RETRAIN_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --title "$TITLE" --body "$BODY"
+            echo "PR #$PR を更新した"
+          elif ! gh pr create --base "$BASE_BRANCH" --head "$RETRAIN_BRANCH" --title "$TITLE" --body "$BODY"; then
+            echo "::error::PR を作れなかった。リポジトリの設定（Settings → Actions → General）の「Allow GitHub Actions to create and approve pull requests」が要る。ブランチ $RETRAIN_BRANCH は push したので、手で PR を作る：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE_BRANCH...$RETRAIN_BRANCH?expand=1"
+            exit 1
+          fi
