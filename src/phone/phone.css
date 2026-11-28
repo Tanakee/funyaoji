@@ -137,8 +137,8 @@ body {
   text-align: left;
 }
 
-.big-button {
-  min-height: 72px;
+.big-button,
+.phone-button {
   width: 100%;
   border: 0;
   border-radius: 14px;
@@ -149,10 +149,19 @@ body {
   font-weight: 900;
 }
 
+.big-button {
+  min-height: 72px;
+}
+
 .big-button:active,
-.big-button:disabled {
+.big-button:disabled,
+.phone-button:enabled:active {
   background: var(--figure-line);
   transform: translateY(2px);
+}
+
+.phone-button:disabled {
+  background: var(--figure-line);
 }
 
 /* 待つ型とお知らせ型の絵。灰色の形だけ（おじさんの絵ができるまで） */
@@ -488,7 +497,7 @@ body {
   font-weight: 700;
 }
 
-.start-slot {
+.start-button {
   flex: 0 0 64px;
 }
 
@@ -593,7 +602,19 @@ body {
   font-size: 24px;
 }
 
-.retry-slot {
+.retry-actions {
   flex: 0 0 72px;
   margin-top: auto;
+}
+
+.retry-button {
+  height: 56px;
+}
+
+.retry-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 16px;
+  text-align: center;
 }

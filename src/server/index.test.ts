@@ -286,6 +286,36 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     await closeAll([screen, ...phones]);
   });
 
+  test.each(["start", "retry"])(
+    "スマホの %s は担当の関節を付けてスクリーンに送る",
+    async (type) => {
+      const roomCode = await createRoom();
+      const { screen, phones } = await fillRoom(roomCode);
+      await phones[0]!.send(JSON.stringify({ type }));
+      expect(await screen.next()).toEqual({ type, joint: "rightHip" });
+      await phones[2]!.send(JSON.stringify({ type, joint: "leftHip" }));
+      expect(await screen.next()).toEqual({ type, joint: "rightKnee" });
+      await closeAll([screen, ...phones]);
+    },
+  );
+
+  test("スクリーンが送った start と retry は捨てる", async () => {
+    const roomCode = await createRoom();
+    const { screen, phones } = await fillRoom(roomCode);
+    const phone = phones[3]!;
+    await phone.next(); // room
+    await screen.send(JSON.stringify({ type: "start", joint: "leftKnee" }));
+    await screen.send(JSON.stringify({ type: "retry", joint: "leftKnee" }));
+    const status = { type: "status", active: [] };
+    await screen.send(JSON.stringify(status));
+    expect(await phone.next()).toEqual(status);
+    // status を受け取ったあとに送った tilt だけがスクリーンに届く
+    const tilt = { type: "tilt", seq: 1, angle: 0 };
+    await phone.send(JSON.stringify(tilt));
+    expect(await screen.next()).toEqual({ ...tilt, joint: "leftKnee" });
+    await closeAll([screen, ...phones]);
+  });
+
   test("スマホが切れると関節を空け、room を送り直す。次のスマホは空いた関節に入る", async () => {
     const roomCode = await createRoom();
     const { screen, phones } = await fillRoom(roomCode);

@@ -273,6 +273,10 @@ export class Room extends DurableObject<Env> {
       case "pong":
         this.sendToScreens({ ...received, joint } satisfies RelayedPongMessage);
         break;
+      case "start":
+      case "retry":
+        this.sendToScreens({ type: received.type, joint });
+        break;
       case "heartbeat":
         // HEARTBEAT と1文字でも違う形はランタイムが返さず、ここに届く。受信した時刻は上で記録した
         break;

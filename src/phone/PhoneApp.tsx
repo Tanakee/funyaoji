@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { Countdown } from "./Countdown.tsx";
 import { Entry } from "./Entry.tsx";
 import { JointBand } from "./JointBand.tsx";
@@ -54,10 +54,17 @@ const CLOSED: Record<"replaced" | "lost", NoticeText> = {
 
 export function PhoneApp({ room }: { room: string | undefined }) {
   const [state, dispatch] = useReducer(reduce, room, initialState);
-  const stopSession = useRef<(() => void) | undefined>(undefined);
+  const session = useRef<ReturnType<typeof startSession> | undefined>(undefined);
 
   // ページを閉じるとき（と開発中の再読み込み）に、接続を閉じる
-  useEffect(() => () => stopSession.current?.(), []);
+  useEffect(() => () => session.current?.stop(), []);
+
+  const start = useCallback(() => {
+    session.current?.send({ type: "start" });
+  }, []);
+  const retry = useCallback(() => {
+    session.current?.send({ type: "retry" });
+  }, []);
 
   const join = async () => {
     if (room === undefined) return;
@@ -70,8 +77,8 @@ export function PhoneApp({ room }: { room: string | undefined }) {
     const supported = await waitForTilt();
     dispatch({ type: "tilt-check", supported });
     if (!supported) return;
-    stopSession.current?.();
-    stopSession.current = startSession(room, dispatch);
+    session.current?.stop();
+    session.current = startSession(room, dispatch);
   };
 
   return (
@@ -82,7 +89,7 @@ export function PhoneApp({ room }: { room: string | undefined }) {
           {room !== undefined ? <span className="room">ルームコード {room}</span> : null}
         </header>
       ) : null}
-      <Body state={state} room={room} onJoin={join} />
+      <Body state={state} room={room} onJoin={join} onStart={start} onRetry={retry} />
     </main>
   );
 }
@@ -91,10 +98,14 @@ function Body({
   state,
   room,
   onJoin,
+  onStart,
+  onRetry,
 }: {
   state: PhoneState;
   room: string | undefined;
   onJoin: () => void;
+  onStart: () => void;
+  onRetry: () => void;
 }) {
   switch (state.kind) {
     case "invalid-room":
@@ -138,7 +149,7 @@ function Body({
         <>
           <div className="joined" inert={state.reconnectingSince !== undefined}>
             {state.phase.kind === "lobby" ? (
-              <Lobby room={room} joint={state.joint} count={state.count} />
+              <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
             ) : state.phase.kind === "playing" ? (
               state.phase.countdown === undefined ? (
                 <Playing joint={state.joint} active={state.active} />
@@ -152,7 +163,12 @@ function Body({
                 </Countdown>
               )
             ) : (
-              <Result joint={state.joint} result={state.phase.result} />
+              <Result
+                joint={state.joint}
+                result={state.phase.result}
+                count={state.count}
+                onRetry={onRetry}
+              />
             )}
           </div>
           {state.reconnectingSince !== undefined ? (

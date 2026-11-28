@@ -96,6 +96,18 @@ export type PongMessage = v.InferOutput<typeof PongMessage>;
 export const RelayedPongMessage = v.object({ ...PongMessage.entries, joint: Joint });
 export type RelayedPongMessage = v.InferOutput<typeof RelayedPongMessage>;
 
+export const StartMessage = v.object({ type: v.literal("start") });
+export type StartMessage = v.InferOutput<typeof StartMessage>;
+
+export const RetryMessage = v.object({ type: v.literal("retry") });
+export type RetryMessage = v.InferOutput<typeof RetryMessage>;
+
+export const RelayedStartMessage = v.object({ ...StartMessage.entries, joint: Joint });
+export type RelayedStartMessage = v.InferOutput<typeof RelayedStartMessage>;
+
+export const RelayedRetryMessage = v.object({ ...RetryMessage.entries, joint: Joint });
+export type RelayedRetryMessage = v.InferOutput<typeof RelayedRetryMessage>;
+
 // 接続が生きていることを知らせる。サーバーは中継せず、同じ文字列をそのまま返す
 export const HeartbeatMessage = v.object({ type: v.literal("heartbeat") });
 export type HeartbeatMessage = v.InferOutput<typeof HeartbeatMessage>;
@@ -132,11 +144,19 @@ export const ServerToScreenMessage = v.variant("type", [
   PhaseMessage,
   RelayedTiltMessage,
   RelayedPongMessage,
+  RelayedStartMessage,
+  RelayedRetryMessage,
   HeartbeatMessage,
 ]);
 export type ServerToScreenMessage = v.InferOutput<typeof ServerToScreenMessage>;
 
-export const PhoneToServerMessage = v.variant("type", [TiltMessage, PongMessage, HeartbeatMessage]);
+export const PhoneToServerMessage = v.variant("type", [
+  TiltMessage,
+  PongMessage,
+  StartMessage,
+  RetryMessage,
+  HeartbeatMessage,
+]);
 export type PhoneToServerMessage = v.InferOutput<typeof PhoneToServerMessage>;
 
 export const ScreenToServerMessage = v.variant("type", [
