@@ -164,6 +164,20 @@ body {
   background: var(--figure-line);
 }
 
+.leave-button,
+.leave-button:disabled {
+  height: 56px;
+  border: 2px solid var(--muted);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.leave-button:enabled:active {
+  background: var(--inactive-soft);
+}
+
 /* 待つ型とお知らせ型の絵。灰色の形だけ（おじさんの絵ができるまで） */
 .figure {
   display: flex;
@@ -314,7 +328,8 @@ body {
   min-height: 0;
 }
 
-.joined > .joint-band {
+.joined > .joint-band,
+.app > .joint-band:first-child {
   margin-top: calc(-1 * max(16px, env(safe-area-inset-top)));
 }
 
@@ -497,8 +512,15 @@ body {
   font-weight: 700;
 }
 
+.lobby-actions {
+  width: 100%;
+  display: grid;
+  gap: clamp(6px, 1.1dvh, 10px);
+  margin-top: auto;
+}
+
 .start-button {
-  flex: 0 0 64px;
+  height: 64px;
 }
 
 .playing,
@@ -603,12 +625,15 @@ body {
 }
 
 .retry-actions {
-  flex: 0 0 72px;
   margin-top: auto;
 }
 
 .retry-button {
-  height: 56px;
+  height: 72px;
+}
+
+.retry-actions .leave-button {
+  margin-top: 20px;
 }
 
 .retry-hint {

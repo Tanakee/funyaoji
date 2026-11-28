@@ -65,6 +65,10 @@ export function PhoneApp({ room }: { room: string | undefined }) {
   const retry = useCallback(() => {
     session.current?.send({ type: "retry" });
   }, []);
+  const onLeave = useCallback(() => {
+    dispatch({ type: "tap-leave" });
+    session.current?.leave();
+  }, []);
 
   const join = async () => {
     if (room === undefined) return;
@@ -83,13 +87,20 @@ export function PhoneApp({ room }: { room: string | undefined }) {
 
   return (
     <main className="app">
-      {state.kind !== "joined" ? (
+      {state.kind !== "joined" && !(state.kind === "ended" && state.reason === "left") ? (
         <header className="top">
           <span className="brand">ふにゃおじ</span>
           {room !== undefined ? <span className="room">ルームコード {room}</span> : null}
         </header>
       ) : null}
-      <Body state={state} room={room} onJoin={join} onStart={start} onRetry={retry} />
+      <Body
+        state={state}
+        room={room}
+        onJoin={join}
+        onStart={start}
+        onRetry={retry}
+        onLeave={onLeave}
+      />
     </main>
   );
 }
@@ -100,12 +111,14 @@ function Body({
   onJoin,
   onStart,
   onRetry,
+  onLeave,
 }: {
   state: PhoneState;
   room: string | undefined;
   onJoin: () => void;
   onStart: () => void;
   onRetry: () => void;
+  onLeave: () => void;
 }) {
   switch (state.kind) {
     case "invalid-room":
@@ -135,11 +148,18 @@ function Body({
       return (
         <>
           {state.joint && <JointBand joint={state.joint} />}
-          <Notice
-            title="このルームは終了しました"
-            reason="遊んでくれてありがとう！"
-            next="また遊ぶときは、スクリーンのQRを読み取ってください。"
-          />
+          {state.reason === "left" ? (
+            <Notice
+              title="遊んでくれてありがとう"
+              next="また遊ぶときは、スクリーンのQRを読み取ろう"
+            />
+          ) : (
+            <Notice
+              title="このルームは終了しました"
+              reason="遊んでくれてありがとう！"
+              next="また遊ぶときは、スクリーンのQRを読み取ってください。"
+            />
+          )}
         </>
       );
     case "closed":
@@ -149,7 +169,14 @@ function Body({
         <>
           <div className="joined" inert={state.reconnectingSince !== undefined}>
             {state.phase.kind === "lobby" ? (
-              <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
+              <Lobby
+                room={room}
+                joint={state.joint}
+                count={state.count}
+                leaving={state.leaving}
+                onLeave={onLeave}
+                onStart={onStart}
+              />
             ) : state.phase.kind === "playing" ? (
               state.phase.countdown === undefined ? (
                 <Playing joint={state.joint} active={state.active} />
@@ -167,6 +194,8 @@ function Body({
                 joint={state.joint}
                 result={state.phase.result}
                 count={state.count}
+                leaving={state.leaving}
+                onLeave={onLeave}
                 onRetry={onRetry}
               />
             )}

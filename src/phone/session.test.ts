@@ -3,7 +3,7 @@ import type { TransportHandlers } from "../net/transport.ts";
 import type { PhoneEvent } from "./model.ts";
 import { startSession } from "./session.ts";
 
-const opened: { handlers: TransportHandlers; closed: boolean }[] = [];
+const opened: { handlers: TransportHandlers; sent: string[]; closed: boolean }[] = [];
 
 vi.mock("../net/client.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../net/client.ts")>();
@@ -13,10 +13,10 @@ vi.mock("../net/client.ts", async (importOriginal) => {
       actual.connectPhone(room, handlers, {
         ...options,
         transport: () => (handlers) => {
-          const transport = { handlers, closed: false };
+          const transport = { handlers, sent: [] as string[], closed: false };
           opened.push(transport);
           return {
-            send: () => true,
+            send: (data) => transport.sent.push(data) > 0,
             close: () => {
               transport.closed = true;
             },
@@ -42,6 +42,49 @@ afterEach(() => {
 });
 
 const JOINED = JSON.stringify({ type: "joined", joint: "rightHip" });
+
+test("抜けるの受け付けを待つあいだに切れたら、joined を受け取り直して leave を送る", () => {
+  const session = startSession("K7Q2", () => {});
+  const first = opened[0]!;
+  first.handlers.onOpen();
+  first.handlers.onMessage(JOINED);
+  session.leave();
+  session.leave();
+  expect(session.send({ type: "start" })).toBe(false);
+  expect(session.send({ type: "retry" })).toBe(false);
+  expect(first.sent).toEqual(['{"type":"leave"}']);
+  expect(first.closed).toBe(false);
+
+  first.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  const next = opened[1]!;
+  next.handlers.onOpen();
+  expect(next.sent).toEqual([]);
+  next.handlers.onMessage(JOINED);
+  expect(next.sent).toEqual(['{"type":"leave"}']);
+  session.stop();
+});
+
+test("抜けるを押してからつなぎ直しを断られたら、rejected を渡して閉じる", () => {
+  const events: PhoneEvent[] = [];
+  const session = startSession("K7Q2", (event) => events.push(event));
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onMessage(JOINED);
+  session.leave();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  const next = opened[1]!;
+  next.handlers.onOpen();
+  next.handlers.onMessage(JSON.stringify({ type: "rejected", reason: "playing" }));
+  expect(events.slice(-2)).toMatchObject([
+    { type: "message", message: { type: "rejected", reason: "playing" } },
+    { type: "connection", state: { status: "closed" } },
+  ]);
+  expect(next.closed).toBe(true);
+  vi.advanceTimersByTime(60_000);
+  expect(opened).toHaveLength(2);
+  session.stop();
+});
 
 function joinThenDrop() {
   const events: PhoneEvent[] = [];

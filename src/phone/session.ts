@@ -11,6 +11,7 @@ const ALIVE_INTERVAL_MS = 1_000;
 
 interface PhoneSession {
   stop(): void;
+  leave(): void;
   send(message: StartMessage | RetryMessage): boolean;
 }
 
@@ -22,6 +23,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
   let releaseWakeLock: (() => void) | undefined;
   /** いまの接続で joined を受け取った。つなぎ直したら、また joined が届くまで false */
   let joined = false;
+  let leaving = false;
   /**
    * 最後に、つながっていてページが動いていた時刻。画面のロックなどでページが止まると、止まる前の時刻のまま残る。
    * 止まっているあいだもサーバーは関節を取っておく60秒を数えるので、つなぎ直しの残り秒数はこの時刻から数える
@@ -60,6 +62,8 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
           releaseWakeLock = undefined;
         }
         emit({ type: "message", message, at });
+        if (leaving && message.type === "joined") connection.send({ type: "leave" });
+        if (leaving && message.type === "rejected") connection.close();
       },
       onStateChange(state) {
         stopSending?.();
@@ -114,8 +118,13 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): P
       releaseWakeLock?.();
       stopReading();
     },
+    leave() {
+      if (leaving) return;
+      leaving = true;
+      if (joined) connection.send({ type: "leave" });
+    },
     send(message) {
-      return joined && connection.send(message);
+      return joined && !leaving && connection.send(message);
     },
   };
 }

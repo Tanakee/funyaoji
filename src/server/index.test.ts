@@ -364,6 +364,67 @@ describe("GET /api/rooms/:roomCode/ws", () => {
     await screen2.close();
   });
 
+  test.each([
+    { phase: "lobby", nextId: "new-phone" },
+    { phase: "result", nextId: "a" },
+  ])("$phase で抜けた席には $nextId がすぐ入れる", async ({ phase, nextId }) => {
+    const roomCode = await createRoom();
+    const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
+    const leaving = phones[0]!;
+    const remaining = phones[1]!;
+    for (const [phone, count] of [
+      [leaving, 4],
+      [remaining, 3],
+    ] as const) {
+      for (let i = 0; i < count; i++) expect(await phone.next()).toMatchObject({ type: "room" });
+    }
+    if (phase === "result") {
+      const result = {
+        type: "phase",
+        phase,
+        result: { outcome: "goal", distanceM: 10, timeMs: 1000 },
+      };
+      await screen.send(JSON.stringify(result));
+      expect(await leaving.next()).toEqual(result);
+      expect(await remaining.next()).toEqual(result);
+    }
+
+    await leaving.send(JSON.stringify({ type: "leave" }));
+    const vacated = {
+      type: "room",
+      roomCode,
+      joints: ["leftHip", "rightKnee", "leftKnee"],
+      vacated: "rightHip",
+    };
+    expect(await screen.next()).toEqual(vacated);
+    expect(await remaining.next()).toEqual(vacated);
+    expect(await leaving.next()).toEqual({ type: "left" });
+
+    const next = new Client(roomCode, "phone", nextId);
+    expect(await next.next()).toEqual({ type: "joined", joint: "rightHip" });
+    expect(await screen.next()).toEqual({
+      type: "room",
+      roomCode,
+      joints: ["rightHip", "leftHip", "rightKnee", "leftKnee"],
+    });
+    expect(await leaving.closed).toBe(4004);
+  });
+
+  test("leave を送ってすぐ閉じても、予約せずに席を空ける", async () => {
+    const roomCode = await createRoom();
+    const { screen, phones } = await fillRoom(roomCode, ["a", "b", "c", "d"]);
+    await phones[0]!.send(JSON.stringify({ type: "leave" }));
+    phones[0]!.dispose();
+    expect(await screen.next()).toEqual({
+      type: "room",
+      roomCode,
+      joints: ["leftHip", "rightKnee", "leftKnee"],
+      vacated: "rightHip",
+    });
+    const next = new Client(roomCode, "phone", "next");
+    expect(await next.next()).toEqual({ type: "joined", joint: "rightHip" });
+  });
+
   describe("スマホの ID（client）と関節の予約", () => {
     const allJoints = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
 

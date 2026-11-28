@@ -11,11 +11,15 @@ export function Result({
   joint,
   result,
   count,
+  leaving,
+  onLeave,
   onRetry,
 }: {
   joint: Joint;
   result: PlayResult;
   count: number;
+  leaving: boolean;
+  onLeave: () => void;
   onRetry: () => void;
 }) {
   const goal = result.outcome === "goal";
@@ -33,12 +37,20 @@ export function Result({
           <button
             type="button"
             className="phone-button retry-button"
-            disabled={disabled}
+            disabled={disabled || leaving}
             onClick={onRetry}
           >
             もう一度
           </button>
           {disabled ? <p className="retry-hint">4人そろうと押せます</p> : null}
+          <button
+            type="button"
+            className="phone-button leave-button"
+            disabled={leaving}
+            onClick={onLeave}
+          >
+            {leaving ? "抜けています" : "抜ける"}
+          </button>
         </div>
       </section>
     </>
