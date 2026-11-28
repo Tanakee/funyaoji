@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import { JOINTS, type Joint } from "../shared/messages.ts";
+import { JOINTS, type InputMethod, type Joint } from "../shared/messages.ts";
+import { CameraPreview } from "./camera/CameraPreview.tsx";
 import { Gauge } from "./Gauge.tsx";
 import { JOINT_LABELS } from "./joints.ts";
 
@@ -40,6 +41,7 @@ export function Lobby({
   room,
   joint,
   count,
+  input,
   leaving,
   onLeave,
   onStart,
@@ -47,6 +49,7 @@ export function Lobby({
   room: string | undefined;
   joint: Joint;
   count: number;
+  input: InputMethod;
   leaving: boolean;
   onLeave: () => void;
   onStart: () => void;
@@ -67,11 +70,20 @@ export function Lobby({
         <h1>{label.name}</h1>
       </div>
       <div className="lobby-controls">
-        <p className="joint-hint">
-          {TILT_ICON}
-          <span>{label.tiltHint}</span>
-        </p>
-        <Gauge />
+        {input === "camera" ? (
+          <>
+            <CameraPreview />
+            <p className="joint-hint">
+              <span>{label.cameraHint}</span>
+            </p>
+          </>
+        ) : (
+          <p className="joint-hint">
+            {TILT_ICON}
+            <span>{label.tiltHint}</span>
+          </p>
+        )}
+        <Gauge input={input} />
       </div>
       <p className="lobby-players">
         <strong>

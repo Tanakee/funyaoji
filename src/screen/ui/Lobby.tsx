@@ -1,10 +1,18 @@
 import type { ConnectionState } from "../../net/client.ts";
 import { TEAM_NAME_MAX_LENGTH } from "../../shared/api.ts";
 import { JOINT_DISPLAY } from "../../shared/joints.ts";
-import { JOINTS } from "../../shared/messages.ts";
+import { INPUT_METHODS, JOINTS, type InputMethod } from "../../shared/messages.ts";
 import { isFull } from "./flow.ts";
 import { QrCode } from "./QrCode.tsx";
 import { canOperate, type RoomState, type ScreenSession, type ScreenView } from "./session.ts";
+
+/** 操作方法の呼び名（docs/game.md の「操作方法」） */
+export const INPUT_LABELS: Record<InputMethod, string> = { tilt: "傾き", camera: "カメラ" };
+
+/** ヘッダーに出す、モードと操作方法 */
+export function modeLabel(input: InputMethod): string {
+  return `10m モード・${INPUT_LABELS[input]}`;
+}
 
 export function Lobby({ session, view }: { session: ScreenSession; view: ScreenView }) {
   const { room, joints } = view;
@@ -18,7 +26,7 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
           ふ
         </div>
         <div className="brand-name">ふにゃおじ</div>
-        <span className="header-mode">10m モード</span>
+        <span className="header-mode">{modeLabel(view.input)}</span>
       </header>
 
       <div className="lobby-layout">
@@ -95,7 +103,26 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
             {view.teamNameError ?? `ランキングに使う名前（${TEAM_NAME_MAX_LENGTH}文字まで）`}
           </p>
         </div>
-        <span className="lobby-mode">10m モード</span>
+        <fieldset className="input-field">
+          <legend>操作方法</legend>
+          {INPUT_METHODS.map((input) => (
+            <label key={input} className="input-option">
+              <input
+                type="radio"
+                name="input-method"
+                value={input}
+                checked={view.input === input}
+                onChange={() => session.setInputMethod(input)}
+              />
+              <span>{INPUT_LABELS[input]}</span>
+            </label>
+          ))}
+          <p>
+            {view.input === "tilt"
+              ? "スマホを立てると糸が引かれる"
+              : "前面カメラに映した人差し指を曲げると糸が引かれる"}
+          </p>
+        </fieldset>
       </footer>
       {notice && <p className="lobby-notice">{notice}</p>}
     </main>

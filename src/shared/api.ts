@@ -1,5 +1,5 @@
 import * as v from "valibot";
-import { Mode } from "./messages.ts";
+import { InputMethod, Mode } from "./messages.ts";
 
 export const PingResponse = v.object({ count: v.number() });
 export type PingResponse = v.InferOutput<typeof PingResponse>;
@@ -55,6 +55,7 @@ export const RankingTimeMs = v.pipe(
 /** POST /api/rankings のリクエスト。日時はサーバーが付ける */
 export const SubmitRankingRequest = v.object({
   mode: Mode,
+  input: InputMethod,
   teamName: TeamName,
   timeMs: RankingTimeMs,
 });
@@ -72,8 +73,12 @@ export const RankingEntry = v.object({
 });
 export type RankingEntry = v.InferOutput<typeof RankingEntry>;
 
-/** GET /api/rankings のレスポンス。速い順 */
-export const RankingsResponse = v.object({ mode: Mode, rankings: v.array(RankingEntry) });
+/** GET /api/rankings のレスポンス。速い順。ランキングはモードと操作方法の組ごとに分かれる */
+export const RankingsResponse = v.object({
+  mode: Mode,
+  input: InputMethod,
+  rankings: v.array(RankingEntry),
+});
 export type RankingsResponse = v.InferOutput<typeof RankingsResponse>;
 
 /** POST /api/rankings のレスポンス。保存した1件と、保存したあとの上位 */
