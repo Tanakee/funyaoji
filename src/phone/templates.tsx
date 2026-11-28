@@ -63,7 +63,7 @@ export function Notice({
   children,
 }: {
   title: string;
-  reason: string;
+  reason?: string;
   next?: string;
   children?: ReactNode;
 }) {
@@ -71,7 +71,7 @@ export function Notice({
     <div className="notice" role="alert">
       <div className="figure">{SITTING_OJISAN}</div>
       <h1 className="notice-title">{title}</h1>
-      <p className="notice-reason">{reason}</p>
+      {reason !== undefined ? <p className="notice-reason">{reason}</p> : null}
       {next !== undefined ? <p className="notice-next">{next}</p> : null}
       {children}
     </div>

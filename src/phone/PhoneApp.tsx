@@ -70,6 +70,10 @@ export function PhoneApp({ room }: { room: string | undefined }) {
     dispatch({ type: "tap-ready" });
     session.current?.send({ type: "ready" });
   }, []);
+  const onLeave = useCallback(() => {
+    dispatch({ type: "tap-leave" });
+    session.current?.leave();
+  }, []);
 
   const join = async () => {
     if (room === undefined) return;
@@ -88,7 +92,7 @@ export function PhoneApp({ room }: { room: string | undefined }) {
 
   return (
     <main className="app">
-      {state.kind !== "joined" ? (
+      {state.kind !== "joined" && !(state.kind === "ended" && state.reason === "left") ? (
         <header className="top">
           <span className="brand">ふにゃおじ</span>
           {room !== undefined ? <span className="room">ルームコード {room}</span> : null}
@@ -101,6 +105,7 @@ export function PhoneApp({ room }: { room: string | undefined }) {
         onStart={start}
         onRetry={retry}
         onReady={ready}
+        onLeave={onLeave}
       />
     </main>
   );
@@ -113,6 +118,7 @@ function Body({
   onStart,
   onRetry,
   onReady,
+  onLeave,
 }: {
   state: PhoneState;
   room: string | undefined;
@@ -120,6 +126,7 @@ function Body({
   onStart: () => void;
   onRetry: () => void;
   onReady: () => void;
+  onLeave: () => void;
 }) {
   switch (state.kind) {
     case "invalid-room":
@@ -149,11 +156,18 @@ function Body({
       return (
         <>
           {state.joint && <JointBand joint={state.joint} />}
-          <Notice
-            title="このルームは終了しました"
-            reason="遊んでくれてありがとう！"
-            next="また遊ぶときは、スクリーンのQRを読み取ってください。"
-          />
+          {state.reason === "left" ? (
+            <Notice
+              title="遊んでくれてありがとう"
+              next="また遊ぶときは、スクリーンのQRを読み取ろう"
+            />
+          ) : (
+            <Notice
+              title="このルームは終了しました"
+              reason="遊んでくれてありがとう！"
+              next="また遊ぶときは、スクリーンのQRを読み取ってください。"
+            />
+          )}
         </>
       );
     case "closed":
@@ -164,7 +178,14 @@ function Body({
           <div className="joined" inert={state.reconnectingSince !== undefined}>
             {state.phase.kind === "lobby" ? (
               state.phase.howto === undefined ? (
-                <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
+                <Lobby
+                  room={room}
+                  joint={state.joint}
+                  count={state.count}
+                  leaving={state.leaving}
+                  onLeave={onLeave}
+                  onStart={onStart}
+                />
               ) : (
                 <HowTo
                   room={room}
@@ -190,6 +211,8 @@ function Body({
                 joint={state.joint}
                 result={state.phase.result}
                 count={state.count}
+                leaving={state.leaving}
+                onLeave={onLeave}
                 onRetry={onRetry}
               />
             )}

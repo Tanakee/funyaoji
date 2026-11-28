@@ -26,6 +26,8 @@ function acceptedBy(message: unknown): Direction[] {
 // docs/api.md の例と、フィールドの表から作った例。期待する送信方向は、メッセージの表（送信元 → 送信先）から取る
 const accepted: { name: string; message: unknown; directions: Direction[] }[] = [
   { name: "close-room", message: { type: "close-room" }, directions: ["ScreenToServerMessage"] },
+  { name: "leave", message: { type: "leave" }, directions: ["PhoneToServerMessage"] },
+  { name: "left", message: { type: "left" }, directions: ["ServerToPhoneMessage"] },
   {
     name: "room-closed",
     message: { type: "room-closed" },
@@ -217,6 +219,13 @@ const rejected: { name: string; message: unknown }[] = [
 ];
 
 describe("メッセージのスキーマ", () => {
+  test("抜けるで空いた関節を room に付けられる", () => {
+    const room = { type: "room", roomCode: "K7Q2", joints: ["rightHip"], vacated: "leftHip" };
+    expect(v.parse(ServerToPhoneMessage, room)).toEqual(room);
+    expect(v.parse(ServerToScreenMessage, room)).toEqual(room);
+    expect(acceptedBy({ ...room, vacated: "head" })).toEqual([]);
+  });
+
   const playing = { type: "phase", phase: "playing", mode: "10m" };
   const countdown = {
     kind: "count",

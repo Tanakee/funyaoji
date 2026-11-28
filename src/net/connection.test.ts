@@ -227,14 +227,20 @@ test("表に戻って待たずにつなぎ直すときも、shouldReconnect を�
   }
 });
 
-test("ルーム終了の通知だけでも全タイマーを止め、通知が欠けても4003で再接続をやめる", () => {
+test.each([
+  { type: "room-closed", code: 4003 },
+  { type: "left", code: 4004 },
+])("$type で全タイマーを止め、通知が欠けても $code で再接続をやめる", ({ type, code }) => {
   for (const notification of [true, false]) {
     const { connection, opened, received } = connectFake();
     opened[0]!.handlers.onOpen();
-    if (notification) opened[0]!.handlers.onMessage(JSON.stringify({ type: "room-closed" }));
-    else opened[0]!.handlers.onClose({ code: 4003, reason: "room-closed" });
-    expect(connection.state).toEqual({ status: "closed", code: 4003, reason: "room-closed" });
-    if (notification) expect(received).toEqual([{ type: "room-closed" }]);
+    if (notification) opened[0]!.handlers.onMessage(JSON.stringify({ type }));
+    else opened[0]!.handlers.onClose({ code, reason: type });
+    expect(connection.state).toEqual({ status: "closed", code, reason: type });
+    if (notification) {
+      expect(received).toEqual([{ type }]);
+      expect(opened[0]!.closed).toBe(true);
+    }
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(60_000);
     expect(opened).toHaveLength(1);
