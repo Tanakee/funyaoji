@@ -38,7 +38,7 @@ test("開いているあいだ5秒ごとにハートビートを送り、閉じ�
 });
 
 /** 開いたトランスポートを順に覚える、偽のトランスポート */
-function connectFake() {
+function connectFake(shouldReconnect?: () => boolean) {
   const opened: { handlers: TransportHandlers; closed: boolean }[] = [];
   const received: unknown[] = [];
   const connection = connect<ServerToPhoneMessage, PhoneToServerMessage>({
@@ -54,6 +54,7 @@ function connectFake() {
     },
     schema: ServerToPhoneMessage,
     onMessage: (message) => received.push(message),
+    shouldReconnect,
   });
   return { connection, opened, received };
 }
@@ -141,6 +142,89 @@ test("ハートビートの返事もほかのメッセージも10秒届かなけ
   vi.advanceTimersByTime(1000);
   expect(opened).toHaveLength(2);
   connection.close();
+});
+
+test("shouldReconnect が false なら、トランスポートを開かずに閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1000);
+  expect(opened).toHaveLength(2);
+
+  opened[1]!.handlers.onClose({ code: 1006, reason: "" });
+  expect(connection.state).toEqual({ status: "reconnecting", attempt: 2 });
+  allowed = false;
+  vi.advanceTimersByTime(2000);
+  expect(opened).toHaveLength(2);
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("checkReconnect は、開いている途中なら閉じず、切れたときに待たずに閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1000);
+  allowed = false;
+  connection.checkReconnect();
+  expect(opened[1]!.closed).toBe(false);
+  expect(connection.state).toEqual({ status: "reconnecting", attempt: 1 });
+  opened[1]!.handlers.onClose({ code: 1006, reason: "" });
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("checkReconnect は、つなぎ直すのを待っているなら閉じる", () => {
+  let allowed = true;
+  const { connection, opened } = connectFake(() => allowed);
+  opened[0]!.handlers.onOpen();
+  opened[0]!.handlers.onClose({ code: 1006, reason: "" });
+  allowed = false;
+  connection.checkReconnect();
+  expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+  expect(opened).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("表に戻って待たずにつなぎ直すときも、shouldReconnect を聞く", async () => {
+  const listeners = new Set<() => void>();
+  const page = {
+    visibilityState: "hidden",
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  };
+  // connection.ts は読み込んだときに document を覚えるので、差し替えてから読み込み直す
+  vi.stubGlobal("document", page);
+  vi.resetModules();
+  try {
+    const { connect: connectWithPage } = await import("./connection.ts");
+    const opened: TransportHandlers[] = [];
+    let allowed = true;
+    const connection = connectWithPage<ServerToPhoneMessage, PhoneToServerMessage>({
+      open(handlers) {
+        opened.push(handlers);
+        return { send: () => true, close: () => {} };
+      },
+      schema: ServerToPhoneMessage,
+      onMessage: () => {},
+      shouldReconnect: () => allowed,
+    });
+    opened[0]!.onOpen();
+    opened[0]!.onClose({ code: 1006, reason: "" });
+    expect(connection.state).toEqual({ status: "reconnecting", attempt: 1 });
+    allowed = false;
+
+    page.visibilityState = "visible";
+    for (const listener of listeners) listener();
+    expect(opened).toHaveLength(1);
+    expect(connection.state).toEqual({ status: "closed", code: 1000, reason: "" });
+    expect(listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 test("ルーム終了の通知だけでも全タイマーを止め、通知が欠けても4003で再接続をやめる", () => {
