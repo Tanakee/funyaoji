@@ -100,12 +100,16 @@ function hudFontName(state: FontState): string {
   return name;
 }
 
+// Canvas に Zen Kaku Gothic New で描く字をすべて入れる。フォントは字の範囲ごとのファイルに分かれていて、
+// document.fonts.load は渡した字を含むファイルしか読まない。ここに無い字は、代替フォントで描かれることがある
+const GOTHIC_CHARS = "0123456789 mQWOPスタートゴール左右ひざももあと秒";
+
 async function loadViewFonts(): Promise<boolean> {
   try {
     const faces = await Promise.all([
       document.fonts.load('900 64px "Zen Old Mincho"', `0123456789.m秒${SPEECH_CHARS}`),
-      document.fonts.load('700 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
-      document.fonts.load('900 24px "Zen Kaku Gothic New"', "スタートゴール左右ひざもも"),
+      document.fonts.load('700 24px "Zen Kaku Gothic New"', GOTHIC_CHARS),
+      document.fonts.load('900 24px "Zen Kaku Gothic New"', GOTHIC_CHARS),
     ]);
     return faces.every((face) => face.length > 0);
   } catch {
