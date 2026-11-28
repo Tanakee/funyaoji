@@ -1,6 +1,6 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import type { Joint } from "../shared/messages.ts";
-import { JOINT_LABELS } from "./joints.ts";
+import { JointBand } from "./JointBand.tsx";
 import { reconnectRemainingSeconds } from "./model.ts";
 import { Waiting } from "./templates.tsx";
 
@@ -19,15 +19,9 @@ function useRemainingSeconds(since: number): number {
 /** P5a つなぎ直し中。待機・プレイ中・結果の画面の上に重ねる。上の端に自分の部位の帯を出し続ける */
 export function Reconnecting({ joint, since }: { joint: Joint; since: number }) {
   const remaining = useRemainingSeconds(since);
-  const label = JOINT_LABELS[joint];
   return (
     <div className="overlay">
-      <p
-        className="joint-band"
-        style={{ "--band-bg": label.color, "--band-fg": label.textOnColor } as CSSProperties}
-      >
-        {label.name}
-      </p>
+      <JointBand joint={joint} />
       <Waiting title="つなぎ直しています" figure="handle">
         <p className="remaining">
           あと<span className="remaining-number">{remaining}</span>秒

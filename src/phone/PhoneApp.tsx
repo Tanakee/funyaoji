@@ -1,15 +1,14 @@
-import { useEffect, useReducer, useRef, type ReactNode } from "react";
-import { JOINTS, type PlayResult } from "../shared/messages.ts";
-import { Gauge } from "./Gauge.tsx";
-import { JOINT_LABELS } from "./joints.ts";
+import { useEffect, useReducer, useRef } from "react";
+import { Entry } from "./Entry.tsx";
+import { JointBand } from "./JointBand.tsx";
+import { Lobby } from "./Lobby.tsx";
 import { initialState, reduce, type PhoneState, type RejectReason } from "./model.ts";
+import { Playing } from "./Playing.tsx";
 import { Reconnecting } from "./Reconnecting.tsx";
+import { Result } from "./Result.tsx";
 import { startSession } from "./session.ts";
 import { Notice, Waiting } from "./templates.tsx";
 import { requestTiltPermission, waitForTilt } from "./tilt.ts";
-
-/** 全員そろう人数 */
-const PLAYERS = JOINTS.length;
 
 interface NoticeText {
   title: string;
@@ -52,12 +51,6 @@ const CLOSED: Record<"replaced" | "lost", NoticeText> = {
   },
 };
 
-const OUTCOME_LABELS: Record<PlayResult["outcome"], string> = {
-  goal: "ゴール！",
-  fell: "転倒",
-  disconnected: "切断",
-};
-
 export function PhoneApp({ room }: { room: string | undefined }) {
   const [state, dispatch] = useReducer(reduce, room, initialState);
   const stopSession = useRef<(() => void) | undefined>(undefined);
@@ -82,37 +75,32 @@ export function PhoneApp({ room }: { room: string | undefined }) {
 
   return (
     <main className="app">
-      <header className="top">
-        <span className="brand">ふにゃおじ</span>
-        {room !== undefined && <span className="room">ルーム {room}</span>}
-      </header>
-      <Body state={state} onJoin={join} />
+      {state.kind !== "joined" ? (
+        <header className="top">
+          <span className="brand">ふにゃおじ</span>
+          {room !== undefined ? <span className="room">ルームコード {room}</span> : null}
+        </header>
+      ) : null}
+      <Body state={state} room={room} onJoin={join} />
     </main>
   );
 }
 
-function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
+function Body({
+  state,
+  room,
+  onJoin,
+}: {
+  state: PhoneState;
+  room: string | undefined;
+  onJoin: () => void;
+}) {
   switch (state.kind) {
     case "invalid-room":
       return <Notice {...REJECT_NOTICES["no-room"]} />;
     case "ready":
-      return (
-        <Center>
-          <p className="lead">スマホを傾けて、おじさんの関節を動かします。</p>
-          <button className="big-button" type="button" onClick={onJoin}>
-            参加
-          </button>
-        </Center>
-      );
     case "asking-permission":
-      return (
-        <Center>
-          <button className="big-button" type="button" disabled>
-            参加
-          </button>
-          <p className="lead">傾きの読み取りの許可を確認しています。</p>
-        </Center>
-      );
+      return <Entry askingPermission={state.kind === "asking-permission"} onJoin={onJoin} />;
     case "permission-denied":
       // iOS は、ブラウザを開き直すまで許可の画面を出さない。開き直し方を知らない人が多いので、手順も出す
       return (
@@ -120,7 +108,7 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
           <ol className="steps">
             <li>画面の下から上にスワイプして、少し止める</li>
             <li>ブラウザを上にスワイプして終了する</li>
-            <li>QR コードを読み取り直し、「参加」→「許可」を押す</li>
+            <li>QR コードを読み取り直し、「参加する」→「許可」を押す</li>
           </ol>
         </Notice>
       );
@@ -133,84 +121,33 @@ function Body({ state, onJoin }: { state: PhoneState; onJoin: () => void }) {
       return <Notice {...REJECT_NOTICES[state.reason]} />;
     case "ended":
       return (
-        <Center>
-          {state.joint && <p className="joint-name">{JOINT_LABELS[state.joint].name}</p>}
-          <h1 className="notice-title">このルームは終了しました</h1>
-          <p className="lead">遊んでくれてありがとう！</p>
-          <p className="lead">また遊ぶときは、スクリーンのQRを読み取ろう</p>
-        </Center>
+        <>
+          {state.joint && <JointBand joint={state.joint} />}
+          <Notice
+            title="このルームは終了しました"
+            reason="遊んでくれてありがとう！"
+            next="また遊ぶときは、スクリーンのQRを読み取ってください。"
+          />
+        </>
       );
     case "closed":
       return <Notice {...CLOSED[state.replaced ? "replaced" : "lost"]} />;
     case "joined":
       return (
         <>
-          <Joined state={state} inert={state.reconnectingSince !== undefined} />
+          <div className="joined" inert={state.reconnectingSince !== undefined}>
+            {state.phase.kind === "lobby" ? (
+              <Lobby room={room} joint={state.joint} count={state.count} />
+            ) : state.phase.kind === "playing" ? (
+              <Playing joint={state.joint} active={state.active} />
+            ) : (
+              <Result joint={state.joint} result={state.phase.result} />
+            )}
+          </div>
           {state.reconnectingSince !== undefined ? (
             <Reconnecting joint={state.joint} since={state.reconnectingSince} />
           ) : null}
         </>
       );
   }
-}
-
-function Joined({
-  state,
-  inert,
-}: {
-  state: Extract<PhoneState, { kind: "joined" }>;
-  /** つなぎ直しの画面を上に重ねているあいだ、下の画面を押せなくする */
-  inert: boolean;
-}) {
-  const label = JOINT_LABELS[state.joint];
-  const playing = state.phase.kind === "playing";
-  return (
-    <div className="joined" data-active={playing && state.active} inert={inert}>
-      <section className="joint">
-        <p className="caption">あなたの担当</p>
-        <h1 className="joint-name">{label.name}</h1>
-        <p className="joint-hint">
-          寝かせる＝{label.flat} ／ 立てる＝{label.upright}
-        </p>
-      </section>
-      <Gauge />
-      <section className="phase" data-phase={state.phase.kind}>
-        {state.phase.kind === "lobby" && (
-          <>
-            <p className="phase-title">待機中</p>
-            <p className="phase-detail">
-              {state.count} / {PLAYERS} 人が参加中
-            </p>
-          </>
-        )}
-        {state.phase.kind === "playing" && (
-          <>
-            <p className="phase-title">プレイ中</p>
-            <p className="input-status" data-active={state.active}>
-              {state.active ? "入力が届いています" : "入力が届いていません"}
-            </p>
-          </>
-        )}
-        {state.phase.kind === "result" && <Result result={state.phase.result} />}
-      </section>
-    </div>
-  );
-}
-
-function Result({ result }: { result: PlayResult }) {
-  return (
-    <>
-      <p className="phase-title" data-outcome={result.outcome}>
-        {OUTCOME_LABELS[result.outcome]}
-      </p>
-      <p className="phase-detail">
-        {result.outcome === "goal" && `${(result.timeMs / 1000).toFixed(2)} 秒 ／ `}
-        距離 {result.distanceM.toFixed(1)} m
-      </p>
-    </>
-  );
-}
-
-function Center({ children }: { children: ReactNode }) {
-  return <div className="center">{children}</div>;
 }
