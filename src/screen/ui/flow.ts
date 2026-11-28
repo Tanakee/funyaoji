@@ -20,6 +20,8 @@ export type Flow =
       players: readonly Joint[];
     }
   | { kind: "playing"; players: readonly Joint[] }
+  /** ゴールの線を越えて、FINISH を出している。この間はやり直せない（記録を落とさないため） */
+  | { kind: "finish"; result: PlayResult; players: readonly Joint[] }
   | { kind: "result"; result: PlayResult; players: readonly Joint[] };
 
 export type FlowEvent =
@@ -39,6 +41,8 @@ export type FlowEvent =
   | { type: "tick"; elapsedMs: number }
   /** 終わった。ゴール・転倒はゲームが、切断はスクリーンが決める */
   | { type: "ended"; result: PlayResult }
+  /** FINISH を出し終えた */
+  | { type: "finished" }
   /** room が変わった。joints は接続中のスマホの関節 */
   | { type: "room"; joints: readonly Joint[] }
   /** ロビーに戻す。つなぎ直したとき、サーバーが playing を持っていたとき */
@@ -63,7 +67,7 @@ export function reduce(flow: Flow, event: FlowEvent): Flow {
         players: event.joints,
       };
     case "restart":
-      if (flow.kind === "lobby") return flow;
+      if (flow.kind === "lobby" || flow.kind === "finish") return flow;
       return {
         kind: "countdown",
         countdownKind: "readyGo",
@@ -80,7 +84,14 @@ export function reduce(flow: Flow, event: FlowEvent): Flow {
     }
     case "ended":
       if (flow.kind !== "playing") return flow;
-      return { kind: "result", result: event.result, players: flow.players };
+      return {
+        kind: event.result.outcome === "goal" ? "finish" : "result",
+        result: event.result,
+        players: flow.players,
+      };
+    case "finished":
+      if (flow.kind !== "finish") return flow;
+      return { kind: "result", result: flow.result, players: flow.players };
     case "room":
       // 結果の画面で誰かが切れたら、ロビーに戻す。カウントダウンとプレイ中は、つなぎ直しを待つので戻さない
       if (flow.kind !== "result") return flow;

@@ -8,6 +8,8 @@ import type { ScreenAudio } from "./audio.ts";
 import { ScreenSession, seatsOf, type ScreenView } from "./session.ts";
 
 const sent: ScreenSent[] = [];
+/** session.ts の FINISH_MS */
+const FINISH_MS = 2_000;
 const FOUR: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
 const connections: {
   roomCode: string;
@@ -294,6 +296,7 @@ describe("ScreenSession", () => {
     expect(session.getSnapshot().input).toBe("camera");
     await vi.advanceTimersByTimeAsync(3000);
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    await vi.advanceTimersByTimeAsync(FINISH_MS);
     expect(submitRanking).toHaveBeenCalledWith(expect.objectContaining({ input: "camera" }));
     session.dispose();
   });
@@ -319,6 +322,7 @@ describe("ScreenSession", () => {
     expect(resetModes).toEqual(["hard", "hard"]);
     await vi.advanceTimersByTimeAsync(3000);
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    await vi.advanceTimersByTimeAsync(FINISH_MS);
     expect(submitRanking).toHaveBeenCalledWith(
       expect.objectContaining({ mode: "hard", input: "tilt" }),
     );
@@ -509,6 +513,28 @@ describe("ScreenSession", () => {
     session.dispose();
   });
 
+  it("ゴールすると FINISH を出してから、止めたゲームを結果にして result を送る", async () => {
+    const session = await open();
+    press("Enter");
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = { outcome: "goal", distanceM: 10, timeMs: 4000 } as const;
+    const resultSent = () => sent.filter((m) => m.type === "phase" && m.phase === "result");
+    game.onEnd(result);
+    press("KeyR");
+    press("Space");
+    // FINISH の間につなぎ直しても、ロビーに戻さない
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "normal", input: "tilt" });
+    await vi.advanceTimersByTimeAsync(FINISH_MS - 1);
+    expect(session.getSnapshot().flow.kind).toBe("finish");
+    expect(resultSent()).toEqual([]);
+    expect(stopOptions).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(session.getSnapshot().flow.kind).toBe("result");
+    expect(resultSent()).toEqual([{ type: "phase", phase: "result", result }]);
+    expect(stopOptions).toEqual([{ showResult: true }]);
+    session.dispose();
+  });
+
   it("正規化済みのチーム名をゴール後に読めて、やり直しでも引き継ぐ", async () => {
     const session = await open(undefined, "  ＡＢＣ  ");
     press("Enter");
@@ -516,6 +542,7 @@ describe("ScreenSession", () => {
     await vi.advanceTimersByTimeAsync(3000);
     session.setTeamName("プレイ中の変更");
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    await vi.advanceTimersByTimeAsync(FINISH_MS);
     expect(submitRanking).toHaveBeenCalledExactlyOnceWith({
       mode: "normal",
       input: "tilt",
@@ -786,6 +813,7 @@ describe("ScreenSession", () => {
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
     expect(audio.play).toHaveBeenLastCalledWith("goal");
     expect(audio.setPlaying).toHaveBeenLastCalledWith(false);
+    await vi.advanceTimersByTimeAsync(FINISH_MS);
     press("KeyR");
     await vi.advanceTimersByTimeAsync(1500);
     game.onEnd({ outcome: "fell", distanceM: 1 });

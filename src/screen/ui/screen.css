@@ -337,6 +337,16 @@ kbd {
 .countdown-start {
   animation: none;
 }
+.finish-label {
+  color: var(--color-surface);
+  font-family: var(--font-display);
+  font-size: max(64px, 22vh);
+  font-weight: 900;
+  line-height: 1;
+  text-shadow:
+    0 0.04em 0 var(--color-ink),
+    0 0 0.3em var(--color-ink);
+}
 .countdown-guidance {
   margin: 0.5em 0 0;
   color: var(--color-surface);
@@ -355,23 +365,27 @@ kbd {
   }
 }
 
+/* 運営のボタンの左に置く。幅と位置は layout.ts の bottomRightControlsLeft にそろえる */
 .restart-hint {
+  --operator-button: clamp(40px, 4.375vw, 84px);
   position: absolute;
-  bottom: calc(var(--safe-y) + 12 * var(--u));
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
+  right: calc(min(4.21875vw, 81px) + 3 * var(--operator-button) + 32px);
+  bottom: min(5.55556vh, 60px);
+  width: calc(150 * var(--u));
+  height: var(--operator-button);
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: calc(10 * var(--u));
   margin: 0;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: var(--color-surface);
-  color: var(--color-ink-soft);
+  white-space: nowrap;
+  color: var(--color-ink);
   font-size: var(--font-size-body);
   font-weight: 700;
   pointer-events: none;
+}
+.restart-hint kbd {
+  background: var(--color-surface);
 }
 /* 確かめるための折りたたみ。すみに小さく置く */
 .debug {
@@ -901,6 +915,10 @@ html[data-debug] .result-screen {
 .operator-controls:focus-within .operator-buttons {
   opacity: 1;
 }
+/* 空の段落の余白で、ボタンが上にずれないようにする（右下の「R やり直す」と高さをそろえる） */
+.operator-audio-status {
+  margin: 0;
+}
 .operator-menu,
 .operator-notice,
 .operator-audio-status:not(:empty) {
@@ -965,6 +983,10 @@ html[data-debug] .result-screen {
 }
 html[data-debug] .operator-controls--playing {
   bottom: calc(var(--debug-h) + 12px);
+}
+/* #root がつまみの欄の分だけ縮むので、その中で 12px にして、運営のボタンと高さをそろえる */
+html[data-debug] .restart-hint {
+  bottom: 12px;
 }
 
 .operator-failure {

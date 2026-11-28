@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { screenLayoutCssVars, screenScale } from "./layout.ts";
+import { bottomRightControlsLeft, screenLayoutCssVars, screenScale } from "./layout.ts";
 
 test("基準の画面では等倍、1920×1080 では 1.5 倍になる", () => {
   expect(screenScale(1280, 720)).toBe(1);
@@ -26,4 +26,9 @@ test("CSS にはレイアウトの値を単位なしの文字列で渡す", () =
     "--layout-scale-min": "0.6",
     "--layout-scale-max": "2.2",
   });
+});
+
+test("右下の「R やり直す」の左端は、画面設計の 1280×720 で左から 6m の目盛りより右にある", () => {
+  expect(bottomRightControlsLeft(1280, 1)).toBe(876);
+  expect(bottomRightControlsLeft(1920, 1.5)).toBe(1330);
 });

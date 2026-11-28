@@ -34,6 +34,11 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
           <span className="countdown-number countdown-start">{view.startLabel}</span>
         </div>
       )}
+      {flow.kind === "finish" && (
+        <div className="overlay countdown" aria-live="assertive">
+          <span className="finish-label">FINISH</span>
+        </div>
+      )}
       <RestartHint view={view} />
       <DebugControls session={session} view={view} />
       {flow.kind === "result" && (

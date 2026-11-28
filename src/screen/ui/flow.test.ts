@@ -41,10 +41,7 @@ describe("reduce", () => {
     });
     expect(
       run(
-        [
-          { type: "tick", elapsedMs: 3_000 },
-          { type: "ended", result: goal },
-        ],
+        [{ type: "tick", elapsedMs: 3_000 }, { type: "ended", result: goal }, { type: "finished" }],
         flow,
       ),
     ).toEqual({
@@ -52,6 +49,22 @@ describe("reduce", () => {
       result: goal,
       players: all,
     });
+  });
+
+  it("ゴールは FINISH を挟み、その間はやり直しも、あとからの終了も受け付けない", () => {
+    const playing: Flow = { kind: "playing", players: all };
+    const finish = run([{ type: "ended", result: goal }], playing);
+    expect(finish).toEqual({ kind: "finish", result: goal, players: all });
+    expect(
+      run(
+        [
+          { type: "restart" },
+          { type: "ended", result: { outcome: "disconnected", distanceM: 10 } },
+        ],
+        finish,
+      ),
+    ).toBe(finish);
+    expect(run([{ type: "finished" }], playing)).toBe(playing);
   });
 
   it("プレイ中でなければ、ゲームの終了は無視する", () => {
