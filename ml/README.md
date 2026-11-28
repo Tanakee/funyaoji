@@ -31,6 +31,12 @@ uv run python -m funyaoji_rl.train --reward r2 --gamma 0.99 --seed 0 \
 # 最初の実験（③ の 12 run と ② の (R1)）を、決まった本数まで同時に流す
 uv run python -m funyaoji_rl.sweep --parallel 8 --plan first
 
+# 記録を評価してレジストリに載せ、別名（theory・theory-any）を移す。学習と探索の終わりにも自動で行う
+uv run python -m funyaoji_rl.registry submit
+uv run python -m funyaoji_rl.registry list
+# theory の記録を src/screen/game/ai/theory.json に書き出す（コミットして PR に入れる）
+uv run python -m funyaoji_rl.registry export
+
 # 記録を並べて動画にする
 uv run python -m funyaoji_rl.render --out runs/x/video runs/a/record_exact.json runs/b/record_exact.json
 
@@ -51,7 +57,6 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 - 「1回」は、そのままの重みで記録を再生したタイム
 - 「中央値」は、出力の層の bias を少しずらして 16 回走らせた、ゴールした走りのタイムの中央値
-- (E2) の判定（物理の不具合を突いていないか）は、まだ作っていない。だから、下のタイムは理論値の候補である
 
 ### 方法どうし
 
@@ -95,12 +100,34 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 - 入力は 0〜1 で切られるので、範囲を広げるほど、もも とひざを端から端へ一気に切り替える動き（四角い波）に近づき、速くなった。一番広い範囲では、探す場所が広すぎて、かえって見つけにくくなった
 - いまの既定は、太字の範囲
 
+## 理論値
+
+**6.804 秒**（(E1)・(E2) とも同じ記録）。③・(R1)・γ 0.99・種 0 の、出力の層の bias をずらした1回（レジストリの `funyaoji-10m-record` v35）。条件は「毎秒30回・4つの関節を同時に切り替える」（docs/ml.md の「理論値の定義」）。記録は `src/screen/game/ai/theory.json` にあり、`npm run check` のテスト（`theory.test.ts`）が、再生して同じタイムになることを確かめる。
+
+### 物理の不具合（(E2) の判定）
+
+記録を物理の1ステップずつ再生して測った（`scripts/rl/anomaly.ts`）。どの記録も、普通の走り（お手本の歩き方）と同じ範囲に収まり、不具合を突いた走りは無かった。しきい値は、出た値のおよそ 10 倍にした（`registry.py` の `THRESHOLDS`）。
+
+| 測ったもの | お手本の歩き方 | 最初の実験の記録（最大） | しきい値 |
+|---|---|---|---|
+| 関節が範囲を越えた量 | 0.002 rad | 0.005 rad | 0.05 rad を 0.05 秒より長く |
+| 地面へのめり込み | 0.001 m | 0.001 m | 0.02 m を 0.05 秒より長く |
+| 胴の跳ね上がり（立った姿勢から） | 0.008 m | 0.012 m | 0.25 m |
+| 胴の前後の速さ | 1.8 m/s | 2.7 m/s | 5 m/s |
+
+### Node とブラウザ
+
+理論値の記録とお手本の歩き方を、ブラウザ（Chromium 152）で再生すると、Node とタイムも最後の胴の位置も最後の桁まで同じだった。Firefox と Safari は確かめていない。
+
 ## 同時に流す本数
 
-| 流し方 | 全体の速さ（ステップ/秒） |
-|---|---|
-| 1本だけ（Node 16 プロセス × 8 体） | 約 1.0〜1.1 万 |
-| 1本だけ（Node 4 プロセス × 32 体） | 約 0.9 万 |
-| 8本同時（1本あたり Node 4 プロセス × 32 体） | 約 1.7 万 |
+| 流し方 | 1本の速さ | 全体の速さ（ステップ/秒） |
+|---|---|---|
+| 1本だけ（Node 16 プロセス × 8 体） | 約 1.0〜1.1 万 | 約 1.0〜1.1 万 |
+| 1本だけ（Node 4 プロセス × 32 体） | 約 0.9 万 | 約 0.9 万 |
+| 8本同時（1本あたり Node 4 × 32、または 2 × 64） | 約 0.21〜0.22 万 | 約 1.7 万 |
+| 12本同時（1本あたり Node 4 × 32） | 約 0.14 万 | 約 1.7 万 |
 
-- 8本同時でも CPU の使用率は 4 割ほどで、1本あたりは 4 倍以上遅くなる。8 本が同じ SQLite（`mlflow.db`）に書き込んで順番待ちになっている見込みだが、まだ確かめていない
+- 本数を増やしても、全体は毎秒約 1.7 万で頭打ちになる。そのあいだ CPU の使用率は 3〜4 割のまま
+- MLflow の記録先（SQLite）を run ごとに分けても、速さは変わらなかった。順番待ちの原因は SQLite ではない。原因はまだ分かっていない
+- いまは 8 本同時（`sweep.py` の既定）にしている

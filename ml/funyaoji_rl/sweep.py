@@ -38,7 +38,7 @@ def plan_first(base: str) -> list[tuple[str, list[str]]]:
 
 def plan_bench(base: str, n: int) -> list[tuple[str, list[str]]]:
     return [
-        (f"bench-p{n}-{i}", ["--steps", "1000000", "--seed", str(i), "--base-gait", base,
+        (f"bench-p{n}-{i}", ["--steps", "300000", "--seed", str(i), "--base-gait", base,
                              "--log-std", "-1.5", "--snapshot-every", "100000000", "--trials", "1"])
         for i in range(n)
     ]
