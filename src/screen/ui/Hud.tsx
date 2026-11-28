@@ -13,7 +13,7 @@ type JointStatus = "active" | "idle" | "keyboard" | "absent";
  */
 export function Hud({ view }: { view: ScreenView }) {
   // ?debug のときは、ゲームの下のつまみが、関節ごとの担当（スマホ・キー）を見せる
-  if (view.flow.kind === "lobby" || view.debug.enabled) return null;
+  if (view.flow.kind === "lobby" || view.flow.kind === "result" || view.debug.enabled) return null;
   const { players } = view.flow;
   const status = (joint: Joint): JointStatus =>
     view.absent[joint] !== undefined

@@ -1,6 +1,7 @@
 // ゲームの組み立て。物理（Sim）を固定の刻みで進め、描画（View）に渡し、終わりを 1 回だけ知らせる
 import type { Joint } from "../../shared/messages.ts";
 import type { Pose } from "./body.ts";
+import type { Scene } from "./camera.ts";
 import { Sim, initPhysics } from "./sim.ts";
 import type { Game, GameOptions } from "./types.ts";
 import { createView } from "./view.ts";
@@ -15,6 +16,7 @@ declare global {
       distanceM: number;
       elapsedMs: number;
       ended: boolean;
+      scene: Scene;
       /** ロビーの練習で吊っているか */
       practice: boolean;
       torso: Pose;
@@ -32,6 +34,14 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   let reported = false;
   let stopped = false;
   let destroyed = false;
+  let scene: Scene = "lobby";
+
+  function setScene(next: Scene): void {
+    scene = next;
+    view.setScene(scene);
+    // 自動の確認が、次のフレームを待たずに読めるように
+    if (import.meta.env.DEV && window.__funyaojiGame) window.__funyaojiGame.scene = scene;
+  }
 
   view.onFrame((dtSec) => {
     if (!stopped) sim.advance(inputs, Math.min(dtSec, MAX_FRAME_S));
@@ -42,6 +52,7 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
         distanceM: state.distanceM,
         elapsedMs: state.elapsedMs,
         ended: state.status === "ended",
+        scene,
         practice: practicing,
         torso: state.poses.torso,
         joints: Object.fromEntries(
@@ -51,6 +62,7 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
     }
     if (state.result && !reported) {
       reported = true;
+      setScene("result");
       onEnd(state.result);
     }
   });
@@ -62,9 +74,11 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
       practicing = false;
       reported = false;
       stopped = false;
+      setScene("countdown");
     },
     start() {
       sim.start();
+      setScene("playing");
     },
     practice() {
       sim.free();
@@ -72,11 +86,14 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
       practicing = true;
       reported = false;
       stopped = false;
+      setScene("lobby");
     },
-    stop() {
+    stop(options) {
       // 描画は続けるので、止めた場所の絵が残る。終わりの知らせも出さない
       stopped = true;
       reported = true;
+      // ルームを閉じたときにも止めるので、結果の画面にするのは頼まれたときだけ
+      if (options?.showResult) setScene("result");
       return sim.state().distanceM;
     },
     destroy() {
