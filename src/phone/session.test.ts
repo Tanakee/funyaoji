@@ -3,7 +3,7 @@ import type { TransportHandlers } from "../net/transport.ts";
 import type { PhoneEvent } from "./model.ts";
 import { startSession } from "./session.ts";
 
-const opened: { handlers: TransportHandlers; closed: boolean }[] = [];
+const opened: { handlers: TransportHandlers; closed: boolean; sent: string[] }[] = [];
 
 vi.mock("../net/client.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../net/client.ts")>();
@@ -13,10 +13,13 @@ vi.mock("../net/client.ts", async (importOriginal) => {
       actual.connectPhone(room, handlers, {
         ...options,
         transport: () => (handlers) => {
-          const transport = { handlers, closed: false };
+          const transport = { handlers, closed: false, sent: [] as string[] };
           opened.push(transport);
           return {
-            send: () => true,
+            send: (data) => {
+              transport.sent.push(data);
+              return true;
+            },
             close: () => {
               transport.closed = true;
             },
@@ -28,6 +31,7 @@ vi.mock("../net/client.ts", async (importOriginal) => {
 vi.mock("./tilt.ts", () => ({
   startReadingTilt: () => () => {},
   startSendingTilt: () => () => {},
+  setLatestAngle: () => {},
 }));
 vi.mock("./wakeLock.ts", () => ({ holdWakeLock: () => () => {} }));
 
@@ -42,6 +46,62 @@ afterEach(() => {
 });
 
 const JOINED = JSON.stringify({ type: "joined", joint: "rightHip" });
+
+test.each([
+  { name: "未確認", ready: [], sendsAgain: true },
+  { name: "確認済み", ready: ["rightHip"], sendsAgain: false },
+  { name: "遊び方が終了", ready: undefined, sendsAgain: false },
+])("準備OKが $name のときに同じ関節につなぎ直す", ({ ready, sendsAgain }) => {
+  const session = startSession("K7Q2", () => {});
+  const first = opened[0]!;
+  first.handlers.onOpen();
+  first.handlers.onMessage(JOINED);
+  first.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  if (ready !== undefined) {
+    expect(session.send({ type: "ready" })).toBe(true);
+    expect(first.sent).toEqual(['{"type":"ready"}']);
+  }
+  first.handlers.onClose({ code: 1006, reason: "" });
+  if (ready === undefined) expect(session.send({ type: "ready" })).toBe(false);
+
+  vi.advanceTimersByTime(1_000);
+  const again = opened[1]!;
+  again.handlers.onOpen();
+  again.handlers.onMessage(JOINED);
+  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby", input: "tilt" }));
+  if (ready !== undefined) again.handlers.onMessage(JSON.stringify({ type: "howto", ready }));
+  expect(again.sent).toEqual(sendsAgain ? ['{"type":"ready"}'] : []);
+  again.handlers.onMessage(
+    JSON.stringify({ type: "room", roomCode: "K7Q2", joints: ["rightHip"] }),
+  );
+
+  if (ready !== undefined) {
+    again.handlers.onMessage(JSON.stringify({ type: "howto", ready: ["rightHip"] }));
+    expect(again.sent).toHaveLength(sendsAgain ? 1 : 0);
+  }
+  again.handlers.onMessage(JSON.stringify({ type: "phase", phase: "lobby", input: "tilt" }));
+  again.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(again.sent).toHaveLength(sendsAgain ? 1 : 0);
+  session.stop();
+});
+
+test("別の関節につなぎ直したときは準備OKを送り直さない", () => {
+  const session = startSession("K7Q2", () => {});
+  const first = opened[0]!;
+  first.handlers.onOpen();
+  first.handlers.onMessage(JOINED);
+  first.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(session.send({ type: "ready" })).toBe(true);
+  expect(first.sent).toEqual(['{"type":"ready"}']);
+  first.handlers.onClose({ code: 1006, reason: "" });
+  vi.advanceTimersByTime(1_000);
+  const again = opened[1]!;
+  again.handlers.onOpen();
+  again.handlers.onMessage(JSON.stringify({ type: "joined", joint: "leftHip" }));
+  again.handlers.onMessage(JSON.stringify({ type: "howto", ready: [] }));
+  expect(again.sent).toEqual([]);
+  session.stop();
+});
 
 function joinThenDrop() {
   const events: PhoneEvent[] = [];

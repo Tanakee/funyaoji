@@ -22,7 +22,7 @@ export interface PhoneCountdown {
 
 /** ルームの進行。サーバーが phase を送らないうちは lobby とみなす */
 export type RoomPhase =
-  | { kind: "lobby" }
+  | { kind: "lobby"; howto?: { ready: readonly Joint[] } }
   | { kind: "playing"; countdown?: PhoneCountdown }
   | { kind: "result"; result: PlayResult };
 
@@ -53,12 +53,14 @@ export type PhoneState =
       phase: RoomPhase;
       /** 操作方法。スクリーンがロビーで選び、phase で知らせる。結果の phase には無いので、前の値を残す */
       input: InputMethod;
+      /** 遊び方の間に、このスマホで準備OK を押した。スクリーンの返事（howto の ready）を待たずに表示を変える */
+      readyPressed: boolean;
       /** 自分の関節の入力がスクリーンに届いている（プレイ中だけ意味がある） */
       active: boolean;
       /**
        * 切れてから、つなぎ直して joined を受け取るまでは reconnecting。
        * トランスポートが開いただけでは、まだ参加できていない（断られることもある）ので open にしない。
-       * joined のあと、room を受け取るまでは rejoining。サーバーは joined → phase（あれば）→ room の順に送るので、
+       * joined のあと、room を受け取るまでは rejoining。サーバーは joined → phase（あれば）→ howto（あれば）→ room の順に送るので、
        * room が届けばルームの状態はそろっている。
        * reconnecting と rejoining のあいだも、関節などの表示は残す
        */
@@ -74,6 +76,7 @@ export type PhoneState =
 
 export type PhoneEvent =
   | { type: "tap-join" }
+  | { type: "tap-ready" }
   | { type: "permission"; granted: boolean }
   | { type: "tilt-check"; supported: boolean }
   /** at は、接続の状態が変わった時刻（ミリ秒） */
@@ -103,10 +106,22 @@ export function initialState(room: string | undefined): PhoneState {
   return room === undefined ? { kind: "invalid-room" } : { kind: "ready" };
 }
 
+export function isHowtoReady(state: Extract<PhoneState, { kind: "joined" }>): boolean {
+  return (
+    state.phase.kind === "lobby" &&
+    state.phase.howto !== undefined &&
+    (state.readyPressed || state.phase.howto.ready.includes(state.joint))
+  );
+}
+
 export function reduce(state: PhoneState, event: PhoneEvent): PhoneState {
   switch (event.type) {
     case "tap-join":
       return state.kind === "ready" ? { kind: "asking-permission" } : state;
+    case "tap-ready":
+      return state.kind === "joined" && state.phase.kind === "lobby" && state.phase.howto
+        ? { ...state, readyPressed: true }
+        : state;
     case "permission":
       if (state.kind !== "asking-permission") return state;
       return event.granted ? { kind: "checking-tilt" } : { kind: "permission-denied" };
@@ -157,6 +172,7 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
           ...state,
           joint: message.joint,
           phase: { kind: "lobby" },
+          readyPressed: state.joint === message.joint && state.readyPressed,
           active: false,
           link: state.link === "open" ? "open" : "rejoining",
         };
@@ -168,6 +184,7 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
           count: 1,
           phase: { kind: "lobby" },
           input: "tilt",
+          readyPressed: false,
           active: false,
           link: "open",
           reconnectingSince: undefined,
@@ -182,7 +199,14 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
     case "room":
       if (state.kind !== "joined") return state;
       return state.link === "rejoining"
-        ? { ...state, count: message.joints.length, link: "open", reconnectingSince: undefined }
+        ? {
+            ...state,
+            count: message.joints.length,
+            readyPressed:
+              state.phase.kind === "lobby" && state.phase.howto !== undefined && state.readyPressed,
+            link: "open",
+            reconnectingSince: undefined,
+          }
         : { ...state, count: message.joints.length };
     case "phase":
       return state.kind === "joined"
@@ -191,7 +215,15 @@ function onMessage(state: PhoneState, message: PhoneReceived, at: number): Phone
             phase: toRoomPhase(message, state.joint, at),
             input: message.phase === "result" ? state.input : message.input,
             active: false,
+            // つなぎ直したときにサーバーが送り直す lobby では消さない。遊び方の間なら、このあと howto が届く
+            readyPressed:
+              state.link === "rejoining" && message.phase === "lobby" ? state.readyPressed : false,
           }
+        : state;
+    case "howto":
+      // カウントダウンや結果のあとに遅れて届いたものでは、遊び方の画面に戻さない
+      return state.kind === "joined" && state.phase.kind === "lobby"
+        ? { ...state, phase: { kind: "lobby", howto: { ready: message.ready } } }
         : state;
     case "status": {
       if (state.kind !== "joined") return state;
