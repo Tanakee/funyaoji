@@ -17,6 +17,7 @@ import {
   type PartName,
   type Pose,
 } from "./body.ts";
+import { type Block, floorHeightAt } from "./course.ts";
 import type { GameResult, JointInputs } from "./types.ts";
 
 export const GOAL_M = 10;
@@ -82,6 +83,8 @@ export interface SimOptions {
   stepS?: number;
   /** 胴を空中に留め、関節だけを動かす。タイムと終了判定は進めない */
   practice?: boolean;
+  /** コースに置く障害物（course.ts）。既定は無し（平らな地面だけ） */
+  course?: readonly Block[];
 }
 
 /** 足が地面に着いているとみなす高さ（m） */
@@ -116,18 +119,24 @@ function footBottom(shin: Pose): number {
   return low;
 }
 
-/** 胴の四隅か頭が地面に触れているか */
-function touchesGround(torso: Pose): boolean {
+/**
+ * 胴の四隅か頭が、その真下の面（地面か障害物の上）に触れているか。
+ * 障害物の無いコースでは、面の高さはどこでも 0
+ */
+function touchesGround(torso: Pose, course: readonly Block[]): boolean {
   const { hw, hh, headR } = TORSO_SIZE;
   const cos = Math.cos(torso.rot);
   const sin = Math.sin(torso.rot);
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
-      if (torso.y + sx * hw * sin + sy * hh * cos < GROUND_TOUCH_M) return true;
+      const x = torso.x + sx * hw * cos - sy * hh * sin;
+      const y = torso.y + sx * hw * sin + sy * hh * cos;
+      if (y < floorHeightAt(course, x) + GROUND_TOUCH_M) return true;
     }
   }
+  const headX = torso.x - (hh + headR) * sin;
   const headBottom = torso.y + (hh + headR) * cos - headR;
-  return headBottom < GROUND_TOUCH_M;
+  return headBottom < floorHeightAt(course, headX) + GROUND_TOUCH_M;
 }
 
 export class Sim {
@@ -143,10 +152,12 @@ export class Sim {
   private sittingSinceMs: number | undefined;
   private readonly stepS: number;
   private readonly practice: boolean;
+  private readonly course: readonly Block[];
 
   constructor(options: SimOptions = {}) {
     this.stepS = options.stepS ?? STEP_S;
     this.practice = options.practice ?? false;
+    this.course = options.course ?? [];
     const world = new RAPIER.World({ x: 0, y: -GRAVITY });
     world.timestep = this.stepS;
     this.world = world;
@@ -156,6 +167,15 @@ export class Sim {
       RAPIER.ColliderDesc.cuboid(500, 0.5).setFriction(1).setCollisionGroups(GROUP_GROUND),
       ground,
     );
+    // 障害物は地面と同じ組（体とだけ当たる）。無いコースでは何も足さず、物理は今までと同じ
+    for (const b of this.course) {
+      world.createCollider(
+        RAPIER.ColliderDesc.cuboid(b.width / 2, b.height / 2)
+          .setTranslation(b.x + b.width / 2, b.height / 2)
+          .setFriction(1)
+          .setCollisionGroups(GROUP_GROUND),
+      );
+    }
 
     for (const name of PART_NAMES) {
       const pose = INITIAL_POSES[name];
@@ -233,12 +253,14 @@ export class Sim {
     this.steps++;
 
     const { poses, distanceM, elapsedMs } = this.readPose();
-    if (poses.torso.y >= SIT_HEIGHT_M) this.sittingSinceMs = undefined;
+    // 座り込みは、胴の真下の面からの高さで見る（階段の上でも平らな所と同じに判定する）
+    const torsoHeight = poses.torso.y - floorHeightAt(this.course, poses.torso.x);
+    if (torsoHeight >= SIT_HEIGHT_M) this.sittingSinceMs = undefined;
     else this.sittingSinceMs ??= elapsedMs;
     const sat = this.sittingSinceMs !== undefined && elapsedMs - this.sittingSinceMs >= SIT_MS;
     if (distanceM >= GOAL_M) {
       this.end({ outcome: "goal", distanceM, timeMs: Math.round(elapsedMs) });
-    } else if (touchesGround(poses.torso) || sat) {
+    } else if (touchesGround(poses.torso, this.course) || sat) {
       this.end({ outcome: "fell", distanceM });
     }
   }
@@ -304,8 +326,12 @@ export class Sim {
       parts,
       joints,
       footContact: {
-        right: footBottom(parts.rightShin) < FOOT_CONTACT_M,
-        left: footBottom(parts.leftShin) < FOOT_CONTACT_M,
+        right:
+          footBottom(parts.rightShin) <
+          floorHeightAt(this.course, parts.rightShin.x) + FOOT_CONTACT_M,
+        left:
+          footBottom(parts.leftShin) <
+          floorHeightAt(this.course, parts.leftShin.x) + FOOT_CONTACT_M,
       },
       sittingMs: this.sittingSinceMs === undefined ? 0 : elapsedMs - this.sittingSinceMs,
       distanceM,

@@ -3,6 +3,7 @@ import type { Joint, Mode } from "../../shared/messages.ts";
 import type { Expression } from "./art.ts";
 import type { Pose } from "./body.ts";
 import type { Scene } from "./camera.ts";
+import { courseFor } from "./course.ts";
 import { Sim, initPhysics } from "./sim.ts";
 import type { Game, GameOptions } from "./types.ts";
 import { UNCLE_ART } from "./uncle-art/uncle-art.ts";
@@ -35,7 +36,7 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
   const view = await createView(container, art ?? UNCLE_ART);
   let sim = new Sim();
   let practicing = false;
-  // いまの走りのモード。物理演算（Sim）にはまだ渡していない。ハードの物理ができたら、reset で渡す
+  // いまの走りのモード。障害物モードは、reset でコースの障害物を Sim に渡す。ハードの物理はまだ渡していない
   let mode: Mode = "normal";
   let reported = false;
   let stopped = false;
@@ -88,7 +89,9 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
     reset(nextMode) {
       mode = nextMode;
       sim.free();
-      sim = new Sim();
+      const course = courseFor(mode);
+      sim = new Sim({ course });
+      view.setCourse(course);
       practicing = false;
       reported = false;
       stopped = false;
@@ -101,6 +104,8 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
     practice() {
       sim.free();
       sim = new Sim({ practice: true });
+      // 練習は吊った脚を動かすだけなので、障害物を出さない
+      view.setCourse([]);
       practicing = true;
       reported = false;
       stopped = false;

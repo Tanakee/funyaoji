@@ -31,10 +31,10 @@ export const RoomMessage = v.object({
 export type RoomMessage = v.InferOutput<typeof RoomMessage>;
 
 /**
- * 遊び方（モード。docs/game.md の「モード」）。normal はノーマル（前の「10m モード」）、hard は転びやすいハード。
- * スクリーンのロビーで選ぶ
+ * 遊び方（モード。docs/game.md の「モード」）。normal はノーマル（前の「10m モード」）、hard は転びやすいハード、
+ * obstacle はハードルと階段を越える障害物。スクリーンのロビーで選ぶ
  */
-export const MODES = ["normal", "hard"] as const;
+export const MODES = ["normal", "hard", "obstacle"] as const;
 export const Mode = v.picklist(MODES);
 export type Mode = v.InferOutput<typeof Mode>;
 

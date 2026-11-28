@@ -142,7 +142,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `mode` | `string` | モード。`normal`（ノーマル）か `hard`（ハード） |
+| `mode` | `string` | モード。`normal`（ノーマル）・`hard`（ハード）・`obstacle`（障害物）のどれか |
 | `input` | `string` | 操作方法。`tilt`（傾き）か `camera`（カメラ）。ランキングは、モードと操作方法の組ごとに分かれる |
 | `teamName` | `string` | チーム名。下の決まりで整えて保存する |
 | `timeMs` | `number` | ゴールまでの時間（ミリ秒）。`phase` の `result.timeMs` をそのまま送る |
@@ -168,7 +168,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 
 ### GET /api/rankings?mode=&lt;モード&gt;&input=&lt;操作方法&gt;
 
-ランキングの上位10件を、速い順に返す。型定義は `src/shared/api.ts` の `RankingsResponse`。`mode` が無いか `normal`・`hard` でないとき、`input` が無いか `tilt`・`camera` でないときは、400 を返す。
+ランキングの上位10件を、速い順に返す。型定義は `src/shared/api.ts` の `RankingsResponse`。`mode` が無いか `normal`・`hard`・`obstacle` でないとき、`input` が無いか `tilt`・`camera` でないときは、400 を返す。
 
 ```json
 { "mode": "normal", "input": "tilt", "rankings": [{ "rank": 1, "teamName": "FUNYA", "timeMs": 28000, "createdAt": 1795771597510 }] }
@@ -265,7 +265,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `phase` | `string` | `lobby`：ロビー。`playing`：カウントダウンかプレイ中。`result`：結果 |
-| `mode` | `string` | `playing` のときだけ。モード。`normal`（ノーマル）か `hard`（ハード）（[ゲームの進行](game.md)の「モード」） |
+| `mode` | `string` | `playing` のときだけ。モード。`normal`（ノーマル）・`hard`（ハード）・`obstacle`（障害物）のどれか（[ゲームの進行](game.md)の「モード」） |
 | `input` | `string` | `lobby` と `playing` のとき。操作方法。`tilt`（傾き）か `camera`（カメラ）。スマホは受け取ると、その方法で読み始める（[ゲームの進行](game.md)の「操作方法」） |
 | `countdown` | `object` | `playing` のときだけ。無ければプレイ中 |
 | `countdown.kind` | `string` | `count` は「3・2・1、GO!」、`readyGo` は「よーい、ドン！」 |

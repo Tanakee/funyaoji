@@ -3,7 +3,8 @@ import type { Joint } from "../../shared/messages.ts";
 import { NEUTRAL_INPUTS, STEP_S } from "./body.ts";
 import { demoGait as gait } from "./demo.ts";
 import { moveInputs } from "./keyboard.ts";
-import { SIT_MS, Sim, initPhysics } from "./sim.ts";
+import { OBSTACLE_COURSE, floorHeightAt, type Block } from "./course.ts";
+import { GOAL_M, SIT_HEIGHT_M, SIT_MS, Sim, initPhysics } from "./sim.ts";
 import type { JointInputs } from "./types.ts";
 
 const NEUTRAL: JointInputs = { ...NEUTRAL_INPUTS };
@@ -120,6 +121,50 @@ describe("Sim", () => {
       return s.distanceM;
     };
     expect(at(1 / 30)).toBeCloseTo(at(1 / 120), 1);
+  });
+});
+
+describe("障害物のある Sim", () => {
+  test("障害物に当たり判定があり、越えられない高さの壁の手前で止まる", () => {
+    const sim = new Sim({ course: [{ kind: "step", x: 2, width: 0.5, height: 0.5 }] });
+    run(sim, gait, 30);
+    expect(sim.state().distanceM).toBeLessThan(2);
+    sim.free();
+  });
+
+  test("お手本の歩き方で、障害物モードのハードルと階段を越えてゴールする", () => {
+    const sim = new Sim({ course: OBSTACLE_COURSE });
+    const s = run(sim, gait, 90);
+    expect(s.result).toMatchObject({ outcome: "goal" });
+    expect(s.result?.distanceM).toBeGreaterThanOrEqual(GOAL_M);
+    sim.free();
+  });
+
+  test("階段の上で座り込むと、上の面の高さから測って、転倒と同じに終わる", () => {
+    // 2段上った先に、広い上の面（高さ 0.15m）がある
+    const top = 0.15;
+    const course: Block[] = [
+      { kind: "step", x: 2, width: 0.6, height: 0.05 },
+      { kind: "step", x: 2.6, width: 0.6, height: 0.1 },
+      { kind: "step", x: 3.2, width: 5, height: top },
+    ];
+    const sim = new Sim({ course });
+    // 上の面に上がったら、ひざを曲げて座り込む
+    let crouching = false;
+    const s = run(
+      sim,
+      (t) => {
+        if (sim.state().poses.torso.x >= 4) crouching = true;
+        return crouching ? { ...NEUTRAL, rightKnee: 1, leftKnee: 1 } : gait(t);
+      },
+      90,
+    );
+    expect(crouching).toBe(true);
+    expect(s.result?.outcome).toBe("fell");
+    // 座り込んだのは上の面の上。地面（高さ 0）から測ると、胴は座り込みの高さより上にある
+    expect(floorHeightAt(course, s.poses.torso.x)).toBe(top);
+    expect(s.poses.torso.y).toBeGreaterThan(SIT_HEIGHT_M);
+    sim.free();
   });
 });
 
