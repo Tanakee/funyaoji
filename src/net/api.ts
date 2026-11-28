@@ -17,8 +17,8 @@ const REJECTED_MESSAGES: Record<CreateRoomRejected["reason"], string> = {
 };
 
 /** ルームを作り、ルームコードを返す（POST /api/rooms） */
-export async function createRoom(): Promise<string> {
-  const response = await fetch("/api/rooms", { method: "POST" });
+export async function createRoom(signal?: AbortSignal): Promise<string> {
+  const response = await fetch("/api/rooms", { method: "POST", signal });
   if (response.status === 429) {
     const rejected = v.safeParse(CreateRoomRejected, await response.json().catch(() => null));
     if (rejected.success) throw new Error(REJECTED_MESSAGES[rejected.output.reason]);
