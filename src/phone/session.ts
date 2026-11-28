@@ -1,7 +1,7 @@
 // ルームにつないでいるあいだ、React の外でやること：接続、tilt の送信、画面を消さないこと
 import { connectPhone } from "../net/client.ts";
 import { createTiltSeq, phoneClientId } from "../net/phone.ts";
-import type { PhoneEvent } from "./model.ts";
+import { RECONNECT_GRACE_MS, type PhoneEvent } from "./model.ts";
 import { startReadingTilt, startSendingTilt } from "./tilt.ts";
 import { holdWakeLock } from "./wakeLock.ts";
 
@@ -21,6 +21,22 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
    * 止まっているあいだもサーバーは関節を取っておく60秒を数えるので、つなぎ直しの残り秒数はこの時刻から数える
    */
   let aliveAt = Date.now();
+  /** サーバーに関節を渡されている（joined を受け取ってから、断られるまで）。切れたら、60秒のうちに戻る */
+  let holdingJoint = false;
+  /**
+   * つなぎ直しを数え始めた時刻。関節を渡されていて切れたときの aliveAt。joined を受け取るまで何回切れても変えない。
+   * ここから60秒たっても joined を受け取れなければ、つなぎ直しをやめる
+   */
+  let reconnectingSince: number | undefined;
+  let giveUp: ReturnType<typeof setTimeout> | undefined;
+
+  const stopCountdown = () => {
+    clearTimeout(giveUp);
+    giveUp = undefined;
+    reconnectingSince = undefined;
+  };
+  const deadlinePassed = () =>
+    reconnectingSince !== undefined && Date.now() >= reconnectingSince + RECONNECT_GRACE_MS;
 
   const connection = connectPhone(
     room,
@@ -28,9 +44,14 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
       onMessage(message) {
         if (message.type === "joined") {
           joined = true;
+          holdingJoint = true;
+          // サーバーが関節を返したので、room を待つあいだに60秒を過ぎても切らない
+          stopCountdown();
           releaseWakeLock ??= holdWakeLock();
         } else if (message.type === "rejected") {
           joined = false;
+          holdingJoint = false;
+          stopCountdown();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
         }
@@ -41,19 +62,34 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
         stopSending = undefined;
         joined = false;
         if (state.status === "closed") {
+          stopCountdown();
           releaseWakeLock?.();
           releaseWakeLock = undefined;
+        }
+        if (state.status === "reconnecting" && holdingJoint && reconnectingSince === undefined) {
+          reconnectingSince = aliveAt;
+          // 待つあいだに60秒を過ぎたら、つなぎ直しの途中でもやめる。残り秒数が 0 になるのと同じ時刻
+          giveUp = setTimeout(
+            () => connection.close(),
+            Math.max(0, reconnectingSince + RECONNECT_GRACE_MS - Date.now()),
+          );
         }
         // 送るのは、つながっていて、参加できているあいだだけ
         if (state.status === "open") {
           stopSending = startSendingTilt(nextSeq, (message) => joined && connection.send(message));
           aliveAt = Date.now();
         }
-        const at = state.status === "reconnecting" ? aliveAt : Date.now();
+        const at = state.status === "reconnecting" ? (reconnectingSince ?? aliveAt) : Date.now();
         emit({ type: "connection", state, at });
       },
     },
-    { baseUrl: location.href, clientId: phoneClientId() },
+    {
+      baseUrl: location.href,
+      clientId: phoneClientId(),
+      // 予約が切れたあとにつなぐと、新しいスマホとして別の関節を取ることがあり、閉じるとその関節を60秒予約させてしまう。
+      // 止まっていたページが戻ったときは、上のタイマーより先につなぎ直すことがあるので、つなぐ前にも見る
+      shouldReconnect: () => !deadlinePassed(),
+    },
   );
   let lastTick = Date.now();
   const alive = setInterval(() => {
@@ -66,6 +102,7 @@ export function startSession(room: string, emit: (event: PhoneEvent) => void): (
 
   return () => {
     clearInterval(alive);
+    stopCountdown();
     connection.close();
     stopSending?.();
     releaseWakeLock?.();

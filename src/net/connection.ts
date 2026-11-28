@@ -38,6 +38,11 @@ export interface ConnectOptions<Receive extends { type: string }> {
   /** 検証したメッセージ。ハートビートの返事は渡さない */
   onMessage: (message: Exclude<Receive, HeartbeatMessage>) => void;
   onStateChange?: (state: ConnectionState) => void;
+  /**
+   * つなぎ直すたび、トランスポートを開く前に聞く。false なら開かずに閉じる（code は 1000）。
+   * 省くと、時間では諦めない。初めの接続では聞かない
+   */
+  shouldReconnect?: () => boolean;
 }
 
 /** こちらから閉じたときの close コード */
@@ -129,9 +134,15 @@ export function connect<Receive extends { type: string }, Send>(
     const delay = delays[Math.min(attempt, delays.length) - 1];
     retry = setTimeout(() => {
       retry = undefined;
-      open();
+      reopen();
     }, delay);
     setState({ status: "reconnecting", attempt });
+  };
+
+  /** つなぎ直す。もうつなぎ直さないと言われたら、開かずに閉じる */
+  const reopen = () => {
+    if (options.shouldReconnect?.() === false) finish(NORMAL_CLOSURE, "");
+    else open();
   };
 
   const open = () => {
@@ -181,7 +192,7 @@ export function connect<Receive extends { type: string }, Send>(
       clearTimeout(retry);
       retry = undefined;
       attempt = 0;
-      open();
+      reopen();
     } else if (liveness !== undefined) {
       watchLiveness();
     }

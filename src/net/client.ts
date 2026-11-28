@@ -52,6 +52,8 @@ export interface ClientOptions {
 export interface PhoneOptions extends ClientOptions {
   /** スマホの ID（phoneClientId()）。つなぎ直したときに、サーバーが同じ関節を渡すのに使う */
   clientId?: string;
+  /** つなぎ直す前に聞く。false なら、つなぎ直さずに閉じる（Connection の shouldReconnect） */
+  shouldReconnect?: () => boolean;
 }
 
 /**
@@ -150,6 +152,7 @@ export function connectPhone(
       handlers.onMessage(message);
     },
     onStateChange: handlers.onStateChange,
+    shouldReconnect: options.shouldReconnect,
   });
   return connection;
 }
