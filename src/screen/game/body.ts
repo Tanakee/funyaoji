@@ -141,13 +141,9 @@ export const MOTOR = {
 
 /**
  * ハードモードの目標角度のモーター（docs/game.md の「ハードモード」）。
- * 力の上限をノーマルの約3/4にする。stiffness と damping はノーマルと同じ
+ * 力の上限をノーマルの約3/4にする。stiffness と damping はノーマルのものを使う
  */
-export const HARD_MOTOR: typeof MOTOR = {
-  stiffness: 780,
-  damping: 108,
-  maxForceBodyWeights: 0.14,
-};
+export const HARD_MOTOR: typeof MOTOR = { ...MOTOR, maxForceBodyWeights: 0.14 };
 
 /** 胴を起こす補助の強さ（胴が傾いたら戻すトルク） */
 export const TORSO_ASSIST = 1.006;
