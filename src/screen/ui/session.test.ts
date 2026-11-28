@@ -23,6 +23,8 @@ let handlers: {
 let game: GameOptions;
 const calls: string[] = [];
 let stopDistance = 3.2;
+/** game.stop() に渡したもの。結果の画面にするかを見る */
+const stopOptions: unknown[] = [];
 type Listener = (e: Partial<KeyboardEvent>) => void;
 /** window に付いたリスナー。セッションのキー操作と、キーボード操作（keyboard.ts）の両方が付く */
 const listeners: Record<string, Listener[]> = {};
@@ -74,8 +76,9 @@ vi.mock("../game/index.ts", async () => {
         reset: () => calls.push("reset"),
         start() {},
         practice: () => calls.push("practice"),
-        stop: () => {
+        stop: (options?: { showResult?: boolean }) => {
           calls.push("stop");
+          stopOptions.push(options);
           return stopDistance;
         },
         destroy() {},
@@ -87,6 +90,7 @@ vi.mock("../game/index.ts", async () => {
 beforeEach(() => {
   vi.useFakeTimers();
   sent.length = 0;
+  stopOptions.length = 0;
   connections.length = 0;
   vi.mocked(createRoom).mockReset().mockResolvedValue("ABCD");
   vi.mocked(submitRanking)
@@ -385,6 +389,8 @@ describe("ScreenSession", () => {
     await pending;
     expect(old.closed).toBe(true);
     expect(calls).toEqual(["practice", "reset", "stop", "practice"]);
+    // ルームを閉じて止めるときは、結果の画面にしない
+    expect(stopOptions).toEqual([undefined]);
     expect(session.getSnapshot()).toMatchObject({
       room: { roomCode: "WXYZ" },
       flow: { kind: "lobby" },
@@ -785,6 +791,7 @@ describe("ScreenSession", () => {
       await vi.advanceTimersByTimeAsync(1_000);
 
       expect(calls).toContain("stop");
+      expect(stopOptions).toEqual([{ showResult: true }]);
       expect(session.getSnapshot().flow).toMatchObject({
         kind: "result",
         result: { outcome: "disconnected", distanceM: 4.5 },

@@ -1,7 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { screenLayoutCssVars } from "./game/index.ts";
 import { ScreenApp } from "./ui/ScreenApp.tsx";
 import { ScreenSession } from "./ui/session.ts";
+
+for (const [key, value] of Object.entries(screenLayoutCssVars())) {
+  document.documentElement.style.setProperty(key, value);
+}
 
 // ゲームの Canvas は #stage に React の外で置く。ルーム・通信・ゲームは、ページに1つのセッションが持つ
 const session = new ScreenSession(document.getElementById("stage")!);

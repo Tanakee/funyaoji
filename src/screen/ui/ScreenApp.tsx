@@ -11,7 +11,7 @@ import "./screen.css";
 
 /**
  * スクリーンの UI。ゲームの Canvas は #stage に React の外で置いてあり、ここは、その上に重ねる画面を出す。
- * ロビーと結果は不透明な画面で Canvas を隠し、カウントダウンとプレイ中は Canvas を見せる
+ * ロビーと結果でも Canvas のおじさんと地面を見せる。縦向きのスマホで ?debug を開いたときは背景を塗る
  */
 export function ScreenApp({ session }: { session: ScreenSession }) {
   const view = useSyncExternalStore(session.subscribe, session.getSnapshot);
