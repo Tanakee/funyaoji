@@ -3,3 +3,4 @@ __pycache__/
 mlflow.db
 mlartifacts/
 runs/
+.registry.lock

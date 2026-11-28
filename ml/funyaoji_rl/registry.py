@@ -3,10 +3,13 @@
 - 評価：記録を Node で物理の1ステップずつ再生し、タイムと物理の不具合の量を測る（scripts/rl/anomaly.ts）
   - (E1)：10m に着いた
   - (E2)：(E1) で、物理の不具合のしきい値（THRESHOLDS）を越えていない
-- 登録：モデル funyaoji-10m-record の version として載せる。同じ記録（入力の列のハッシュ）は二度載せない
+- 登録：モデル funyaoji-10m-record の version として載せる。同じ物理の指紋で同じ記録（入力の列のハッシュ）は二度載せない。
+  記録は今の物理で再生して評価するので、学習したときの指紋が今と違う run の記録も、今の指紋で載せる
 - 別名：同じ物理の指紋の中で、(E2) の最速に theory、(E1) の最速に theory-any を付ける。
   別名の記録が別の指紋のものなら、新しい指紋の記録が速さにかかわらず別名を取る
-- 書き出し：theory の記録を src/screen/game/ai/theory.json に書く。ゲームとテストはこれを読む
+- 登録と、実験・モデルを作るところは、ml/.registry.lock の鍵で1つずつにする（何本も同時に流すため）
+- 書き出し：theory の記録を src/screen/game/ai/theory.json に書く。ゲームとテストはこれを読む。
+  theory が今の物理の指紋の記録でなければ、書き出さずに止める
 
 使い方（ml/ で）：
   uv run python -m funyaoji_rl.registry submit         # 実験の全部の run の記録を評価して登録し、別名を移す
@@ -57,80 +60,123 @@ def e2_problems(a: dict[str, Any]) -> list[str]:
     return out
 
 
+def evaluate(proc: NodeProcess, inputs: list[list[float]]) -> dict[str, Any]:
+    """記録を物理の1ステップずつ再生して、不具合の量と (E1)・(E2) を返す"""
+    a = proc.call({"cmd": "check", "inputs": inputs})
+    e1 = a["outcome"] == "goal"
+    problems = e2_problems(a) if e1 else ["ゴールしていない"]
+    return {"anomaly": a, "e1": e1, "e2": e1 and not problems, "problems": problems}
+
+
 def record_hash(inputs: list[list[float]]) -> str:
     return hashlib.sha256(json.dumps(inputs).encode()).hexdigest()[:16]
 
 
 def _client() -> mlflow.MlflowClient:
-    tracking.setup()
-    client = mlflow.MlflowClient()
-    try:
-        client.get_registered_model(MODEL)
-    except mlflow.exceptions.MlflowException:
-        client.create_registered_model(MODEL, description="入力の記録（毎秒30回の4つの値）。docs/ml.md")
+    with tracking.lock():
+        tracking.setup()
+        client = mlflow.MlflowClient()
+        try:
+            client.get_registered_model(MODEL)
+        except mlflow.exceptions.MlflowException:
+            client.create_registered_model(MODEL, description="入力の記録（毎秒30回の4つの値）。docs/ml.md")
     return client
+
+
+def _all_runs(client: mlflow.MlflowClient, experiment_id: str) -> list[Any]:
+    """件数の上限で切れないよう、ページをたどって全部の run を読む"""
+    out: list[Any] = []
+    token = None
+    while True:
+        page = client.search_runs(
+            [experiment_id], "attributes.status = 'FINISHED'", max_results=1000, page_token=token
+        )
+        out.extend(page)
+        token = page.token
+        if not token:
+            return out
 
 
 def _candidates(client: mlflow.MlflowClient, run_ids: list[str] | None) -> list[dict[str, Any]]:
     exp = mlflow.get_experiment_by_name(tracking.EXPERIMENT)
-    runs = (
-        [client.get_run(r) for r in run_ids]
-        if run_ids
-        else client.search_runs([exp.experiment_id], "attributes.status = 'FINISHED'", max_results=1000)
-    )
+    runs = [client.get_run(r) for r in run_ids] if run_ids else _all_runs(client, exp.experiment_id)
     out = []
-    tmp = Path(tempfile.mkdtemp())
-    for run in runs:
-        if "physics_fingerprint" not in run.data.tags:
-            continue
-        # 動作確認と速さの計測の run は載せない
-        if any(w in (run.info.run_name or "") for w in ("smoke", "bench")):
-            continue
-        for art in client.list_artifacts(run.info.run_id, "records"):
-            local = Path(client.download_artifacts(run.info.run_id, art.path, str(tmp)))
-            rec = json.loads(local.read_text(encoding="utf-8"))
-            if not rec.get("inputs"):
+    with tempfile.TemporaryDirectory() as tmp:
+        for run in runs:
+            if "physics_fingerprint" not in run.data.tags:
                 continue
-            out.append(
-                {
-                    "run": run,
-                    "artifact": art.path,
-                    "inputs": rec["inputs"],
-                    "hash": record_hash(rec["inputs"]),
-                }
-            )
+            # 動作確認と速さの計測の run は載せない
+            if any(w in (run.info.run_name or "") for w in ("smoke", "bench")):
+                continue
+            for art in client.list_artifacts(run.info.run_id, "records"):
+                if art.is_dir:
+                    continue
+                local = Path(client.download_artifacts(run.info.run_id, art.path, tmp))
+                rec = json.loads(local.read_text(encoding="utf-8"))
+                if not rec.get("inputs"):
+                    continue
+                out.append(
+                    {
+                        "run": run,
+                        "artifact": art.path,
+                        "inputs": rec["inputs"],
+                        "hash": record_hash(rec["inputs"]),
+                    }
+                )
     return out
 
 
 def _versions(client: mlflow.MlflowClient) -> list[Any]:
-    return client.search_model_versions(f"name='{MODEL}'", max_results=10000)
+    """件数の上限で切れないよう、ページをたどって全部の version を読む"""
+    out: list[Any] = []
+    token = None
+    while True:
+        page = client.search_model_versions(f"name='{MODEL}'", max_results=1000, page_token=token)
+        out.extend(page)
+        token = page.token
+        if not token:
+            return out
+
+
+def current_physics() -> dict[str, Any]:
+    """今の物理の指紋と Rapier の版を、Node に聞く"""
+    proc = NodeProcess()
+    try:
+        return proc.call({"cmd": "init", "n": 1, "config": {}})
+    finally:
+        proc.close()
 
 
 def submit(run_ids: list[str] | None = None) -> None:
+    # 読み直してから別名を移すまでに、ほかの run が割り込まないよう、全体を鍵の中で行う
+    with tracking.lock():
+        _submit(run_ids)
+
+
+def _submit(run_ids: list[str] | None) -> None:
     client = _client()
     proc = NodeProcess()
     try:
         current = proc.call({"cmd": "init", "n": 1, "config": {}})
         fingerprint = current["fingerprint"]
-        known = {v.tags.get("record_hash") for v in _versions(client)}
+        # 重複は（物理の指紋、記録のハッシュ）で見る。物理が変われば、同じ記録も評価し直して載せる
+        known = {(v.tags.get("physics_fingerprint"), v.tags.get("record_hash")) for v in _versions(client)}
         for c in _candidates(client, run_ids):
             run = c["run"]
-            if c["hash"] in known:
+            if (fingerprint, c["hash"]) in known:
                 continue
-            if run.data.tags["physics_fingerprint"] != fingerprint:
-                print(f"skip {run.info.run_name}：物理の指紋が今と違う")
-                continue
-            a = proc.call({"cmd": "check", "inputs": c["inputs"]})
-            e1 = a["outcome"] == "goal"
-            problems = e2_problems(a) if e1 else ["ゴールしていない"]
-            e2 = e1 and not problems
-            v = client.create_model_version(
+            tracking.touch()
+            ev = evaluate(proc, c["inputs"])
+            a, e1, e2, problems = ev["anomaly"], ev["e1"], ev["e2"], ev["problems"]
+            v =client.create_model_version(
                 MODEL,
                 source=f"{run.info.artifact_uri}/{c['artifact']}",
                 run_id=run.info.run_id,
                 tags={
                     "record_hash": c["hash"],
                     "physics_fingerprint": fingerprint,
+                    # 学習・探索したときの指紋。今の指紋と違っても、記録は今の物理で再生して評価している
+                    "run_physics_fingerprint": run.data.tags["physics_fingerprint"],
                     "rapier": current["rapier"],
                     "method": run.data.tags.get("method", ""),
                     "run_name": run.info.run_name,
@@ -142,7 +188,7 @@ def submit(run_ids: list[str] | None = None) -> None:
                     **{f"anomaly.{k}": f"{a[k]:.4f}" for k in THRESHOLDS},
                 },
             )
-            known.add(c["hash"])
+            known.add((fingerprint, c["hash"]))
             print(f"v{v.version} {run.info.run_name} {c['artifact']} {a['timeMs']} E1={e1} E2={e2}")
         _move_alias(client, THEORY, "e2", fingerprint)
         _move_alias(client, THEORY_ANY, "e1", fingerprint)
@@ -182,10 +228,19 @@ def _move_alias(client: mlflow.MlflowClient, alias: str, flag: str, fingerprint:
 
 def export() -> Path:
     client = _client()
-    v = client.get_model_version_by_alias(MODEL, THEORY)
-    tmp = Path(tempfile.mkdtemp())
-    local = Path(client.download_artifacts(v.run_id, v.tags["artifact"], str(tmp)))
-    rec = json.loads(local.read_text(encoding="utf-8"))
+    try:
+        v = client.get_model_version_by_alias(MODEL, THEORY)
+    except mlflow.exceptions.MlflowException as e:
+        raise SystemExit(f"別名 {THEORY} が無い。先に submit で記録を載せる") from e
+    fingerprint = current_physics()["fingerprint"]
+    if v.tags.get("physics_fingerprint") != fingerprint:
+        raise SystemExit(
+            f"別名 {THEORY}（v{v.version}）は物理の指紋 {v.tags.get('physics_fingerprint')} の記録で、"
+            f"今の指紋 {fingerprint} と違う。submit で今の物理の記録を載せてから書き出す"
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        local = Path(client.download_artifacts(v.run_id, v.tags["artifact"], tmp))
+        rec = json.loads(local.read_text(encoding="utf-8"))
     out = {
         "hz": 30,
         "joints": ["rightHip", "leftHip", "rightKnee", "leftKnee"],
