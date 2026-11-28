@@ -80,6 +80,26 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
   },
   {
+    name: "start (スマホの送信)",
+    message: { type: "start" },
+    directions: ["PhoneToServerMessage"],
+  },
+  {
+    name: "start (スクリーンの受信)",
+    message: { type: "start", joint: "rightHip" },
+    directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
+  },
+  {
+    name: "retry (スマホの送信)",
+    message: { type: "retry" },
+    directions: ["PhoneToServerMessage"],
+  },
+  {
+    name: "retry (スクリーンの受信)",
+    message: { type: "retry", joint: "rightHip" },
+    directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
+  },
+  {
     name: "tilt (スマホの送信)",
     message: { type: "tilt", seq: 128, angle: 42 },
     directions: ["PhoneToServerMessage"],
@@ -225,5 +245,9 @@ describe("メッセージのスキーマ", () => {
       joint: "leftKnee",
     });
     expect(result).toEqual({ type: "tilt", seq: 1, angle: 10 });
+  });
+
+  test.each(["start", "retry"])("スマホの %s に付いた joint は捨てる", (type) => {
+    expect(v.parse(PhoneToServerMessage, { type, joint: "leftKnee" })).toEqual({ type });
   });
 });

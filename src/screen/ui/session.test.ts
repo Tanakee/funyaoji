@@ -107,6 +107,94 @@ async function open(audio?: ScreenAudio) {
 }
 
 describe("ScreenSession", () => {
+  describe("スマホからの開始・やり直し", () => {
+    const four: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
+    const three = four.slice(0, 3);
+    const start = () => handlers.onMessage({ type: "start", joint: "rightHip" });
+    const retry = (joint: Joint = "rightHip") => handlers.onMessage({ type: "retry", joint });
+    const phases = () => sent.filter((message) => message.type === "phase");
+    const playing = { type: "phase", phase: "playing", mode: "10m" };
+
+    it("4人いるロビーで start を受け取ると、一度だけカウントダウンを始める", async () => {
+      const session = await open();
+      room(four);
+      start();
+      start();
+      expect(session.getSnapshot().flow).toEqual({ kind: "countdown", count: 3, players: four });
+      expect(phases()).toEqual([playing]);
+      session.dispose();
+    });
+
+    it("3人のロビーでは start を無視する", async () => {
+      const session = await open();
+      room(three);
+      start();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(phases()).toEqual([]);
+      session.dispose();
+    });
+
+    it("スクリーンがつなぎ直している間は start を無視する", async () => {
+      const session = await open();
+      room(four);
+      handlers.onStateChange?.({ status: "reconnecting" });
+      start();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(phases()).toEqual([]);
+      session.dispose();
+    });
+
+    it("4人いる結果で retry が連続して届いても、一度だけカウントダウンを始める", async () => {
+      const session = await open();
+      room(four);
+      press("Space");
+      await vi.advanceTimersByTimeAsync(3000);
+      game.onEnd({ outcome: "fell", distanceM: 1 });
+      sent.length = 0;
+      expect(session.getSnapshot().flow.kind).toBe("result");
+
+      start();
+      expect(session.getSnapshot().flow.kind).toBe("result");
+      expect(phases()).toEqual([]);
+      retry();
+      retry("leftHip");
+      expect(session.getSnapshot().flow).toEqual({ kind: "countdown", count: 3, players: four });
+      expect(phases()).toEqual([playing]);
+      session.dispose();
+    });
+
+    it("3人でデバッグプレイを終えた結果では retry を無視する", async () => {
+      const session = await open();
+      room(three);
+      press("Enter");
+      await vi.advanceTimersByTimeAsync(3000);
+      game.onEnd({ outcome: "fell", distanceM: 1 });
+      sent.length = 0;
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("result");
+      expect(phases()).toEqual([]);
+      session.dispose();
+    });
+
+    it("ロビー・カウントダウン・プレイ中は retry を無視する", async () => {
+      const session = await open();
+      room(four);
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("lobby");
+      expect(phases()).toEqual([]);
+
+      press("Space");
+      await vi.advanceTimersByTimeAsync(1000);
+      retry();
+      expect(session.getSnapshot().flow).toMatchObject({ kind: "countdown", count: 2 });
+      await vi.advanceTimersByTimeAsync(2000);
+      retry();
+      expect(session.getSnapshot().flow.kind).toBe("playing");
+      expect(phases()).toEqual([playing]);
+      session.dispose();
+    });
+  });
+
   it("M キーで全音を切り替え、キーの長押しでは切り替えを繰り返さない", async () => {
     const audio = {
       unlock: vi.fn(),

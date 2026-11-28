@@ -17,7 +17,11 @@ sequenceDiagram
   P->>S: WebSocket で接続
   S-->>P: joined
   S-->>C: room
-  Note over C: 4人が参加し、PC で開始
+  Note over P,C: 4人が参加し、スクリーンかスマホでスタート
+  opt スマホのスタート
+    P->>S: start
+    S-->>C: start（joint を付与）
+  end
   C->>S: phase（playing）
   S-->>P: phase（playing）
   loop 毎秒30回
@@ -176,6 +180,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | `rejected` | サーバー → スクリーン、スマホ | 必要 |
 | `room` | サーバー → スクリーン、すべてのスマホ | 必要 |
 | `phase` | スクリーン → サーバー → すべてのスマホ。接続したときは、サーバー → スマホ・スクリーン | 必要 |
+| `start`、`retry` | スマホ → サーバー → スクリーン | 必要 |
 | `tilt` | スマホ → サーバー → スクリーン | 不要 |
 | `status` | スクリーン → サーバー → すべてのスマホ | 不要 |
 | `ping`、`pong` | スクリーン ⇄ スマホ | 不要 |
@@ -236,6 +241,32 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 { "type": "phase", "phase": "playing", "mode": "10m" }
 { "type": "phase", "phase": "result", "result": { "outcome": "goal", "distanceM": 10, "timeMs": 32500 } }
 ```
+
+### start、retry
+
+スタート・もう一度のボタンを押した。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `joint` | `Joint` | サーバーがスクリーンに中継するときに付与する。スマホは送らない |
+
+```json
+{ "type": "start" }
+{ "type": "start", "joint": "rightHip" }
+```
+
+```json
+{ "type": "retry" }
+{ "type": "retry", "joint": "rightHip" }
+```
+
+それぞれ上がスマホの送信、下がスクリーンの受信。
+
+- スクリーンは、4人そろっているときだけ受け付ける
+- `start` はロビー、`retry` は結果のときだけ受け付け、ほかの状態で届いたものは捨てる
+- 2台がほぼ同時に押しても、2つめはカウントダウンの間に届くので捨てる
+- サーバーは状態を見ずに中継する（状態はスクリーンが決める）
+- スマホは、4人そろっていないときはボタンを押せなくする
 
 ### tilt
 

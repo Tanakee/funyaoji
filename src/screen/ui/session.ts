@@ -23,7 +23,7 @@ import {
   type KeyboardHandle,
 } from "../game/index.ts";
 import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
-import { INITIAL_FLOW, reduce, type Flow, type FlowEvent } from "./flow.ts";
+import { INITIAL_FLOW, isFull, reduce, type Flow, type FlowEvent } from "./flow.ts";
 import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
 
 /** この時間のうちに tilt が届いた関節を、入力が効いている（active）とする（docs/api.md の status） */
@@ -251,6 +251,12 @@ export class ScreenSession {
         break;
       case "rejected":
         this.updateRoom({ rejected: message.reason });
+        break;
+      case "start":
+        if (this.view.flow.kind === "lobby" && isFull(this.view.joints)) this.start();
+        break;
+      case "retry":
+        if (this.view.flow.kind === "result" && isFull(this.view.joints)) this.restart();
         break;
       case "tilt":
         // 待っている関節に古い tilt が遅れて届いても、入力は 0 のまま
