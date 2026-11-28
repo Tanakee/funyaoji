@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { COUNTDOWN_GUIDANCE } from "../../shared/countdown.ts";
 import { DebugControls } from "./DebugControls.tsx";
 import { DebugPanel } from "./DebugPanel.tsx";
 import { Hud, RestartHint } from "./Hud.tsx";
@@ -20,8 +21,17 @@ export function ScreenApp({ session }: { session: ScreenSession }) {
       {flow.kind === "lobby" && <Lobby session={session} view={view} />}
       {flow.kind === "countdown" && (
         // key で、数字が変わるたびにアニメーションをやり直す
-        <div className="overlay countdown" key={flow.count} aria-live="assertive">
-          <span className="countdown-number">{flow.count}</span>
+        <div className="overlay countdown" aria-live="assertive">
+          {/* 最初の表示の前（遅いスマホに届くのを待つあいだ）は、空白で高さだけを取る */}
+          <span className="countdown-number" key={flow.step.label}>
+            {flow.step.label || "\u00a0"}
+          </span>
+          <p className="countdown-guidance">{COUNTDOWN_GUIDANCE}</p>
+        </div>
+      )}
+      {view.startLabel !== undefined && (
+        <div className="overlay countdown" aria-live="assertive">
+          <span className="countdown-number countdown-start">{view.startLabel}</span>
         </div>
       )}
       <Hud view={view} />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { Countdown } from "./Countdown.tsx";
 import { Entry } from "./Entry.tsx";
 import { JointBand } from "./JointBand.tsx";
 import { Lobby } from "./Lobby.tsx";
@@ -150,7 +151,17 @@ function Body({
             {state.phase.kind === "lobby" ? (
               <Lobby room={room} joint={state.joint} count={state.count} onStart={onStart} />
             ) : state.phase.kind === "playing" ? (
-              <Playing joint={state.joint} active={state.active} />
+              state.phase.countdown === undefined ? (
+                <Playing joint={state.joint} active={state.active} />
+              ) : (
+                <Countdown
+                  key={state.phase.countdown.endsAt}
+                  countdown={state.phase.countdown}
+                  joint={state.joint}
+                >
+                  <Playing joint={state.joint} active={state.active} />
+                </Countdown>
+              )
             ) : (
               <Result
                 joint={state.joint}

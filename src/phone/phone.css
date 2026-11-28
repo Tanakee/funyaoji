@@ -318,6 +318,27 @@ body {
   margin-top: calc(-1 * max(16px, env(safe-area-inset-top)));
 }
 
+.phone-countdown {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.phone-countdown-label {
+  /* 主役の数字は 64px 以上（docs/screens.md）。幅 390 で「よーい」が1行に収まる大きさまで */
+  font-size: clamp(64px, 24vw, 160px);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.phone-countdown p {
+  margin: 16px 0 0;
+  font-size: 20px;
+}
+
 .lobby {
   flex: 1;
   display: flex;

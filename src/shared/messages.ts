@@ -1,5 +1,6 @@
 // メッセージの仕様は docs/api.md
 import * as v from "valibot";
+import { COUNTDOWN_KINDS } from "./countdown.ts";
 
 // 参加順に割り当てる順番
 export const JOINTS = ["rightHip", "leftHip", "rightKnee", "leftKnee"] as const;
@@ -41,9 +42,22 @@ export const PlayResult = v.variant("outcome", [
 ]);
 export type PlayResult = v.InferOutput<typeof PlayResult>;
 
+const CountdownTime = v.pipe(FiniteNumber, v.minValue(0), v.maxValue(10_000));
+const Countdown = v.object({
+  kind: v.picklist(COUNTDOWN_KINDS),
+  durationMs: CountdownTime,
+  remainingMs: CountdownTime,
+  delayMs: v.record(Joint, v.pipe(FiniteNumber, v.integer(), v.minValue(0))),
+});
+
 export const PhaseMessage = v.variant("phase", [
   v.object({ type: v.literal("phase"), phase: v.literal("lobby") }),
-  v.object({ type: v.literal("phase"), phase: v.literal("playing"), mode: Mode }),
+  v.object({
+    type: v.literal("phase"),
+    phase: v.literal("playing"),
+    mode: Mode,
+    countdown: v.optional(Countdown),
+  }),
   v.object({ type: v.literal("phase"), phase: v.literal("result"), result: PlayResult }),
 ]);
 export type PhaseMessage = v.InferOutput<typeof PhaseMessage>;
