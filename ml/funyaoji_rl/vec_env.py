@@ -23,6 +23,11 @@ ACT_DIM = 4
 DEFAULT_MODE = "normal"
 
 
+def mode_prefix(mode: str) -> str:
+    """手元の出力（runs/<名前>/）の名前の頭に付ける、モードの印。ノーマルはモードを分ける前と同じ名前にするので付けない"""
+    return "" if mode == DEFAULT_MODE else f"{mode}-"
+
+
 class NodeProcess:
     """server.ts を1つ立て、JSON を1行ずつやり取りする。mode のモードの物理で動く"""
 

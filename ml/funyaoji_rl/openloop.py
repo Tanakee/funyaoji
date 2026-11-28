@@ -20,7 +20,7 @@ import numpy as np
 from . import registry, tracking
 from .render import render
 from .tracking import mlflow
-from .vec_env import DEFAULT_MODE, NodeProcess
+from .vec_env import DEFAULT_MODE, NodeProcess, mode_prefix
 
 KEYS = ["T", "h0", "A", "K", "kp"]
 # 探す範囲。CMA-ES は 0〜1 に直した値で探す
@@ -105,7 +105,7 @@ def main() -> None:
     args = ap.parse_args()
 
     tracking.setup()
-    name = args.name or f"openloop-s{args.seed}"
+    name = args.name or f"{mode_prefix(args.mode)}openloop-s{args.seed}"
     out = Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
     x0 = (np.array([DEMO[k] for k in KEYS]) - LOW) / (HIGH - LOW)

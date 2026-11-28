@@ -28,7 +28,7 @@ from . import registry, tracking
 from .policy import AsymmetricPolicy
 from .render import render
 from .tracking import mlflow
-from .vec_env import DEFAULT_MODE, FunyaojiVecEnv, NodeProcess
+from .vec_env import DEFAULT_MODE, FunyaojiVecEnv, NodeProcess, mode_prefix
 
 
 class MlflowWriter(KVWriter):
@@ -188,7 +188,7 @@ def main() -> None:
 
     tracking.setup()
     torch.set_num_threads(args.torch_threads)
-    name = args.name or f"ppo-{args.reward}-g{args.gamma}-s{args.seed}-{time.strftime('%m%d%H%M')}"
+    name = args.name or f"{mode_prefix(args.mode)}ppo-{args.reward}-g{args.gamma}-s{args.seed}-{time.strftime('%m%d%H%M')}"
     out = Path("runs") / name
     out.mkdir(parents=True, exist_ok=True)
     env_config: dict[str, Any] = {"reward": args.reward, "goal": args.goal, "k": args.k, "gamma": args.gamma}
