@@ -1,7 +1,8 @@
 import { useEffect, useReducer, useRef, type ReactNode } from "react";
 import { JOINTS, type PlayResult } from "../shared/messages.ts";
-import { Gauge } from "./Gauge.tsx";
+import { jointCssColor } from "../shared/joints.ts";
 import { JOINT_LABELS } from "./joints.ts";
+import { Limb } from "./Limb.tsx";
 import { initialState, reduce, type PhoneState, type RejectReason } from "./model.ts";
 import { startSession } from "./session.ts";
 import { requestTiltPermission } from "./tilt.ts";
@@ -135,16 +136,21 @@ function Joined({ state }: { state: Extract<PhoneState, { kind: "joined" }> }) {
   const label = JOINT_LABELS[state.joint];
   const playing = state.phase.kind === "playing";
   return (
-    <div className="joined" data-active={playing && state.active}>
+    <div
+      className="joined"
+      data-active={playing && state.active}
+      // スクリーンのおじさんの、自分の脚と同じ色
+      style={{ "--joint": jointCssColor(state.joint) } as React.CSSProperties}
+    >
       {state.link === "reconnecting" && <p className="banner">つなぎ直しています…</p>}
       <section className="joint">
-        <p className="caption">あなたの担当</p>
+        <p className="caption">あなたの担当（スクリーンでこの色の脚）</p>
         <h1 className="joint-name">{label.name}</h1>
         <p className="joint-hint">
           寝かせる＝{label.flat} ／ 立てる＝{label.upright}
         </p>
       </section>
-      <Gauge />
+      <Limb joint={state.joint} />
       <section className="phase" data-phase={state.phase.kind}>
         {state.phase.kind === "lobby" && (
           <>

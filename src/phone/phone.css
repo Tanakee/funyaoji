@@ -15,8 +15,6 @@
   --warn-soft: #fbefd5;
   --danger: #c4452d;
   --danger-soft: #fbe2dc;
-  --gauge-track: #e9e2d6;
-  --gauge-fill: var(--accent);
   --font: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
 }
 
@@ -158,8 +156,20 @@ button {
   text-align: center;
 }
 
+/* 担当の関節の色の帯。スクリーンのおじさんの、自分の脚と同じ色 */
 .joint {
+  padding: 12px 12px 14px;
+  border-radius: 20px;
+  background: var(--joint);
+  color: #ffffff;
   text-align: center;
+  /* 黄色などの明るい色の上でも読めるように、スクリーンの凡例と同じく濃い縁を付ける */
+  text-shadow:
+    0 0 3px var(--fg),
+    0 0 1px var(--fg);
+}
+.joint .caption {
+  color: rgb(255 255 255 / 0.85);
 }
 .caption {
   margin: 0;
@@ -177,58 +187,57 @@ button {
   font-weight: 700;
 }
 
-.gauge {
-  padding: 16px;
+.limb {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 12px 12px;
   border-radius: 20px;
   background: var(--surface);
-  border: 2px solid var(--border);
+  border: 3px solid var(--joint);
 }
-.gauge-readout {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-variant-numeric: tabular-nums;
+.limb-figure {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
 }
-.gauge-percent {
-  font-size: 48px;
-  font-weight: 800;
-  line-height: 1.1;
+.limb-torso {
+  fill: var(--inactive-soft);
+  stroke: var(--inactive);
+  stroke-width: 3;
 }
-.gauge-degrees {
+.limb-part {
+  fill: var(--inactive-soft);
+  stroke: var(--fg);
+  stroke-width: 3;
+}
+.limb-foot {
+  fill: var(--fg);
+}
+.limb-ghost {
+  opacity: 0.15;
+}
+.limb-pivot {
+  stroke: var(--fg);
+  stroke-width: 3;
+}
+.limb-readout {
+  margin: 0;
   color: var(--muted);
   font-size: 22px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
-.gauge-track {
-  height: 28px;
-  margin-top: 8px;
-  overflow: hidden;
-  border-radius: 14px;
-  background: var(--gauge-track);
-}
-.gauge-fill {
-  height: 100%;
-  background: var(--gauge-fill);
-  transform: scaleX(0);
-  transform-origin: left;
-  will-change: transform;
-}
-.gauge-scale {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 14px;
-}
-.gauge-empty {
+.limb-empty {
   display: none;
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   color: var(--danger);
   font-size: 14px;
   font-weight: 700;
-  text-align: center;
 }
-.gauge[data-empty="true"] .gauge-empty {
+.limb[data-empty="true"] .limb-empty {
   display: block;
 }
 
