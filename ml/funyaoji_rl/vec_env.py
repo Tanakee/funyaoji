@@ -51,12 +51,18 @@ class NodeProcess:
         return self.recv()
 
     def close(self) -> None:
+        """入力を閉じて終わりを待つ。待っても終わらなければ止める（ゾンビのプロセスを残さない）"""
+        for f in (self.p.stdin, self.p.stdout):
+            try:
+                if f:
+                    f.close()
+            except OSError:
+                pass
         try:
-            if self.p.stdin:
-                self.p.stdin.close()
-            self.p.terminate()
-        except OSError:
-            pass
+            self.p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            self.p.wait()
 
 
 class FunyaojiVecEnv(VecEnv):
@@ -69,11 +75,18 @@ class FunyaojiVecEnv(VecEnv):
         self.workers = workers
         self.per = envs_per_worker
         self.config = config or {}
-        self.procs = [NodeProcess() for _ in range(workers)]
-        init = {"cmd": "init", "n": self.per, "config": self.config}
-        for p in self.procs:
-            p.send(init)
-        replies = [p.recv() for p in self.procs]
+        self.procs: list[NodeProcess] = []
+        try:
+            for _ in range(workers):
+                self.procs.append(NodeProcess())
+            init = {"cmd": "init", "n": self.per, "config": self.config}
+            for p in self.procs:
+                p.send(init)
+            replies = [p.recv() for p in self.procs]
+        except BaseException:
+            # 途中で失敗したら、起動済みのプロセスを残さない
+            self.close()
+            raise
         first = replies[0]
         self.actor_obs: int = first["actorObs"]
         self.fingerprint: str = first["fingerprint"]
