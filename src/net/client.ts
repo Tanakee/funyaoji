@@ -36,7 +36,7 @@ export interface ClientHandlers<Receive> {
 
 export interface ScreenHandlers extends ClientHandlers<ScreenReceived> {
   /**
-   * 関節ごとの片道の遅延。つながっているあいだ、ping を送るたび（1秒に1回）と room を受け取ったときに渡す。
+   * 関節ごとの片道の遅延。つながっているあいだ、ping を送るたび（1秒に1回）と、pong と room を受け取ったときに渡す。
    * つながっていないときは空にして渡す
    */
   onLatency?: (latency: Partial<Record<Joint, Latency>>) => void;
@@ -110,6 +110,8 @@ export function connectScreen(
       }
       if (message.type === "pong") {
         latency.pong(message.id, message.joint, performance.now());
+        // 次の ping まで待たずに渡す。参加した直後に始めても、カウントダウンがその関節の遅延を使えるように
+        handlers.onLatency?.(latency.snapshot());
         return;
       }
       handlers.onMessage(message);
