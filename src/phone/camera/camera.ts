@@ -8,14 +8,22 @@ import modelAssetPath from "./hand_landmarker.task?url";
 import { fingerAngle } from "./finger.ts";
 
 /**
- * off：使っていない。starting：カメラの許可とモデルの読み込みを待っている。running：指を読んでいる。
+ * off：使っていない。starting：カメラの許可を待っている。loading：映像は出ていて、指を読むモデルを読み込んでいる。
+ * running：指を読んでいる。
  * denied：カメラが許可されなかった。unavailable：カメラが無い・使えない（HTTPS でないときも）。failed：モデルを動かせなかった
  */
-export type CameraStatus = "off" | "starting" | "running" | "denied" | "unavailable" | "failed";
+export type CameraStatus =
+  | "off"
+  | "starting"
+  | "loading"
+  | "running"
+  | "denied"
+  | "unavailable"
+  | "failed";
 
 export interface CameraSnapshot {
   status: CameraStatus;
-  /** 画面に映すカメラの映像。running のときだけ */
+  /** 画面に映すカメラの映像。loading と running のとき */
   stream: MediaStream | undefined;
   /** 直近のフレームで手が映っていた */
   handVisible: boolean;
@@ -106,6 +114,8 @@ export function startCamera(write: (angle: number | undefined) => void): () => v
       "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
     video.srcObject = stream;
     document.body.appendChild(video);
+    // モデルの読み込みには数秒かかる。先に映像を出し、待っていることが分かるようにする
+    update({ status: "loading", stream });
     let hands: HandLandmarker;
     try {
       [hands] = await Promise.all([loadLandmarker(), video.play()]);

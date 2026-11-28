@@ -3,8 +3,9 @@ import { getCameraSnapshot, subscribeCamera, type CameraStatus } from "./camera.
 
 /** 映像の代わりに出す文。running で手が映っているときは出さない */
 const STATUS_TEXT: Record<Exclude<CameraStatus, "running">, string> = {
-  off: "カメラを準備しています",
-  starting: "カメラを準備しています",
+  off: "カメラを起動中...",
+  starting: "カメラを起動中...",
+  loading: "読み込み中...（はじめは少し時間がかかります）",
   denied: "カメラが許可されていません。ブラウザの設定でカメラを許可して、読み込み直してください",
   unavailable: "カメラを使えません。ほかのスマホで参加してください",
   failed: "指を読み取れませんでした。ページを読み込み直してください",
