@@ -1,8 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Noto+Sans+JP:wght@400;500;600;700;800;900&display=swap");
+@import "../../shared/fonts/fonts.css";
 
-/* 色とフォントはここに集める。見た目の方針が決まったら、この変数を差し替える */
+/* 色とフォントはここに集める。値の決まりは docs/screens.md の「色・フォント・刷り」 */
 :root {
-  --font-body: "DM Sans", "Noto Sans JP", sans-serif;
+  --font-body:
+    "Zen Kaku Gothic New", system-ui, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  --font-display: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
   --debug-h: 0px;
   --u: clamp(
     calc(var(--layout-scale-min) * 1px),
@@ -16,36 +18,36 @@
   --font-size-heading: max(24px, calc(32 * var(--u)));
   --font-size-hero: max(40px, calc(64 * var(--u)));
   --operator-space: calc(3 * clamp(40px, 4.375vw, 84px) + 32px);
-  --color-bg: #f2f2f0;
-  --color-ground: #e3e3df;
-  --color-surface: #fafaf7;
-  --color-ink: #2b2b28;
-  --color-ink-soft: #4a4a47;
-  --color-ink-faint: #6b6b67;
-  --color-line: #b3b3ae;
-  --color-line-strong: #8a8a86;
-  --color-brand: #2b2b28;
-  --color-brand-ink: #fafaf7;
-  --color-accent: #2b2b28;
-  --color-accent-soft: var(--color-ground);
-  --color-fell: #4a4a47;
-  --color-fell-soft: #e3e3df;
-  --color-disconnected: #555552;
-  --color-disconnected-soft: #e9e9e6;
+  --color-bg: #f3ead7;
+  --color-ground: #c99f6a;
+  --color-surface: #fbf8f0;
+  --color-ink: #1f3a68;
+  --color-ink-soft: #3f5275;
+  --color-ink-faint: #3f5275;
+  --color-line: #b3b5b6;
+  --color-line-strong: #7e899a;
+  --color-brand: #1f3a68;
+  --color-brand-ink: #fbf8f0;
+  --color-accent: #1f3a68;
+  --color-accent-soft: #ebe0c6;
+  --color-fell: #3f5275;
+  --color-fell-soft: #eae1d1;
+  --color-disconnected: #58647a;
+  --color-disconnected-soft: #e9e1d5;
   /* 入力の状態（HUD、ロビーの枠） */
-  --color-active: #2b2b28;
-  --color-idle: #c4c4c0;
-  --color-keyboard: #6b6b67;
+  --color-active: #1f3a68;
+  --color-idle: #bebebb;
+  --color-keyboard: #3f5275;
   /* デバッグ操作（?debug） */
   --color-debug-bg: #2d2a28;
   --color-debug-surface: #403c39;
   --color-debug-ink: #f6f1e7;
   --color-debug-ink-soft: #b9b1a5;
   --color-debug-guide: #ffffff;
-  --qr-dark: #2b2b28;
-  --qr-light: #ffffff;
+  --qr-dark: #1f3a68;
+  --qr-light: #fbf8f0;
   /* ゲームの Canvas の後ろ。ゲームが背景を描くまでの色 */
-  --stage-bg: #f2f2f0;
+  --stage-bg: #f3ead7;
 }
 
 * {
@@ -57,6 +59,7 @@ body {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-body);
+  font-weight: 700;
   font-synthesis: none;
   background: var(--stage-bg);
   color: var(--color-ink);
@@ -84,7 +87,7 @@ kbd {
   border-radius: 10px;
   background: var(--color-surface);
   font: inherit;
-  font-weight: 800;
+  font-weight: 900;
   text-align: center;
 }
 
@@ -121,7 +124,7 @@ kbd {
 .lobby-lead {
   margin: 0;
   font-size: var(--font-size-body);
-  font-weight: 800;
+  font-weight: 900;
 }
 .qr {
   width: calc(260 * var(--u));
@@ -162,10 +165,14 @@ kbd {
   font-weight: 700;
   text-align: center;
 }
+.lobby-count,
+.lobby-count strong {
+  font-family: var(--font-display);
+}
 .lobby-count {
   margin: 0 0 calc(12 * var(--u));
   font-size: var(--font-size-heading);
-  font-weight: 800;
+  font-weight: 900;
 }
 .lobby-count strong {
   font-size: 1.6em;
@@ -297,10 +304,14 @@ kbd {
   justify-content: center;
   pointer-events: none;
 }
+.countdown-number,
+.countdown-start {
+  font-family: var(--font-display);
+  font-weight: 900;
+}
 .countdown-number {
   color: var(--color-surface);
   font-size: max(64px, 34vh);
-  font-weight: 900;
   line-height: 1;
   text-shadow:
     0 0.04em 0 var(--color-ink),
@@ -354,15 +365,15 @@ kbd {
 }
 .hud-joint--active {
   background: var(--color-active);
-  color: #fff;
+  color: var(--color-surface);
 }
 .hud-joint--keyboard {
   background: var(--color-keyboard);
-  color: #fff;
+  color: var(--color-surface);
 }
 .hud-joint--absent {
   background: var(--color-disconnected);
-  color: #fff;
+  color: var(--color-surface);
 }
 .restart-hint {
   position: absolute;
@@ -406,7 +417,7 @@ kbd {
   min-width: 1.8em;
   padding: 2px 6px;
   border-radius: 6px;
-  background: #fff;
+  background: var(--color-surface);
   color: var(--color-keyboard);
   font-size: 1.1em;
   text-align: center;
@@ -420,7 +431,7 @@ kbd {
   max-width: calc(100% - 24px);
   padding: 4px 10px;
   border-radius: 10px;
-  background: #ffffffd9;
+  background: #fbf8f0d9;
   color: var(--color-ink);
   font-size: 13px;
   pointer-events: auto;
@@ -468,7 +479,7 @@ html[data-debug] .result-screen {
   color: var(--color-debug-ink);
   font: inherit;
   font-size: 20px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0;
   cursor: pointer;
   touch-action: manipulation;
@@ -802,7 +813,7 @@ html[data-debug] .result-screen {
   align-items: center;
   gap: 11px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0.25em;
   color: var(--color-ink-soft);
 }
@@ -816,11 +827,12 @@ html[data-debug] .result-screen {
 }
 .result-label {
   color: var(--accent);
-  font-weight: 800;
+  font-weight: 900;
   font-size: 14px;
   letter-spacing: 0.19em;
 }
 .result-heading h1 {
+  font-family: var(--font-display);
   margin: 2px 0 5px;
   font-size: var(--font-size-hero);
   line-height: 1.2;
@@ -831,7 +843,7 @@ html[data-debug] .result-screen {
   margin: 0;
   color: var(--color-ink-soft);
   font-size: var(--font-size-body);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .result-panel {
@@ -846,7 +858,7 @@ html[data-debug] .result-screen {
 }
 .panel-topline {
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 900;
 }
 .metric {
   margin-top: calc(16 * var(--u));
@@ -864,30 +876,32 @@ html[data-debug] .result-screen {
 .metric-label span {
   color: var(--color-ink-faint);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0.15em;
 }
 .metric-value {
+  font-family: var(--font-display);
   margin-top: 4px;
   font-size: var(--font-size-hero);
   line-height: 1.1;
-  font-weight: 800;
+  font-weight: 900;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.07em;
   white-space: nowrap;
 }
 .metric-value small {
+  font-family: var(--font-body);
   margin-left: 12px;
   color: var(--accent);
   font-size: 24px;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: 0;
 }
 .panel-footer {
   padding-top: calc(12 * var(--u));
   color: var(--color-ink-faint);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* 帯の中に置く。地面の目盛りの数字と重なるので、下地を敷く */
@@ -989,7 +1003,7 @@ html[data-debug] .result-screen {
   font-size: 20px;
 }
 .operator-dialog::backdrop {
-  background: #0008;
+  background: #1f3a6888;
 }
 .operator-dialog h2 {
   margin-top: 0;

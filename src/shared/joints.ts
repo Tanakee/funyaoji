@@ -8,14 +8,14 @@ export interface JointDisplay {
   textOnColor: string;
 }
 
-const DARK_TEXT = "#2b2b28";
+const DARK_TEXT = "#1f3a68";
 const LIGHT_TEXT = "#ffffff";
 
 export const JOINT_DISPLAY: Record<Joint, JointDisplay> = {
   leftKnee: { name: "左ひざ", color: "#56b4e9", textOnColor: DARK_TEXT },
-  leftHip: { name: "左もも", color: "#1f4e9e", textOnColor: LIGHT_TEXT },
-  rightKnee: { name: "右ひざ", color: "#f2b705", textOnColor: DARK_TEXT },
-  rightHip: { name: "右もも", color: "#c23a1a", textOnColor: LIGHT_TEXT },
+  leftHip: { name: "左もも", color: "#6a4cc0", textOnColor: LIGHT_TEXT },
+  rightKnee: { name: "右ひざ", color: "#fad21e", textOnColor: DARK_TEXT },
+  rightHip: { name: "右もも", color: "#c2510e", textOnColor: LIGHT_TEXT },
 };
 
 /** 画面の上の席の並び（左から）。参加の順（JOINTS）とは別 */
