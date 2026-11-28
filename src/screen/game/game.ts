@@ -68,6 +68,9 @@ export async function createGame({ container, inputs, onEnd }: GameOptions): Pro
   });
 
   return {
+    setSeats(seats) {
+      view.setSeats(seats);
+    },
     reset() {
       sim.free();
       sim = new Sim();

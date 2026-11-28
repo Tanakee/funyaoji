@@ -29,6 +29,16 @@ const SHIN = { hw: 0.06, hh: 0.194, density: 66 };
 // 足はすねに固定する（足首は動かない）。offset は、すねの中心からの前後のずれ
 const FOOT = { hw: 0.22, hh: 0.04, density: 300, offset: -0.1 };
 
+const kneeFront = { x: THIGH.hw, y: -THIGH.hh };
+const heel = { x: FOOT.offset - FOOT.hw, y: -SHIN.hh - FOOT.hh };
+
+export const STRING_ANCHORS: Record<Joint, { part: PartName; x: number; y: number }> = {
+  leftKnee: { part: "leftShin", ...heel },
+  leftHip: { part: "leftThigh", ...kneeFront },
+  rightKnee: { part: "rightShin", ...heel },
+  rightHip: { part: "rightThigh", ...kneeFront },
+};
+
 const LIMB_FRICTION = 0.2;
 export const FOOT_FRICTION = 1.845;
 

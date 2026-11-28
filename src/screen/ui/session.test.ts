@@ -3,8 +3,9 @@ import { createRoom, submitRanking } from "../../net/api.ts";
 import type { ConnectionState, Latency, ScreenReceived, ScreenSent } from "../../net/client.ts";
 import { GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import type { Joint } from "../../shared/messages.ts";
-import type { GameOptions, JointInputs } from "../game/types.ts";
+import type { Game, GameOptions, JointInputs } from "../game/types.ts";
 import type { ScreenAudio } from "./audio.ts";
+import { ScreenSession, seatsOf, type ScreenView } from "./session.ts";
 
 const sent: ScreenSent[] = [];
 const FOUR: Joint[] = ["rightHip", "leftHip", "rightKnee", "leftKnee"];
@@ -22,6 +23,7 @@ let handlers: {
 };
 let game: GameOptions;
 const calls: string[] = [];
+const setSeats = vi.fn<Game["setSeats"]>();
 let stopDistance = 3.2;
 /** game.stop() に渡したもの。結果の画面にするかを見る */
 const stopOptions: unknown[] = [];
@@ -61,10 +63,11 @@ vi.mock("../../net/client.ts", () => ({
 vi.mock("../game/index.ts", async () => {
   const { NEUTRAL_INPUTS } = await import("../game/body.ts");
   const { demoGait } = await import("../game/demo.ts");
-  const { attachKeyboard } = await import("../game/keyboard.ts");
+  const { attachKeyboard, KEYBOARD_KEYS } = await import("../game/keyboard.ts");
   return {
     NEUTRAL_INPUTS,
     demoGait,
+    KEYBOARD_KEYS,
     // キーボード操作は本物を使い、フレームはテストが進める
     attachKeyboard: (inputs: JointInputs, controls: (joint: Joint) => boolean) => {
       keyboardControls = controls;
@@ -73,6 +76,7 @@ vi.mock("../game/index.ts", async () => {
     createGame: async (options: GameOptions) => {
       game = options;
       return {
+        setSeats,
         reset: () => calls.push("reset"),
         start() {},
         practice: () => calls.push("practice"),
@@ -100,6 +104,7 @@ beforeEach(() => {
       rankings: [],
     });
   calls.length = 0;
+  setSeats.mockClear();
   connectionOpen = true;
   for (const type of Object.keys(listeners)) delete listeners[type];
   vi.stubGlobal("window", {
@@ -139,7 +144,6 @@ const room = (joints: Joint[]) => handlers.onMessage({ type: "room", roomCode: "
 const inputs = (): JointInputs => game.inputs;
 
 async function open(audio?: ScreenAudio, teamName = "テスト") {
-  const { ScreenSession } = await import("./session.ts");
   const session = new ScreenSession({} as HTMLElement, false, audio);
   if (teamName) session.setTeamName(teamName);
   session.open();
@@ -148,7 +152,122 @@ async function open(audio?: ScreenAudio, teamName = "テスト") {
   return session;
 }
 
+describe("seatsOf", () => {
+  const lobby: ScreenView = {
+    room: { status: "creating" },
+    flow: { kind: "lobby" },
+    joints: [],
+    active: [],
+    absent: {},
+    reserved: {},
+    game: "ready",
+    debug: { enabled: false, autoplay: false },
+    audio: { ready: false, muted: false, unavailable: false },
+    recreation: { status: "idle" },
+    ranking: { status: "idle" },
+    teamNameInput: "",
+    teamNameError: undefined,
+    teamName: undefined,
+    input: "tilt",
+  };
+
+  it("ロビーでは空席・入力中・入力なし・予約中の各席に部位名を出す", () => {
+    expect(
+      seatsOf({
+        ...lobby,
+        joints: ["leftHip", "rightKnee"],
+        active: ["leftHip"],
+        reserved: { rightHip: 52 },
+      }),
+    ).toEqual({
+      leftKnee: { showName: true, state: { kind: "empty" } },
+      leftHip: { showName: true, state: { kind: "joined", active: true } },
+      rightKnee: { showName: true, state: { kind: "joined", active: false } },
+      rightHip: { showName: true, state: { kind: "reserved", remainingSec: 52 } },
+    });
+  });
+
+  it("プレイ中は開始時の担当の待ち時間を使い、空いている関節にはキーを出す", () => {
+    expect(
+      seatsOf({
+        ...lobby,
+        flow: { kind: "playing", players: ["leftHip", "rightHip"] },
+        joints: ["rightHip", "rightKnee"],
+        active: ["rightHip"],
+        absent: { leftHip: 58 },
+        reserved: { leftHip: 18, leftKnee: 40 },
+      }),
+    ).toEqual({
+      leftKnee: { showName: false, state: { kind: "empty" }, key: "P" },
+      leftHip: { showName: false, state: { kind: "reserved", remainingSec: 58 } },
+      rightKnee: { showName: false, state: { kind: "joined", active: false } },
+      rightHip: { showName: false, state: { kind: "joined", active: true } },
+    });
+  });
+
+  it("結果では予約の残り時間を出し、部位名とキーを隠す", () => {
+    const seats = seatsOf({
+      ...lobby,
+      flow: { kind: "result", players: ["leftKnee"], result: { outcome: "fell", distanceM: 1 } },
+      reserved: { leftKnee: 20 },
+    });
+    expect(seats.leftKnee).toEqual({
+      showName: false,
+      state: { kind: "reserved", remainingSec: 20 },
+    });
+    expect(seats.leftHip).toEqual({ showName: false, state: { kind: "empty" } });
+  });
+});
+
 describe("ScreenSession", () => {
+  it("「抜ける」で空いた席（vacated）は予約中にせず、すぐ空席にする", async () => {
+    const session = await open();
+    await vi.advanceTimersByTimeAsync(90);
+    room(["leftKnee", "rightHip"]);
+    handlers.onMessage({
+      type: "room",
+      roomCode: "ABCD",
+      joints: ["rightHip"],
+      vacated: "leftKnee",
+    });
+    expect(session.getSnapshot().reserved).toEqual({});
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
+    room([]);
+    expect(session.getSnapshot().reserved).toEqual({ rightHip: 60 });
+    session.dispose();
+  });
+
+  it("ロビーで抜けた席は予約中になり、60秒で空席に戻る", async () => {
+    const session = await open();
+    await vi.advanceTimersByTimeAsync(90);
+    room(["leftKnee"]);
+    room([]);
+    expect(session.getSnapshot().reserved).toEqual({ leftKnee: 60 });
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({
+      kind: "reserved",
+      remainingSec: 60,
+    });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(session.getSnapshot().reserved).toEqual({ leftKnee: 1 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session.getSnapshot().reserved).toEqual({});
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
+    session.dispose();
+  });
+
+  it("席はゲームの作成時に渡し、接続状態や入力状態が変わったときだけ更新する", async () => {
+    const session = await open();
+    expect(setSeats).toHaveBeenCalledOnce();
+    room(["leftKnee"]);
+    room(["leftKnee"]);
+    expect(setSeats).toHaveBeenCalledTimes(2);
+    handlers.onMessage({ type: "tilt", joint: "leftKnee", seq: 1, angle: 45 });
+    expect(setSeats).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "joined", active: true });
+    session.dispose();
+  });
+
   it("操作方法はロビーでだけ変えられ、phase でスマホに知らせ、ランキングも分ける", async () => {
     const session = await open();
     session.setInputMethod("camera");
@@ -406,6 +525,23 @@ describe("ScreenSession", () => {
     }
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     expect(preventDefault).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("ルームを作り直すと、旧ルームで抜けた席の予約を消す", async () => {
+    const session = await open();
+    room(["leftKnee"]);
+    room([]);
+    expect(session.getSnapshot().reserved).toEqual({ leftKnee: 60 });
+    vi.mocked(createRoom).mockResolvedValueOnce("WXYZ");
+    const pending = session.recreateRoom();
+    await vi.advanceTimersByTimeAsync(0);
+    connections[1]!.handlers.onMessage({ type: "room", roomCode: "WXYZ", joints: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    connections[0]!.handlers.onMessage({ type: "room-closed" });
+    await pending;
+    expect(session.getSnapshot().reserved).toEqual({});
+    expect(setSeats.mock.lastCall?.[0].leftKnee.state).toEqual({ kind: "empty" });
     session.dispose();
   });
 

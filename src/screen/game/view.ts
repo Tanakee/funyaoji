@@ -9,14 +9,21 @@ import {
   Text,
   type ColorSource,
 } from "pixi.js";
-import { JOINT_DISPLAY } from "../../shared/joints.ts";
-import { JOINTS, type Joint } from "../../shared/messages.ts";
+import { JOINT_DISPLAY, SEATS } from "../../shared/joints.ts";
 import { BACKDROP_COLORS, createBackdrop } from "./backdrop.ts";
-import { INITIAL_POSES, PART_NAMES, PART_SHAPES, TORSO_SIZE, type PartName } from "./body.ts";
+import {
+  INITIAL_POSES,
+  PART_NAMES,
+  PART_SHAPES,
+  STRING_ANCHORS,
+  TORSO_SIZE,
+  type PartName,
+} from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
 import { SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
+import type { Seats, SeatState } from "./types.ts";
 
 /** 色の決まりは docs/screens.md の「色・フォント・刷り」。部位ごとの色は shared/joints.ts */
 const COLORS = {
@@ -31,15 +38,16 @@ const COLORS = {
   head: 0xf2cfae,
   foot: 0xf4efe3,
   face: 0x1f3a68,
+  emptyLimb: 0xa2a7ad,
+  seatOutline: 0x1f3a68,
+  emptySeatOutline: 0x3f5275,
+  seatPaper: 0xfbf8f0,
+  seatText: 0x3f5275,
 };
 
-// 部位を動かす関節（色分けに使う）
-const PART_JOINT: Record<Exclude<PartName, "torso">, Joint> = {
-  rightThigh: "rightHip",
-  rightShin: "rightKnee",
-  leftThigh: "leftHip",
-  leftShin: "leftKnee",
-};
+const SEAT_OFFSETS = [-238, -174, -10, 54];
+const TAG_BOTTOM = 34;
+const LABEL_LINE = 28;
 
 // 左の脚を奥に、右の脚を手前に描く
 const DRAW_ORDER: PartName[] = ["leftThigh", "leftShin", "torso", "rightThigh", "rightShin"];
@@ -90,10 +98,11 @@ async function loadViewFonts(): Promise<boolean> {
 }
 
 export interface View {
-  /** 画面に合わせて、カメラと、距離・タイム・凡例を出すかを変える */
+  /** 画面に合わせて、カメラと、距離・タイムを出すかを変える */
   setScene(scene: Scene): void;
   /** 描画のたびに呼ばれる。dtSec は前のフレームからの実時間 */
   onFrame(callback: (dtSec: number) => void): void;
+  setSeats(seats: Seats): void;
   render(state: SimState): void;
   destroy(): void;
 }
@@ -101,9 +110,8 @@ export interface View {
 /** 部位の形を描く。m のまま描くと曲線が粗くなるので、cm で描いて 0.01 倍にする */
 const CM = 100;
 
-function drawPart(name: PartName): Graphics {
-  const g = new Graphics();
-  g.scale.set(1 / CM);
+function drawPart(g: Graphics, name: PartName, limbColor: ColorSource = COLORS.emptyLimb): void {
+  g.clear();
   for (const shape of PART_SHAPES[name]) {
     const color =
       shape.tag === "foot"
@@ -112,7 +120,7 @@ function drawPart(name: PartName): Graphics {
           ? COLORS.head
           : name === "torso"
             ? COLORS.torso
-            : JOINT_DISPLAY[PART_JOINT[name]].color;
+            : limbColor;
     if (shape.kind === "box") {
       g.roundRect(
         (shape.ox - shape.hw) * CM,
@@ -135,7 +143,6 @@ function drawPart(name: PartName): Graphics {
       .lineTo(9, headY - 6)
       .stroke({ width: 1.4, color: COLORS.face });
   }
-  return g;
 }
 
 function label(text: string, size: number, color: ColorSource, bold = false): Text {
@@ -148,6 +155,58 @@ function label(text: string, size: number, color: ColorSource, bold = false): Te
       fill: color,
     },
   });
+}
+
+function drawTag(tag: Graphics, color?: ColorSource): void {
+  tag
+    .clear()
+    .roundRect(-20, -14, 40, 48, 10)
+    .fill(color ?? COLORS.seatPaper);
+  if (color !== undefined) {
+    tag.stroke({ width: 2.5, color: COLORS.seatOutline });
+    return;
+  }
+
+  // 画面内に見える輪郭を左から右へたどり、5px 描いて 4px 空ける
+  const side = 28;
+  const corner = (10 * Math.PI) / 2;
+  const bottom = 20;
+  const length = 2 * (side + corner) + bottom;
+  const pointAt = (d: number): [number, number] => {
+    if (d < side) return [-20, 24 - side + d];
+    d -= side;
+    if (d < corner) return [-10 - 10 * Math.cos(d / 10), 24 + 10 * Math.sin(d / 10)];
+    d -= corner;
+    if (d < bottom) return [-10 + d, TAG_BOTTOM];
+    d -= bottom;
+    if (d < corner) return [10 + 10 * Math.sin(d / 10), 24 + 10 * Math.cos(d / 10)];
+    return [20, 24 - (d - corner)];
+  };
+  for (let start = 0; start < length; start += 9) {
+    const end = Math.min(start + 5, length);
+    tag.moveTo(...pointAt(start)).lineTo(...pointAt(end));
+  }
+  tag.stroke({ width: 2.5, color: COLORS.emptySeatOutline });
+}
+
+function drawString(
+  line: Graphics,
+  cx: number,
+  x: number,
+  y: number,
+  color: ColorSource,
+  slack: boolean,
+): void {
+  const controlX = (cx + x) / 2 + (x < cx ? 84 : -84);
+  const controlY = (TAG_BOTTOM + y) / 2 + 68;
+  const path = () => {
+    line.moveTo(cx, TAG_BOTTOM);
+    if (slack) line.quadraticCurveTo(controlX, controlY, x, y);
+    else line.lineTo(x, y);
+    return line;
+  };
+  path().stroke({ width: slack ? 4 : 5.5, color: COLORS.seatOutline, cap: "round" });
+  path().stroke({ width: slack ? 2.5 : 3.5, color, cap: "round" });
 }
 
 export async function createView(container: HTMLElement): Promise<View> {
@@ -175,6 +234,7 @@ export async function createView(container: HTMLElement): Promise<View> {
   observer.observe(container);
 
   const backdrop = createBackdrop(app.renderer);
+  // 重なりの順：ルーラー（地面と目盛り）→ おじさん → 糸と札 → HUD
   const ruler = new Graphics();
   const labelLayer = new Container();
   const rulerLabels = new Map<string, Text>();
@@ -193,7 +253,9 @@ export async function createView(container: HTMLElement): Promise<View> {
   const world = new Container();
   const partGraphics = {} as Record<PartName, Graphics>;
   for (const name of DRAW_ORDER) {
-    const g = drawPart(name);
+    const g = new Graphics();
+    g.scale.set(1 / CM);
+    drawPart(g, name);
     g.position.set(INITIAL_POSES[name].x, INITIAL_POSES[name].y);
     partGraphics[name] = g;
     world.addChild(g);
@@ -211,36 +273,77 @@ export async function createView(container: HTMLElement): Promise<View> {
   timeText.y = 78;
   hud.addChild(distanceText, timeText);
 
-  // 凡例。担当の関節の色と名前
-  const legend = new Container();
-  const addLegendName = (item: Container, joint: Joint) => {
-    const name = label(JOINT_DISPLAY[joint].name, 24, JOINT_DISPLAY[joint].textOnColor, true);
-    name.anchor.set(0.5);
-    name.position.set(75, 20);
-    item.addChild(name);
+  const seatLayer = new Container();
+  const strings = new Container();
+  const markers = new Container();
+  const tags = new Container();
+  seatLayer.addChild(strings, markers, tags);
+  const seatCaption = (text: string) => {
+    const caption = label(text, 20, COLORS.seatText, true);
+    caption.anchor.set(0.5, 0);
+    caption.visible = false;
+    return caption;
   };
-  JOINTS.forEach((joint, i) => {
-    const chip = new Graphics()
-      .roundRect(0, 0, 150, 40, 8)
-      .fill(JOINT_DISPLAY[joint].color)
-      .stroke({ width: 2, color: COLORS.outline });
-    const item = new Container();
-    item.addChild(chip);
-    addLegendName(item, joint);
-    item.y = i * 48;
-    legend.addChild(item);
+  const seatGraphics = SEATS.map((joint) => {
+    const { color, name } = JOINT_DISPLAY[joint];
+    const line = new Graphics();
+    const marker = new Graphics()
+      .circle(0, 0, 14)
+      .fill(COLORS.seatOutline)
+      .circle(0, 0, 12)
+      .fill(color)
+      .stroke({ width: 3, color: COLORS.seatPaper });
+    marker.visible = false;
+    const tag = new Graphics();
+    drawTag(tag);
+    const captions = new Container();
+    const nameText = seatCaption(name);
+    const detail = seatCaption("");
+    const keyBox = new Graphics()
+      .roundRect(-15, -2, 30, LABEL_LINE, 5)
+      .fill(COLORS.seatPaper)
+      .stroke({ width: 1, color: COLORS.emptySeatOutline });
+    keyBox.visible = false;
+    captions.addChild(nameText, keyBox, detail);
+    strings.addChild(line);
+    markers.addChild(marker);
+    tags.addChild(tag, captions);
+    const state = { kind: "empty" } as SeatState;
+    return { line, marker, tag, captions, nameText, detail, keyBox, state };
   });
 
-  app.stage.addChild(backdrop.back, backdrop.ground, ruler, labelLayer, world, hud, legend);
+  app.stage.addChild(backdrop.back, backdrop.ground, ruler, labelLayer, world, seatLayer, hud);
 
-  const camera = new Camera();
-  function setScene(scene: Scene): void {
-    hud.visible = scene === "playing";
-    legend.visible = scene === "countdown" || scene === "playing";
-    backdrop.setBuntingVisible(scene === "countdown" || scene === "playing");
-    camera.setScene(scene, performance.now());
+  let currentSeats: Seats | undefined;
+  function setSeats(seats: Seats): void {
+    currentSeats = seats;
+    SEATS.forEach((joint, i) => {
+      const { state, showName, key } = seats[joint];
+      const graphics = seatGraphics[i];
+      const occupied = state.kind !== "empty";
+      if (occupied !== (graphics.state.kind !== "empty")) {
+        const color = occupied ? JOINT_DISPLAY[joint].color : undefined;
+        const { part } = STRING_ANCHORS[joint];
+        drawPart(partGraphics[part], part, color);
+        drawTag(graphics.tag, color);
+      }
+      graphics.state = state;
+      const idle = state.kind === "joined" && !state.active;
+      graphics.tag.alpha = idle ? 0.4 : 1;
+      graphics.line.alpha = state.kind === "reserved" ? 0.5 : graphics.tag.alpha;
+      graphics.marker.alpha = graphics.line.alpha;
+      graphics.marker.visible = occupied;
+
+      const detail = state.kind === "reserved" ? `あと${state.remainingSec}秒` : (key ?? "");
+      graphics.nameText.visible = showName;
+      graphics.detail.visible = detail !== "";
+      if (graphics.detail.text !== detail) graphics.detail.text = detail;
+      // 隣の席のラベルを1行挟み、同じ席の2行目が重ならないようにする
+      graphics.detail.y = showName ? 2 * LABEL_LINE : 0;
+      graphics.keyBox.y = graphics.detail.y;
+      graphics.keyBox.visible = key !== undefined;
+    });
   }
-  setScene("lobby");
 
   function rebuildTextsWithLoadedFont(): void {
     const loadedHudFont = hudFontName("loaded");
@@ -248,17 +351,30 @@ export async function createView(container: HTMLElement): Promise<View> {
     timeText.style.fontFamily = loadedHudFont;
     for (const label of rulerLabels.values()) label.destroy();
     rulerLabels.clear();
-    JOINTS.forEach((joint, i) => {
-      const item = legend.getChildAt(i);
-      item.getChildAt(1).destroy();
-      addLegendName(item, joint);
+    SEATS.forEach((joint, i) => {
+      const graphics = seatGraphics[i];
+      graphics.nameText.destroy();
+      graphics.detail.destroy();
+      graphics.nameText = seatCaption(JOINT_DISPLAY[joint].name);
+      graphics.detail = seatCaption("");
+      graphics.captions.addChildAt(graphics.nameText, 0);
+      graphics.captions.addChild(graphics.detail);
     });
+    if (currentSeats) setSeats(currentSeats);
   }
   if (fontState === "timeout") {
     void fontsLoaded.then((loaded) => {
-      if (loaded && !legend.destroyed) rebuildTextsWithLoadedFont();
+      if (loaded && !seatLayer.destroyed) rebuildTextsWithLoadedFont();
     });
   }
+
+  const camera = new Camera();
+  function setScene(scene: Scene): void {
+    hud.visible = scene === "playing";
+    backdrop.setBuntingVisible(scene === "countdown" || scene === "playing");
+    camera.setScene(scene, performance.now());
+  }
+  setScene("lobby");
 
   function render(state: SimState): void {
     const { width: w, height: h } = app.screen;
@@ -280,6 +396,27 @@ export async function createView(container: HTMLElement): Promise<View> {
       partGraphics[name].position.set(pose.x, pose.y);
       partGraphics[name].rotation = pose.rot;
     }
+
+    seatLayer.scale.set(ui);
+    seatLayer.x = w / 2;
+    SEATS.forEach((joint, i) => {
+      const { state: seat, line, marker, tag, captions } = seatGraphics[i];
+      const cx = SEAT_OFFSETS[i];
+      tag.x = cx;
+      captions.position.set(cx, TAG_BOTTOM + 6 + (i % 2) * LABEL_LINE);
+      line.clear();
+      if (seat.kind === "empty") return;
+      const anchor = STRING_ANCHORS[joint];
+      const pose = state.poses[anchor.part];
+      const cos = Math.cos(pose.rot);
+      const sin = Math.sin(pose.rot);
+      const wx = pose.x + anchor.x * cos - anchor.y * sin;
+      const wy = pose.y + anchor.x * sin + anchor.y * cos;
+      const x = (screenX(wx) - seatLayer.x) / ui;
+      const y = (groundY - wy * pxPerM) / ui;
+      drawString(line, cx, x, y, JOINT_DISPLAY[joint].color, seat.kind === "reserved");
+      marker.position.set(x, y);
+    });
 
     ruler.clear();
     const first = Math.floor(-worldOriginX / pxPerM) - 1;
@@ -330,8 +467,6 @@ export async function createView(container: HTMLElement): Promise<View> {
     hud.position.set(SCREEN_LAYOUT.safeX * ui, SCREEN_LAYOUT.safeY * ui);
     distanceText.text = `${formatDistance(state.distanceM)} m`;
     timeText.text = `${formatTime(state.elapsedMs)} 秒`;
-    legend.scale.set(ui);
-    legend.position.set(w - 24 * ui - 150 * ui, 16 * ui);
   }
 
   return {
@@ -340,6 +475,7 @@ export async function createView(container: HTMLElement): Promise<View> {
       app.ticker.add((ticker) => callback(ticker.deltaMS / 1000));
     },
     render,
+    setSeats,
     destroy() {
       observer.disconnect();
       backdrop.destroy();

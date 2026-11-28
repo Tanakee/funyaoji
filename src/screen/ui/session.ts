@@ -26,10 +26,17 @@ import {
   attachKeyboard,
   createGame,
   demoGait,
+  KEYBOARD_KEYS,
   NEUTRAL_INPUTS,
   type KeyboardHandle,
 } from "../game/index.ts";
-import { tiltToInput, type Game, type JointInputs } from "../game/types.ts";
+import {
+  tiltToInput,
+  type Game,
+  type JointInputs,
+  type Seats,
+  type SeatView,
+} from "../game/types.ts";
 import { INITIAL_FLOW, isFull, reduce, type Flow, type FlowEvent } from "./flow.ts";
 import { prepareScreen } from "./roomConnection.ts";
 import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
@@ -41,7 +48,7 @@ const STATUS_INTERVAL_MS = 1_000;
 /** active の集合が変わったかを調べる間隔 */
 const ACTIVE_CHECK_MS = 100;
 /**
- * プレイ中に切れたスマホを待つ時間。サーバーが関節を取っておく60秒と同じ（docs/game.md の「切断と、つなぎ直し」）。
+ * 抜けたスマホを待つ時間。サーバーが関節を予約する60秒と同じ（docs/game.md の「切断と、つなぎ直し」）。
  * サーバーは予約が切れたことを知らせないので、スクリーンが、関節が room から抜けたときから数える
  */
 export const RECONNECT_WAIT_MS = 60_000;
@@ -82,6 +89,8 @@ export interface ScreenView {
   active: readonly Joint[];
   /** つなぎ直しを待っている関節と、待つ残り秒数（切り上げ。1秒に1回だけ変わる） */
   absent: Readonly<Partial<Record<Joint, number>>>;
+  /** room の joints から抜けてから、予約が切れるまでの秒数（切り上げ） */
+  reserved: Readonly<Partial<Record<Joint, number>>>;
   game: GameState;
   /** 操作方法（docs/game.md の「操作方法」）。ロビーでだけ変えられ、phase でスマホに知らせる */
   input: InputMethod;
@@ -124,6 +133,49 @@ export function keyboardDrives(view: ScreenView, joint: Joint): boolean {
   );
 }
 
+/**
+ * 画面の上の席の見せ方（docs/screens.md の「糸」）。カウントダウンとプレイ中は、開始したスマホのつなぎ直しを待つ
+ * 残り秒数（absent）を、ロビーと結果は room から抜けてからの残り秒数（reserved）を出す
+ */
+export function seatsOf(view: ScreenView): Seats {
+  const { flow } = view;
+  const showName = flow.kind === "lobby";
+  const inRun = flow.kind === "countdown" || flow.kind === "playing";
+  const seatOf = (joint: Joint): SeatView => {
+    if (view.joints.includes(joint)) {
+      return { showName, state: { kind: "joined", active: view.active.includes(joint) } };
+    }
+    const remainingSec = inRun
+      ? flow.players.includes(joint)
+        ? view.absent[joint]
+        : undefined
+      : view.reserved[joint];
+    if (remainingSec !== undefined) {
+      return { showName, state: { kind: "reserved", remainingSec } };
+    }
+    const key = keyboardDrives(view, joint) ? KEYBOARD_KEYS[joint].label : undefined;
+    return { showName, state: { kind: "empty" }, key };
+  };
+  return {
+    leftKnee: seatOf("leftKnee"),
+    leftHip: seatOf("leftHip"),
+    rightKnee: seatOf("rightKnee"),
+    rightHip: seatOf("rightHip"),
+  };
+}
+
+function sameSeat(a: SeatView, b: SeatView): boolean {
+  if (a.showName !== b.showName || a.key !== b.key) return false;
+  switch (a.state.kind) {
+    case "empty":
+      return b.state.kind === "empty";
+    case "joined":
+      return b.state.kind === "joined" && a.state.active === b.state.active;
+    case "reserved":
+      return b.state.kind === "reserved" && a.state.remainingSec === b.state.remainingSec;
+  }
+}
+
 /** 確かめるための情報。tilt のたびに書き換える。React の state ではないので、読む側が間引いて読む */
 export interface DebugInfo {
   tilts: Partial<Record<Joint, { seq: number; angle: number }>>;
@@ -140,6 +192,7 @@ export class ScreenSession {
     joints: [],
     active: [],
     absent: {},
+    reserved: {},
     game: "loading",
     input: "tilt",
     audio: { ready: false, muted: false, unavailable: false },
@@ -152,6 +205,7 @@ export class ScreenSession {
   };
   private readonly listeners = new Set<() => void>();
   private game: Game | undefined;
+  private seats: Seats | undefined;
   private connection: Connection<ScreenSent> | undefined;
   private roomGeneration = 0;
   private roomEnded = false;
@@ -159,6 +213,8 @@ export class ScreenSession {
   private roomClose: { resolve: () => void; reject: (error: Error) => void } | undefined;
   /** 関節ごとに最後に tilt が届いた時刻（performance.now()） */
   private readonly lastTiltAt = new Map<Joint, number>();
+  /** room の joints から抜けた関節と、抜けた時刻（performance.now()）。RECONNECT_WAIT_MS のあいだ持つ */
+  private readonly left = new Map<Joint, number>();
   private countdownTimer: ReturnType<typeof setTimeout> | undefined;
   /** カウントダウンの最初の表示（「3」「よーい」）を出す時刻（performance.now()） */
   private countdownStartedAt = 0;
@@ -354,6 +410,7 @@ export class ScreenSession {
       this.connection = prepared.connection;
       clearTimeout(this.countdownTimer);
       this.clearAbsent();
+      this.left.clear();
       this.lastTiltAt.clear();
       this.debug.tilts = {};
       this.debug.latency = {};
@@ -369,6 +426,7 @@ export class ScreenSession {
         joints: [],
         active: [],
         absent: {},
+        reserved: {},
         debug: { ...this.view.debug, autoplay: false },
         recreation: { status: "idle" },
       });
@@ -434,7 +492,7 @@ export class ScreenSession {
         this.onRoomClosed();
         break;
       case "room":
-        this.onRoom(message.joints);
+        this.onRoom(message.joints, message.vacated);
         break;
       case "phase":
         this.onPhase(message);
@@ -460,21 +518,29 @@ export class ScreenSession {
     }
   }
 
-  private onRoom(joints: readonly Joint[]): void {
+  private onRoom(joints: readonly Joint[], vacated?: Joint): void {
+    const now = performance.now();
     for (const joint of joints) {
+      this.left.delete(joint);
       if (!this.view.joints.includes(joint)) this.audio.play("join");
     }
     // 抜けたスマホの入力と角度を残さない。次に同じ関節に入ったスマホに、前の値を見せない。
     // 抜けた関節だけを戻す。もともとスマホのいない関節はキーボードが動かしているので、触らない
     for (const joint of this.view.joints) {
       if (joints.includes(joint)) continue;
+      // 「抜ける」で空いた席（vacated）は予約されないので、すぐ空きにする。切れた席だけ60秒を数える
+      if (joint !== vacated) this.left.set(joint, now);
       this.inputs[joint] = NEUTRAL_INPUTS[joint];
       this.lastTiltAt.delete(joint);
       delete this.debug.tilts[joint];
     }
-    this.update({ joints });
+    this.syncAbsent(joints);
+    this.update({
+      joints,
+      reserved: this.reservedSeconds(now),
+      absent: this.absentSeconds(performance.now()),
+    });
     this.dispatch({ type: "room", joints });
-    this.syncAbsent();
     this.checkActive();
   }
 
@@ -654,14 +720,15 @@ export class ScreenSession {
     this.update({ flow: next, startLabel });
     this.runEffects(next, event);
     this.syncAbsent();
+    this.checkSeatTimers(performance.now());
   }
 
   /**
    * room に合わせて、つなぎ直しの待ちを増やす・減らす。待つのはカウントダウンとプレイ中だけで、
    * 結果とロビーでは待ちを持たない
    */
-  private syncAbsent(): void {
-    const { flow, joints } = this.view;
+  private syncAbsent(joints = this.view.joints): void {
+    const { flow } = this.view;
     if (flow.kind === "lobby" || flow.kind === "result") {
       this.clearAbsent();
       return;
@@ -681,25 +748,39 @@ export class ScreenSession {
         });
       }
     }
-    this.refreshAbsent();
   }
 
   private clearAbsent(): void {
     for (const { timer } of this.absent.values()) clearTimeout(timer);
     this.absent.clear();
-    this.refreshAbsent();
   }
 
-  /** view の absent を、いまの残り秒数に合わせる。変わったときだけ描き直す */
-  private refreshAbsent(): void {
-    const now = performance.now();
+  private absentSeconds(now: number): ScreenView["absent"] {
     const next: Partial<Record<Joint, number>> = {};
     for (const [joint, { since }] of this.absent) {
       next[joint] = Math.max(0, Math.ceil((since + RECONNECT_WAIT_MS - now) / 1000));
     }
     const prev = this.view.absent;
-    if (JOINTS.every((joint) => prev[joint] === next[joint])) return;
-    this.update({ absent: next });
+    return JOINTS.every((joint) => prev[joint] === next[joint]) ? prev : next;
+  }
+
+  private reservedSeconds(now: number): ScreenView["reserved"] {
+    const next: Partial<Record<Joint, number>> = {};
+    for (const [joint, since] of this.left) {
+      const seconds = Math.ceil((since + RECONNECT_WAIT_MS - now) / 1000);
+      if (seconds > 0) next[joint] = seconds;
+      else this.left.delete(joint);
+    }
+    const prev = this.view.reserved;
+    return JOINTS.every((joint) => prev[joint] === next[joint]) ? prev : next;
+  }
+
+  private checkSeatTimers(now: number): void {
+    const absent = this.absentSeconds(now);
+    const reserved = this.reservedSeconds(now);
+    if (absent !== this.view.absent || reserved !== this.view.reserved) {
+      this.update({ absent, reserved });
+    }
   }
 
   /** 待ちきれなかった。ゲームを今の場所で止め、距離だけの結果を出す */
@@ -811,7 +892,7 @@ export class ScreenSession {
     const now = performance.now();
     // 待っている関節は、キーボードで動かされても 0 に戻す
     for (const joint of this.absent.keys()) this.inputs[joint] = ABSENT_INPUT;
-    this.refreshAbsent();
+    this.checkSeatTimers(now);
     const active = JOINTS.filter(
       (joint) =>
         this.view.joints.includes(joint) &&
@@ -843,6 +924,14 @@ export class ScreenSession {
 
   private update(patch: Partial<ScreenView>): void {
     this.view = { ...this.view, ...patch };
+    if (this.game) {
+      const seats = seatsOf(this.view);
+      const previous = this.seats;
+      if (!previous || !JOINTS.every((joint) => sameSeat(previous[joint], seats[joint]))) {
+        this.seats = seats;
+        this.game.setSeats(seats);
+      }
+    }
     for (const listener of this.listeners) listener();
   }
 }

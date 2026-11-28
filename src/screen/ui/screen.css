@@ -36,7 +36,6 @@
   --color-disconnected-soft: #e9e1d5;
   /* 入力の状態（HUD、ロビーの枠） */
   --color-active: #1f3a68;
-  --color-idle: #bebebb;
   --color-keyboard: #3f5275;
   /* デバッグ操作（?debug） */
   --color-debug-bg: #2d2a28;
@@ -184,40 +183,6 @@ kbd {
 .lobby-count strong {
   font-size: 1.6em;
   font-weight: 900;
-}
-.slots {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.slot {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px 24px;
-  border: 3px dashed var(--color-idle);
-  border-radius: 22px;
-  color: var(--color-ink-soft);
-}
-.slot--filled {
-  border-style: solid;
-  border-color: var(--color-active);
-  background: var(--color-surface);
-  color: var(--color-ink);
-}
-.slot-joint {
-  font-size: clamp(24px, 2.4vw, 40px);
-  font-weight: 900;
-}
-.slot-state {
-  font-size: clamp(16px, 1.5vw, 22px);
-  font-weight: 700;
-}
-.slot--filled .slot-state {
-  color: var(--color-active);
 }
 .lobby-start {
   margin-top: calc(12 * var(--u));
@@ -388,45 +353,9 @@ kbd {
   }
 }
 
-/* プレイ中の、4人の入力の状態 */
-.hud {
-  position: absolute;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 14px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  pointer-events: none;
-}
-.hud-joint {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 170px;
-  padding: 12px 20px;
-  border-radius: 18px;
-  background: var(--color-idle);
-  color: var(--color-ink);
-  transition: background-color 0.1s;
-}
-.hud-joint--active {
-  background: var(--color-active);
-  color: var(--color-surface);
-}
-.hud-joint--keyboard {
-  background: var(--color-keyboard);
-  color: var(--color-surface);
-}
-.hud-joint--absent {
-  background: var(--color-disconnected);
-  color: var(--color-surface);
-}
 .restart-hint {
   position: absolute;
-  top: 16px;
+  bottom: calc(var(--safe-y) + 12 * var(--u));
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
@@ -442,36 +371,6 @@ kbd {
   font-weight: 700;
   pointer-events: none;
 }
-.hud-joint-name {
-  font-size: clamp(20px, 2vw, 30px);
-  font-weight: 900;
-}
-.hud-joint-state {
-  font-size: clamp(13px, 1.2vw, 18px);
-  font-weight: 700;
-}
-.hud-joint-state small {
-  font-size: inherit;
-  white-space: nowrap;
-}
-.hud-joint-keys {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: clamp(14px, 1.3vw, 20px);
-  font-weight: 700;
-  white-space: nowrap;
-}
-.hud-joint-keys kbd {
-  min-width: 1.8em;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-keyboard);
-  font-size: 1.1em;
-  text-align: center;
-}
-
 /* 確かめるための折りたたみ。すみに小さく置く */
 .debug {
   position: absolute;
@@ -751,12 +650,6 @@ html[data-debug] .result-screen {
   html[data-debug] .lobby-count {
     margin-bottom: 12px;
     font-size: 32px;
-  }
-  html[data-debug] .slot {
-    padding: 12px 16px;
-  }
-  html[data-debug] .slot-joint {
-    font-size: 24px;
   }
   html[data-debug] .lobby-start {
     margin-top: 16px;
