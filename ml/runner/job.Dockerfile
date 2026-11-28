@@ -31,17 +31,11 @@ RUN mkdir /actions-runner \
   && chown runner:runner /home/runner \
   && chmod 750 /home/runner
 
-# JIT の設定を受け取って、ランナーを1回だけ動かす。設定は、ジョブのステップの環境に残さない
-RUN printf '%s\n' \
-    '#!/bin/bash' \
-    'set -euo pipefail' \
-    'jit="${RUNNER_JITCONFIG:?manager が JIT の設定を渡す}"' \
-    'unset RUNNER_JITCONFIG' \
-    '# run.sh を通さないので、止める合図（SIGINT）はランナーが自分で受ける' \
-    'unset RUNNER_MANUALLY_TRAP_SIG' \
-    'cd /actions-runner' \
-    'exec ./bin/Runner.Listener run --jitconfig "$jit"' \
-    > /usr/local/bin/funyaoji-run-job \
+# JIT の設定を受け取って、ランナーを1回だけ動かす（run-job.sh）。ランナーが自分で更新しないようにする（DisableUpdate）
+COPY run-job.sh /usr/local/bin/funyaoji-run-job
+# Windows で取り出して改行が CRLF になっていても動くようにする
+RUN sed -i 's/\r$//' /usr/local/bin/funyaoji-run-job \
+  && chown root:root /usr/local/bin/funyaoji-run-job \
   && chmod 755 /usr/local/bin/funyaoji-run-job
 
 # だれでも書けるファイル・フォルダが無いことを確かめる（一時ファイルの場所を除く）。あればビルドを止める

@@ -16,18 +16,22 @@ services:
       # 登録の秘密（管理者が作る、このリポジトリだけの fine-grained PAT）。JIT の設定を取るのに使う。ジョブのコンテナには渡さない
       ACCESS_TOKEN: ${ACCESS_TOKEN:?.env に ACCESS_TOKEN を書く（ml/runner/README.md）}
       REPO: ${REPO:-Tanakee/funyaoji}
+      # この置き場所の名前。片づけ（ジョブのコンテナ・登録）を、この名前のものだけにする。ランナーの名前にも入る
+      RUNNER_INSTANCE: ${RUNNER_INSTANCE:?.env に RUNNER_INSTANCE を書く（ml/runner/README.md）}
       JOB_IMAGE: funyaoji-ml-job:local
       # ジョブのコンテナの CPU・メモリ・プロセスの数の上限。Docker Desktop（WSL2）の VM に割り当てた量より大きくしても効かない
       RUNNER_CPUS: ${RUNNER_CPUS:-20}
       RUNNER_MEMORY: ${RUNNER_MEMORY:-16g}
       RUNNER_PIDS: "4096"
     # ジョブのコンテナを起こすために、Docker のソケットを渡す（manager だけ。ジョブのコンテナには渡さない）
+    # この manager が取った runner ID の記録は、volume に置く（manager を作り直しても、消し残した登録を消し直せる）
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - manager-state:/var/lib/funyaoji-ml
     security_opt:
       - no-new-privileges:true
-    # 止めるときに、ジョブのコンテナを止め（30 秒）、待っているランナーの登録を消す時間
-    stop_grace_period: 1m
+    # 止めるときに、ジョブのコンテナを止め（最大 40 秒）、ランナーの登録を消す（1件 10 秒）時間
+    stop_grace_period: 90s
     logging:
       driver: json-file
       options:
@@ -41,3 +45,6 @@ services:
     image: funyaoji-ml-job:local
     # `docker compose up` では起こさない。`docker compose --profile job build` で作るだけ
     profiles: [job]
+
+volumes:
+  manager-state:
