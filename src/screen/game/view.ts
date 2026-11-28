@@ -10,24 +10,21 @@ import {
 } from "pixi.js";
 import { JOINT_DISPLAY } from "../../shared/joints.ts";
 import { JOINTS, type Joint } from "../../shared/messages.ts";
+import { BACKDROP_COLORS, createBackdrop } from "./backdrop.ts";
 import { INITIAL_POSES, PART_NAMES, PART_SHAPES, TORSO_SIZE, type PartName } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
 import { SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
 
-/** 色はここに集める。見た目は、あとで人が決める。部位ごとの色は shared/joints.ts */
 const COLORS = {
   sky: 0xf6f1e7,
-  ground: 0xd9cfbd,
-  groundEdge: 0x8a7f68,
   tick: 0x6b6252,
   text: 0x2b2b2b,
   outline: 0x2b2b2b,
   start: 0x2e86ab,
   goal: 0xc0392b,
-  goalCheckerLight: 0xffffff,
-  goalCheckerDark: 0x2b2b2b,
+  goalLabelBackground: 0xffffff,
   torso: 0xe9d8b4,
   head: 0xf3e2c3,
   foot: 0x3a3a3a,
@@ -144,7 +141,7 @@ export async function createView(container: HTMLElement): Promise<View> {
   const observer = new ResizeObserver(() => app.queueResize());
   observer.observe(container);
 
-  // 重なりの順：ルーラー（地面と目盛り）→ おじさん → HUD
+  const backdrop = createBackdrop(app.renderer);
   const ruler = new Graphics();
   const labelLayer = new Container();
   const rulerLabels = new Map<string, Text>();
@@ -197,12 +194,13 @@ export async function createView(container: HTMLElement): Promise<View> {
     legend.addChild(item);
   });
 
-  app.stage.addChild(ruler, labelLayer, world, hud, legend);
+  app.stage.addChild(backdrop.back, backdrop.ground, ruler, labelLayer, world, hud, legend);
 
   const camera = new Camera();
   function setScene(scene: Scene): void {
     hud.visible = scene === "playing";
     legend.visible = scene === "countdown" || scene === "playing";
+    backdrop.setBuntingVisible(scene === "countdown" || scene === "playing");
     camera.setScene(scene, performance.now());
   }
   setScene("lobby");
@@ -216,9 +214,11 @@ export async function createView(container: HTMLElement): Promise<View> {
     if (pxPerM <= 0) return;
     const originX = w * CAMERA.followX;
     const camX = camera.centerM(state.poses.torso.x, w, pxPerM, performance.now());
-    const screenX = (m: number) => originX + (m - camX) * pxPerM;
+    const worldOriginX = originX - camX * pxPerM;
+    const screenX = (m: number) => worldOriginX + m * pxPerM;
+    backdrop.update({ width: w, height: h, ui, groundY, pxPerM, worldOriginX });
 
-    world.position.set(originX - camX * pxPerM, groundY);
+    world.position.set(worldOriginX, groundY);
     world.scale.set(pxPerM, -pxPerM);
     for (const name of PART_NAMES) {
       const pose = state.poses[name];
@@ -226,57 +226,39 @@ export async function createView(container: HTMLElement): Promise<View> {
       partGraphics[name].rotation = pose.rot;
     }
 
-    // 地面（スタートの後ろにも続く）、1m ごとの目盛り、スタートとゴール
     ruler.clear();
-    ruler.rect(0, groundY, w, h - groundY).fill(COLORS.ground);
-    ruler
-      .moveTo(0, groundY)
-      .lineTo(w, groundY)
-      .stroke({ width: 4 * ui, color: COLORS.groundEdge });
-    const first = Math.floor(camX - originX / pxPerM) - 1;
-    const last = Math.ceil(camX + (w - originX) / pxPerM) + 1;
+    const first = Math.floor(-worldOriginX / pxPerM) - 1;
+    const last = Math.ceil((w - worldOriginX) / pxPerM) + 1;
     for (const t of rulerLabels.values()) t.visible = false;
     for (let m = first; m <= last; m++) {
       const x = screenX(m);
       const major = m % 5 === 0;
-      ruler
-        .moveTo(x, groundY)
-        .lineTo(x, groundY + (major ? 26 : 16) * ui)
-        .stroke({ width: (major ? 3 : 2) * ui, color: COLORS.tick });
       const num = rulerLabel(`m${m}`, `${m}`, 22, COLORS.tick, major);
       num.visible = true;
       num.scale.set(ui);
       num.position.set(x, groundY + 30 * ui);
+      ruler
+        .roundRect(
+          x - num.width / 2 - 5 * ui,
+          num.y - ui,
+          num.width + 10 * ui,
+          num.height + 2 * ui,
+          4 * ui,
+        )
+        .fill(BACKDROP_COLORS.face);
     }
 
-    // スタートライン。胴の上までの高さ
     const startX = screenX(0);
-    ruler
-      .rect(startX - 3 * ui, groundY - pxPerM * 2.2, 6 * ui, pxPerM * 2.2)
-      .fill({ color: COLORS.start, alpha: 0.7 });
     const startLabel = rulerLabel("start", "スタート", 30, COLORS.start, true);
     startLabel.visible = true;
     startLabel.scale.set(ui);
     startLabel.position.set(startX, groundY - pxPerM * 2.6);
 
-    // ゴールライン。市松模様の太い帯を、画面の上から地面まで立てる
     const goalX = screenX(GOAL_M);
-    const cell = Math.max(10, pxPerM * 0.2);
-    const rows = Math.ceil(groundY / cell);
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < 2; col++) {
-        const dark = (row + col) % 2 === 0;
-        ruler
-          .rect(goalX - cell + col * cell, groundY - (row + 1) * cell, cell, cell)
-          .fill(dark ? COLORS.goalCheckerDark : COLORS.goalCheckerLight);
-      }
-    }
-    ruler.rect(goalX - cell, 0, cell * 2, groundY).stroke({ width: 3 * ui, color: COLORS.goal });
     const goalLabel = rulerLabel("goal", `ゴール ${GOAL_M}m`, 36, COLORS.goal, true);
     goalLabel.visible = true;
     goalLabel.scale.set(ui);
     goalLabel.position.set(goalX, groundY - pxPerM * 2.6);
-    // 市松模様の上でも読めるように、白い下地を敷く
     const pad = 8 * ui;
     ruler
       .roundRect(
@@ -286,7 +268,7 @@ export async function createView(container: HTMLElement): Promise<View> {
         goalLabel.height + pad,
         8 * ui,
       )
-      .fill(COLORS.goalCheckerLight)
+      .fill(COLORS.goalLabelBackground)
       .stroke({ width: 3 * ui, color: COLORS.goal });
 
     hud.scale.set(ui);
@@ -305,6 +287,7 @@ export async function createView(container: HTMLElement): Promise<View> {
     render,
     destroy() {
       observer.disconnect();
+      backdrop.destroy();
       app.destroy({ removeView: true }, { children: true });
     },
   };
