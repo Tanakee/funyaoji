@@ -3,14 +3,12 @@ import { JOINT_DISPLAY, type JointDisplay } from "../shared/joints.ts";
 import type { Joint } from "../shared/messages.ts";
 
 export interface JointLabel extends JointDisplay {
-  /** スマホを立てたとき（90度）の動き */
-  upright: string;
-  /** スマホを寝かせたとき（0度）の動き */
-  flat: string;
+  /** 待機（P3）に出す傾け方の1文。立てたとき（90度）の動きで伝える */
+  tiltHint: string;
 }
 
-const HIP = { upright: "前へ", flat: "後ろへ" } as const;
-const KNEE = { upright: "曲げる", flat: "伸ばす" } as const;
+const HIP = { tiltHint: "立てると、脚が前に出る" };
+const KNEE = { tiltHint: "立てると、ひざが曲がる" };
 
 export const JOINT_LABELS: Record<Joint, JointLabel> = {
   rightHip: { ...JOINT_DISPLAY.rightHip, ...HIP },
