@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from collections import Counter, deque
 from pathlib import Path
@@ -26,7 +27,7 @@ from . import registry, tracking
 from .policy import AsymmetricPolicy
 from .render import render
 from .tracking import mlflow
-from .vec_env import FunyaojiVecEnv
+from .vec_env import FunyaojiVecEnv, NodeProcess
 
 
 class MlflowWriter(KVWriter):
@@ -153,6 +154,9 @@ def pick_snapshots(snaps: list[tuple[int, dict]], count: int = 6) -> list[tuple[
 
 
 def main() -> None:
+    # Windows でも、日本語の表示が文字化けや例外にならないようにする
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=20_000_000)
     ap.add_argument("--reward", choices=["r1", "r2"], default="r2")
@@ -191,8 +195,77 @@ def main() -> None:
         env_config["base"] = {"gait": gait, "scale": args.residual_scale}
 
     venv = FunyaojiVecEnv(args.workers, args.envs_per_worker, env_config)
-    env = VecNormalize(venv, norm_obs=True, norm_reward=True, gamma=args.gamma)
-    eval_venv = FunyaojiVecEnv(1, 1, {**env_config, "record": True})
+    try:
+        eval_venv = FunyaojiVecEnv(1, 1, {**env_config, "record": True})
+    except BaseException:
+        venv.close()
+        raise
+    try:
+        run_id = train(args, name, out, env_config, venv, eval_venv)
+    finally:
+        venv.close()
+        eval_venv.close()
+    # 評価して登録し、速ければ別名を移す（registry.py）
+    registry.submit([run_id])
+    print(f"done: {out}")
+
+
+def final_eval(eval_env: VecNormalize, model: PPO, trials_n: int, perturb: float, out: Path) -> dict[str, Any]:
+    """最後の評価（docs/ml.md の「理論値として出す数字」）。メトリクスと、記録の候補のファイルを返す"""
+    exact = rollout(eval_env, model)
+    trials = [rollout(eval_env, model, perturb, seed=i + 1) for i in range(trials_n)]
+    summary = summarize(trials)
+    metrics: dict[str, float] = {
+        "eval_exact_goal": float(exact["outcome"] == "goal"),
+        "eval_exact_distance": exact["distanceM"],
+        "eval_goal_rate": float(summary["goal_rate"] or 0.0),
+        # 重みをずらして、入力が実際に変わった回数
+        "eval_perturbed_changed": float(sum(t["inputs"] != exact["inputs"] for t in trials)),
+    }
+    if exact["outcome"] == "goal":
+        metrics["eval_exact_time"] = exact["timeMs"] / 1000
+    if summary["time_median"] is not None:
+        metrics["eval_time_median"] = summary["time_median"]
+        metrics["eval_time_best"] = float(summary["time_best"] or 0.0)
+
+    # ゴールした走りを全部、物理の不具合を測ってから、(E1) の最速と (E2) の最速を別々に残す。
+    # 最速の1本だけを残すと、それが (E2) で落ちたとき、2番目に速い記録が評価されない
+    goals = [t for t in [exact, *trials] if t["outcome"] == "goal"]
+    proc = NodeProcess()
+    try:
+        checked = [(t, registry.evaluate(proc, t["inputs"])) for t in goals]
+    finally:
+        proc.close()
+    e1 = [t for t, ev in checked if ev["e1"]]
+    e2 = [t for t, ev in checked if ev["e2"]]
+    metrics["eval_e2_count"] = float(len(e2))
+    candidates = {"exact": exact}
+    if e1:
+        candidates["best_e1"] = min(e1, key=lambda t: t["timeMs"])
+    if e2:
+        candidates["best_e2"] = min(e2, key=lambda t: t["timeMs"])
+    paths = []
+    for key, info in candidates.items():
+        path = out / f"record_{key}.json"
+        path.write_text(
+            json.dumps({k: info[k] for k in ("outcome", "timeMs", "distanceM", "inputs")}),
+            encoding="utf-8",
+        )
+        paths.append(path)
+    return {"metrics": metrics, "exact": exact, "paths": paths}
+
+
+def train(
+    args: argparse.Namespace,
+    name: str,
+    out: Path,
+    env_config: dict[str, Any],
+    venv: FunyaojiVecEnv,
+    eval_venv: FunyaojiVecEnv,
+) -> str:
+    """学習して評価し、MLflow の run の id を返す"""
+    # 報酬の割り算は残し、切らない。(R2) のゴールの大きな報酬だけが切られると、整形の打ち消し合いが崩れる
+    env = VecNormalize(venv, norm_obs=True, norm_reward=True, clip_reward=np.inf, gamma=args.gamma)
     eval_env = VecNormalize(eval_venv, training=False, norm_obs=True, norm_reward=False)
 
     model = PPO(
@@ -230,6 +303,7 @@ def main() -> None:
                 "actor_obs": venv.actor_obs,
                 "obs_dim": venv.observation_space.shape[0],
                 "norm_reward": True,
+                "clip_reward": "none",
             }
         )
         try:
@@ -239,48 +313,22 @@ def main() -> None:
             env.save(str(out / "vecnormalize.pkl"))
             venv.close()
 
-        # 最後の評価（docs/ml.md の「理論値として出す数字」）
+        # 最後の評価。記録の候補は、そのままの1回、(E1) の最速、(E2) の最速
         eval_env.obs_rms = env.obs_rms
-        exact = rollout(eval_env, model)
-        trials = [rollout(eval_env, model, args.perturb, seed=i + 1) for i in range(args.trials)]
-        summary = summarize(trials)
-        metrics = {
-            "eval_exact_goal": float(exact["outcome"] == "goal"),
-            "eval_exact_distance": exact["distanceM"],
-            "eval_goal_rate": summary["goal_rate"],
-        }
-        if exact["outcome"] == "goal":
-            metrics["eval_exact_time"] = exact["timeMs"] / 1000
-        if summary["time_median"] is not None:
-            metrics["eval_time_median"] = summary["time_median"]
-            metrics["eval_time_best"] = summary["time_best"]
-        mlflow.log_metrics(metrics)
-        print(json.dumps(metrics), flush=True)
-
-        # 記録の候補：そのままの1回と、ずらした中の最速
-        candidates = {"exact": exact}
-        goals = [t for t in trials if t["outcome"] == "goal"]
-        if goals:
-            candidates["best_perturbed"] = min(goals, key=lambda t: t["timeMs"])
-        for key, info in candidates.items():
-            path = out / f"record_{key}.json"
-            path.write_text(
-                json.dumps({k: info[k] for k in ("outcome", "timeMs", "distanceM", "inputs")}),
-                encoding="utf-8",
-            )
+        ev = final_eval(eval_env, model, args.trials, args.perturb, out)
+        mlflow.log_metrics(ev["metrics"])
+        print(json.dumps(ev["metrics"]), flush=True)
+        for path in ev["paths"]:
             mlflow.log_artifact(str(path), "records")
 
         # 動画：途中の記録を並べ、最後に「そのままの1回」を足す
         picked = pick_snapshots(progress.snapshots)
         runs = [(rec["label"], rec["inputs"]) for _, rec in picked]
-        runs.append(("最後（評価）", exact["inputs"]))
+        runs.append(("最後（評価）", ev["exact"]["inputs"]))
         gif, mp4 = render(venv.shapes, runs, out / "progress", cols=2 if len(runs) <= 4 else 3)
         mlflow.log_artifact(str(gif), "video")
         mlflow.log_artifact(str(mp4), "video")
-        eval_venv.close()
-    # 評価して登録し、速ければ別名を移す（registry.py）
-    registry.submit([run.info.run_id])
-    print(f"done: {out}")
+    return run.info.run_id
 
 
 if __name__ == "__main__":
