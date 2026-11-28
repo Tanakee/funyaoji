@@ -45,6 +45,8 @@ import { SynthAudio, type AudioState, type ScreenAudio } from "./audio.ts";
 
 /** この時間のうちに tilt が届いた関節を、入力が効いている（active）とする（docs/api.md の status） */
 export const ACTIVE_WINDOW_MS = 500;
+/** ゴールしてから結果の画面に移るまで、FINISH を出す時間 */
+export const FINISH_MS = 2_000;
 /** status を送る間隔の上限。変わらなくてもこの間隔で送る */
 const STATUS_INTERVAL_MS = 1_000;
 /** active の集合が変わったかを調べる間隔 */
@@ -569,6 +571,8 @@ export class ScreenSession {
   private onPhase(message: PhaseMessage): void {
     if (message.phase !== "playing") return;
     const flow = this.view.flow;
+    // FINISH の間は、まだ result を送っていない。出し終えたら送る
+    if (flow.kind === "finish") return;
     // 終わったときに切れていて、result を送れなかった。結果の画面は残し、送り直す
     if (flow.kind === "result") {
       this.send({ type: "phase", phase: "result", result: flow.result });
@@ -747,7 +751,7 @@ export class ScreenSession {
    */
   private syncAbsent(joints = this.view.joints): void {
     const { flow } = this.view;
-    if (flow.kind === "lobby" || flow.kind === "result") {
+    if (flow.kind === "lobby" || flow.kind === "finish" || flow.kind === "result") {
       this.clearAbsent();
       return;
     }
@@ -850,6 +854,15 @@ export class ScreenSession {
         );
         this.game?.start();
         break;
+      case "finish":
+        // ゴールの音は FINISH と一緒に鳴らす
+        clearTimeout(this.countdownTimer);
+        this.audio.play("goal");
+        this.countdownTimer = setTimeout(() => {
+          this.game?.stop({ showResult: true });
+          this.dispatch({ type: "finished" });
+        }, FINISH_MS);
+        break;
       case "result":
         if (next.result.outcome === "goal" && this.view.teamName) {
           this.update({ ranking: { status: "loading" } });
@@ -869,7 +882,7 @@ export class ScreenSession {
           this.update({ ranking: { status: "idle" } });
         }
         clearTimeout(this.countdownTimer);
-        if (next.result.outcome === "goal" || next.result.outcome === "fell") {
+        if (next.result.outcome === "fell") {
           this.audio.play(next.result.outcome);
         }
         this.send({ type: "phase", phase: "result", result: next.result });

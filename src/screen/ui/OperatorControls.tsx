@@ -64,7 +64,7 @@ export function OperatorControls({ session, view }: { session: ScreenSession; vi
   return (
     <div
       ref={container}
-      className={`operator-controls${view.flow.kind === "playing" ? " operator-controls--playing" : ""}`}
+      className={`operator-controls${view.flow.kind === "playing" || view.flow.kind === "finish" ? " operator-controls--playing" : ""}`}
     >
       {view.recreation.status === "failed" && (
         <p className="operator-notice" role="alert">

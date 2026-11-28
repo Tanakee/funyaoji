@@ -25,7 +25,7 @@ import {
 } from "./body.ts";
 import { formatDistance, formatTime } from "./format.ts";
 import { CAMERA, Camera, type Scene } from "./camera.ts";
-import { SCREEN_LAYOUT, screenScale } from "./layout.ts";
+import { bottomRightControlsLeft, SCREEN_LAYOUT, screenScale } from "./layout.ts";
 import { GOAL_M, type SimState } from "./sim.ts";
 import { mixRgb, quadraticBezierPoint, stringLook, TiltGlow, type StringLook } from "./strings.ts";
 import type { JointInputs, Seats, SeatState } from "./types.ts";
@@ -33,10 +33,9 @@ import type { JointInputs, Seats, SeatState } from "./types.ts";
 /** 色の決まりは docs/screens.md の「色・フォント・刷り」。部位ごとの色は shared/joints.ts */
 const COLORS = {
   sky: 0xf6f1e7,
-  tick: 0x1f3a68,
   text: 0x1f3a68,
+  textSoft: 0x3f5275,
   outline: 0x1f3a68,
-  start: 0x1f3a68,
   goal: 0xa8282e,
   goalLabelBackground: 0xfbf8f0,
   torso: 0xc2a682,
@@ -69,6 +68,10 @@ const LAYOUT = {
   visibleWidthM: 9,
   /** 地面から画面の上までに入れたい高さ（m） */
   visibleHeightM: 3.6,
+  /** 地面の目盛りに数字を出す範囲（m） */
+  pegNumbers: { from: 2, to: 6 },
+  /** 右上の道のり。値は 1280×720 でのもの（画面設計の S6）。fromRight は線の左端の、画面の右端からの距離 */
+  route: { fromRight: 380, y: 80, length: 300 },
   fontFamily:
     "'Zen Kaku Gothic New', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif",
 };
@@ -110,7 +113,7 @@ async function loadViewFonts(): Promise<boolean> {
 }
 
 export interface View {
-  /** 画面に合わせて、カメラと、距離・タイムを出すかを変える */
+  /** 画面に合わせて、カメラと、距離・タイム・道のり・目盛りを出すかを変える */
   setScene(scene: Scene): void;
   /** 描画のたびに呼ばれる。dtSec は前のフレームからの実時間 */
   onFrame(callback: (dtSec: number) => void): void;
@@ -324,16 +327,55 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   parts.torso.node.addChild(head);
 
   const hud = new Container();
-  const distanceText = new BitmapText({
-    text: "",
-    style: { fontFamily: hudFont, fontSize: 64, fill: COLORS.text },
-  });
-  const timeText = new BitmapText({
-    text: "",
-    style: { fontFamily: hudFont, fontSize: 40, fill: COLORS.text },
-  });
-  timeText.y = 78;
-  hud.addChild(distanceText, timeText);
+  const hudText = (text: string, size: number, color: number) =>
+    new BitmapText({ text, style: { fontFamily: hudFont, fontSize: size, fill: color } });
+  const distanceText = hudText("", 64, COLORS.text);
+  const distanceUnit = hudText("m", 32, COLORS.text);
+  // 小さい単位を、大きい数字の下端にそろえる
+  distanceUnit.y = 28;
+  const timeText = hudText("", 24, COLORS.textSoft);
+  timeText.y = 76;
+  hud.addChild(distanceText, distanceUnit, timeText);
+
+  // 右上の、ゴールまでの道のり
+  const { length: routeLength, y: routeY } = LAYOUT.route;
+  const route = new Container();
+  const routeBase = new Graphics()
+    .moveTo(0, routeY)
+    .lineTo(routeLength, routeY)
+    .stroke({ width: 6, color: COLORS.text, alpha: 0.25, cap: "round" })
+    .moveTo(routeLength, routeY + 2)
+    .lineTo(routeLength, routeY - 30)
+    .stroke({ width: 3, color: COLORS.text, cap: "round" })
+    .poly([
+      routeLength + 1,
+      routeY - 30,
+      routeLength + 24,
+      routeY - 23,
+      routeLength + 1,
+      routeY - 16,
+    ])
+    .fill(COLORS.text);
+  const routeProgress = new Graphics();
+  const routeDot = new Graphics()
+    .circle(0, 0, 11)
+    .fill(COLORS.head)
+    .stroke({ width: 3, color: COLORS.outline });
+  routeDot.y = routeY;
+  const routeLabels = new Container();
+  const addRouteLabels = () => {
+    for (const [text, x] of [
+      ["0", 0],
+      [`${GOAL_M}m`, routeLength],
+    ] as const) {
+      const t = label(text, 20, COLORS.text);
+      t.anchor.set(0.5, 0);
+      t.position.set(x, routeY + 14);
+      routeLabels.addChild(t);
+    }
+  };
+  addRouteLabels();
+  route.addChild(routeBase, routeProgress, routeLabels, routeDot);
 
   const seatLayer = new Container();
   const strings = new Container();
@@ -397,7 +439,16 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     };
   });
 
-  app.stage.addChild(backdrop.back, backdrop.ground, ruler, labelLayer, world, seatLayer, hud);
+  app.stage.addChild(
+    backdrop.back,
+    backdrop.ground,
+    ruler,
+    labelLayer,
+    world,
+    seatLayer,
+    hud,
+    route,
+  );
 
   let currentSeats: Seats | undefined;
   function setSeats(seats: Seats): void {
@@ -433,7 +484,10 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   function rebuildTextsWithLoadedFont(): void {
     const loadedHudFont = hudFontName("loaded");
     distanceText.style.fontFamily = loadedHudFont;
+    distanceUnit.style.fontFamily = loadedHudFont;
     timeText.style.fontFamily = loadedHudFont;
+    for (const child of routeLabels.removeChildren()) child.destroy();
+    addRouteLabels();
     for (const label of rulerLabels.values()) label.destroy();
     rulerLabels.clear();
     SEATS.forEach((joint, i) => {
@@ -454,8 +508,11 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
   }
 
   const camera = new Camera();
+  let playing = false;
   function setScene(scene: Scene): void {
-    hud.visible = scene === "playing";
+    playing = scene === "playing";
+    hud.visible = playing;
+    route.visible = playing;
     backdrop.setBuntingVisible(scene === "countdown" || scene === "playing");
     camera.setScene(scene, performance.now());
   }
@@ -520,17 +577,20 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
       marker.position.set(x, y);
     });
 
+    // 1m ごとの杭は backdrop が描く。数字はプレイ中だけ、紙色の下地を敷いて出す
     ruler.clear();
-    const first = Math.floor(-worldOriginX / pxPerM) - 1;
-    const last = Math.ceil((w - worldOriginX) / pxPerM) + 1;
     for (const t of rulerLabels.values()) t.visible = false;
-    for (let m = first; m <= last; m++) {
+    const labelLimit = Math.min(w - SCREEN_LAYOUT.safeX * ui, bottomRightControlsLeft(w, ui));
+    const { from, to } = LAYOUT.pegNumbers;
+    for (let m = from; playing && m <= to; m++) {
       const x = screenX(m);
-      const major = m % 5 === 0;
-      const num = rulerLabel(`m${m}`, `${m}`, 22, COLORS.tick, major);
-      num.visible = true;
+      const num = rulerLabel(`m${m}`, `${m}m`, 20, COLORS.text, true);
       num.scale.set(ui);
       num.position.set(x, groundY + 30 * ui);
+      // 右下のボタンにかかる所と、安全領域の外には出さない
+      num.visible =
+        x - num.width / 2 >= SCREEN_LAYOUT.safeX * ui && x + num.width / 2 <= labelLimit;
+      if (!num.visible) continue;
       ruler
         .roundRect(
           x - num.width / 2 - 5 * ui,
@@ -543,7 +603,7 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
     }
 
     const startX = screenX(0);
-    const startLabel = rulerLabel("start", "スタート", 30, COLORS.start, true);
+    const startLabel = rulerLabel("start", "スタート", 30, COLORS.text, true);
     startLabel.visible = true;
     startLabel.scale.set(ui);
     startLabel.position.set(startX, groundY - pxPerM * 2.6);
@@ -567,8 +627,21 @@ export async function createView(container: HTMLElement, art: UncleArt = {}): Pr
 
     hud.scale.set(ui);
     hud.position.set(SCREEN_LAYOUT.safeX * ui, SCREEN_LAYOUT.safeY * ui);
-    distanceText.text = `${formatDistance(state.distanceM)} m`;
-    timeText.text = `${formatTime(state.elapsedMs)} 秒`;
+    distanceText.text = formatDistance(state.distanceM);
+    distanceUnit.x = distanceText.width + 4;
+    timeText.text = `${formatTime(state.elapsedMs)}秒`;
+    route.scale.set(ui);
+    route.position.set(w - LAYOUT.route.fromRight * ui, 0);
+    // 後ろに下がっても、点は 0 より左に行かない
+    const progress = Math.min(1, Math.max(0, state.distanceM / GOAL_M));
+    routeDot.x = progress * routeLength;
+    routeProgress.clear();
+    if (progress > 0) {
+      routeProgress
+        .moveTo(0, routeY)
+        .lineTo(routeDot.x, routeY)
+        .stroke({ width: 6, color: COLORS.text, cap: "round" });
+    }
   }
 
   return {

@@ -75,7 +75,8 @@ export async function createGame({ container, inputs, onEnd, art }: GameOptions)
     }
     if (state.result && !reported) {
       reported = true;
-      setScene("result");
+      // ゴールは FINISH の間、プレイ中の表示を残す。呼び出し側が stop({ showResult }) で結果にする
+      if (state.result.outcome !== "goal") setScene("result");
       onEnd(state.result);
     }
   });
