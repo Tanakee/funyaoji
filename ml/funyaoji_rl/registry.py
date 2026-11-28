@@ -12,7 +12,7 @@
 - 別名：同じ物理の指紋の中で、(E2) の最速に theory、(E1) の最速に theory-any を付ける。
   別名の記録が別の指紋のものなら、新しい指紋の記録が速さにかかわらず別名を取る
 - 登録と、実験・モデルを作るところは、ml/.registry.lock の鍵で1つずつにする（何本も同時に流すため）
-- 書き出し：theory の記録を src/screen/game/ai/theory/<モード>.json に書く。ゲームとテストはこれを読む。
+- 書き出し：theory の記録を src/screen/game/ai/theory/<モード>.json に書く。再生の一致のテスト（theory.test.ts）と fingerprint.ts が読む。
   theory が今の物理の指紋の記録でなければ、書き出さずに止める
 
 使い方（ml/ で）：
