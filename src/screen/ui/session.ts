@@ -650,6 +650,8 @@ export class ScreenSession {
         clearTimeout(this.countdownTimer);
         // ロビーではつまみが消え、つかんだまま消えると離したことが届かない。次のプレイに持ち越さない
         this.grabbed.clear();
+        // 待ちが残ると、checkActive がその関節の入力を 0 に戻し、吊った脚が後ろに振れたままになる
+        this.clearAbsent();
         for (const joint of JOINTS) {
           if (!this.view.joints.includes(joint)) this.inputs[joint] = NEUTRAL_INPUTS[joint];
         }

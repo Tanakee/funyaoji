@@ -162,6 +162,20 @@ describe("ScreenSession", () => {
     session.dispose();
   });
 
+  it("つなぎ直しを待つ関節があるままロビーに戻っても、その関節は立った姿勢の入力に戻る", async () => {
+    const { NEUTRAL_INPUTS } = await import("../game/body.ts");
+    const session = await open();
+    room(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
+    press("Space");
+    await vi.advanceTimersByTimeAsync(3000);
+    room(["leftHip", "rightKnee", "leftKnee"]);
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m" });
+    expect(session.getSnapshot().flow.kind).toBe("lobby");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(inputs().rightHip).toBe(NEUTRAL_INPUTS.rightHip);
+    session.dispose();
+  });
+
   it("新ルームの接続と旧ルームの終了を確認するまで切り替えず、古い通知を捨てる", async () => {
     const session = await open();
     room(["rightHip"]);
