@@ -5,6 +5,7 @@ import { JOINTS, type Joint } from "../../shared/messages.ts";
 import {
   BODY_MASS,
   GROUND_TOUCH_M,
+  HARD_MOTOR,
   INITIAL_POSES,
   JOINT_SPECS,
   MOTOR,
@@ -82,6 +83,8 @@ export interface SimOptions {
   stepS?: number;
   /** 胴を空中に留め、関節だけを動かす。タイムと終了判定は進めない */
   practice?: boolean;
+  /** ハードモード。胴を起こす補助をかけず、関節のモーターを HARD_MOTOR にする（docs/game.md の「ハードモード」）。既定は false */
+  hard?: boolean;
 }
 
 /** 足が地面に着いているとみなす高さ（m） */
@@ -143,10 +146,14 @@ export class Sim {
   private sittingSinceMs: number | undefined;
   private readonly stepS: number;
   private readonly practice: boolean;
+  private readonly hard: boolean;
+  private readonly motor: typeof MOTOR;
 
   constructor(options: SimOptions = {}) {
     this.stepS = options.stepS ?? STEP_S;
     this.practice = options.practice ?? false;
+    this.hard = options.hard ?? false;
+    this.motor = this.hard ? HARD_MOTOR : MOTOR;
     const world = new RAPIER.World({ x: 0, y: -GRAVITY });
     world.timestep = this.stepS;
     this.world = world;
@@ -223,10 +230,10 @@ export class Sim {
       const [lo, hi] = JOINT_SPECS[joint].range;
       const target = lo + (hi - lo) * clamp01(inputs[joint]);
       const motor = this.motors[joint];
-      motor.configureMotorPosition(target, MOTOR.stiffness, MOTOR.damping);
-      motor.setMotorMaxForce(MOTOR.maxForceBodyWeights * BODY_MASS * GRAVITY);
+      motor.configureMotorPosition(target, this.motor.stiffness, this.motor.damping);
+      motor.setMotorMaxForce(this.motor.maxForceBodyWeights * BODY_MASS * GRAVITY);
     }
-    if (!this.practice) this.assistTorso();
+    if (!this.practice && !this.hard) this.assistTorso();
 
     this.world.step();
     if (this.practice) return;

@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, test } from "vite-plus/test";
 import type { Joint } from "../../shared/messages.ts";
+import { DEMO_GAIT, type Gait, gaitRecord } from "./ai/gait.ts";
+import { replay } from "./ai/record.ts";
 import { NEUTRAL_INPUTS, STEP_S } from "./body.ts";
 import { demoGait as gait } from "./demo.ts";
 import { moveInputs } from "./keyboard.ts";
@@ -218,5 +220,57 @@ describe("練習の Sim", () => {
     practice.advance({ ...NEUTRAL, rightHip: 1 }, 1);
     practice.free();
     expect(demoResult()).toEqual(before);
+  });
+});
+
+describe("ハードの Sim", () => {
+  /** ハードで、体の状態を見ずにゴールできる歩き方。scripts/hard-mode.ts で見つけた。値を 5% ずらしてもゴールする */
+  const HARD_GAIT: Gait = { T: 2.92, h0: 0.58, A: 0.39, K: 0.4, kp: 0.23 };
+
+  test("片脚を前に振ると、胴を起こす補助が無いので、ノーマルより胴が大きく傾く", () => {
+    const maxTilt = (hard: boolean) => {
+      const sim = new Sim({ hard });
+      sim.start();
+      let max = 0;
+      for (let t = 0; t < 0.6; t += FRAME) {
+        sim.advance({ ...NEUTRAL, rightHip: 1 }, FRAME);
+        max = Math.max(max, Math.abs(sim.state().poses.torso.rot));
+      }
+      sim.free();
+      return max;
+    };
+    const normal = maxTilt(false);
+    const hard = maxTilt(true);
+    expect(hard, `ノーマル ${normal} rad、ハード ${hard} rad`).toBeGreaterThan(normal * 2);
+  });
+
+  test("練習で脚を振ると、モーターの力が弱いので、ノーマルより動きが遅い", () => {
+    const swing = (hard: boolean) => {
+      const sim = new Sim({ practice: true, hard });
+      const before = sim.readout().joints.rightHip.angle;
+      sim.advance({ ...NEUTRAL, rightHip: 1 }, 0.15);
+      const after = sim.readout().joints.rightHip.angle;
+      sim.free();
+      return after - before;
+    };
+    const normal = swing(false);
+    const hard = swing(true);
+    expect(hard).toBeGreaterThan(0);
+    expect(hard, `ノーマル ${normal} rad、ハード ${hard} rad`).toBeLessThan(normal * 0.9);
+  });
+
+  test("お手本の歩き方は、ノーマルではゴールするが、ハードでは転ぶ", () => {
+    const end = (hard: boolean) => replay(gaitRecord(DEMO_GAIT, 60), { hard });
+    expect(end(false).result?.outcome).toBe("goal");
+    const hard = end(true);
+    expect(hard.result?.outcome).toBe("fell");
+    expect(hard.elapsedMs).toBeLessThan(5_000);
+  });
+
+  test("ハードでも、10m のゴールまで行ける入力の列がある。作り直しても同じ結果になる", () => {
+    const record = gaitRecord(HARD_GAIT, 60);
+    const first = replay(record, { hard: true });
+    expect(first.result).toMatchObject({ outcome: "goal" });
+    expect(replay(record, { hard: true })).toEqual(first);
   });
 });
