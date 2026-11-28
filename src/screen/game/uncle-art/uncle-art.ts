@@ -1,9 +1,31 @@
 import type { UncleArt } from "../art.ts";
 
-/**
- * おじさんの部位の画像。指定の無い部位は Graphics で描く。
- * このフォルダに右向きの head-normal.png、head-fell.png、torso.png、thigh.png、shin.png を置き、ここに足す。
- * ももとすねの画像には、担当の人の色（担当が居ないときは灰色）を掛けて（乗算して）描くので、色を出す所は白で描く。
- * 寸法（m）と基準点（anchor・at）の書き方は PLACEHOLDER_ART を見る
- */
-export const UNCLE_ART: UncleArt = {};
+// どれも右向きで、512 px/m で書き出した。ももとすねの src は、担当の人の色を掛けるので、色を出す所を白で描いてある
+const headPlacement = { width: 237 / 512, anchor: { x: 125.4 / 237, y: 114.5 / 243 } };
+
+export const UNCLE_ART = {
+  head: {
+    normal: { ...headPlacement, src: new URL("./head-normal.png", import.meta.url).href },
+    strain: { ...headPlacement, src: new URL("./head-strain.png", import.meta.url).href },
+    goal: { ...headPlacement, src: new URL("./head-goal.png", import.meta.url).href },
+    fell: { ...headPlacement, src: new URL("./head-fell.png", import.meta.url).href },
+  },
+  torso: {
+    src: new URL("./torso.png", import.meta.url).href,
+    width: 270 / 512,
+    anchor: { x: 135.1 / 270, y: 195.9 / 444 },
+  },
+  thigh: {
+    src: new URL("./thigh.png", import.meta.url).href,
+    lines: new URL("./thigh-lines.png", import.meta.url).href,
+    width: 140 / 512,
+    anchor: { x: 74.5 / 140, y: 199.7 / 376 },
+  },
+  shin: {
+    src: new URL("./shin.png", import.meta.url).href,
+    lines: new URL("./shin-lines.png", import.meta.url).href,
+    width: 173 / 512,
+    anchor: { x: 51.0 / 173, y: 143.6 / 293 },
+    stringAt: { x: -0.0624, y: -0.2491 },
+  },
+} satisfies UncleArt;

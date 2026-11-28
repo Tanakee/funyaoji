@@ -1,7 +1,7 @@
 // おじさんの部位の画像を、物理の形に合わせて置くための値。PixiJS に依存しない
 import { TORSO_SIZE } from "./body.ts";
 
-export const EXPRESSIONS = ["normal", "fell"] as const;
+export const EXPRESSIONS = ["normal", "strain", "goal", "fell"] as const;
 export type Expression = (typeof EXPRESSIONS)[number];
 
 export type ArtSlot = "head" | "torso" | "thigh" | "shin";
@@ -20,6 +20,8 @@ interface Size {
 export interface PartImage {
   /** 画像の URL。new URL("./x.png", import.meta.url).href で書く */
   src: string;
+  /** 色を掛けない線の画像の URL。src と同じ大きさ・置き方で上に重ねる */
+  lines?: string;
   /** 画像の幅（m） */
   width: number;
   /** 画像の高さ（m）。省くと縦横比を保つ */
@@ -28,6 +30,8 @@ export interface PartImage {
   anchor?: Point;
   /** 部位の座標での基準点（m、上が +y）。省略時は ART_ORIGINS */
   at?: Point;
+  /** 部位の座標での糸の付け所（m、上が +y）。省略時は STRING_ANCHORS */
+  stringAt?: Point;
   /** 反時計回りの角度（rad） */
   rotation?: number;
 }
