@@ -45,7 +45,7 @@ export class JumpFilter {
   }
 }
 
-/** 最後に読めた角度。まだ読めていなければ undefined。ゲージが毎フレーム読む */
+/** 最後に読めた角度。まだ読めていなければ undefined。ゲージと糸が毎フレーム読む */
 let latest: number | undefined;
 let filter = new JumpFilter();
 export function latestAngle(): number | undefined {
@@ -72,18 +72,66 @@ export function startReadingTilt(): () => void {
   };
 }
 
-/** 傾きの読み取りの許可を求める。要らない環境（Android など）は許可済みとして扱う。タップの中で呼ぶこと */
-export async function requestTiltPermission(): Promise<boolean> {
+function getTiltPermissionRequest() {
   const Orientation = globalThis.DeviceOrientationEvent as
     | (typeof DeviceOrientationEvent & { requestPermission?: () => Promise<PermissionState> })
     | undefined;
-  if (typeof Orientation?.requestPermission !== "function") return true;
+  return typeof Orientation?.requestPermission === "function"
+    ? Orientation.requestPermission.bind(Orientation)
+    : undefined;
+}
+
+/** 傾きを読む前に、許可の確認が出る環境か（iOS の Safari など、requestPermission がある） */
+export function needsTiltPermission(): boolean {
+  return getTiltPermissionRequest() !== undefined;
+}
+
+/** 傾きの読み取りの許可を求める。要らない環境（Android など）は許可済みとして扱う。タップの中で呼ぶこと */
+export async function requestTiltPermission(): Promise<boolean> {
+  const requestPermission = getTiltPermissionRequest();
+  if (requestPermission === undefined) return true;
   try {
-    return (await Orientation.requestPermission()) === "granted";
+    return (await requestPermission()) === "granted";
   } catch {
     // HTTPS でないときや、タップの外で呼んだときに投げる
     return false;
   }
+}
+
+/**
+ * 傾きが届くかを待つ時間。スマホは許可のあとすぐ（数十ms で）毎秒60回ほど届き始める。
+ * PC のブラウザは、値が null のイベントを1回送るか、何も送らない
+ */
+export const TILT_CHECK_TIMEOUT_MS = 2_000;
+
+/**
+ * 読める傾き（beta が数）が届けば true、timeoutMs のうちに届かなければ false。
+ * 傾きを読み取れない端末を、ルームにつなぐ前に見分ける。許可のあとに呼ぶこと。
+ * 裏に回ったページには傾きが届かないので、表に出ているあいだだけ数え、表に戻ったら数え直す
+ */
+export function waitForTilt(timeoutMs = TILT_CHECK_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (supported: boolean) => {
+      clearTimeout(timer);
+      window.removeEventListener("deviceorientation", onEvent);
+      document.removeEventListener("visibilitychange", restart);
+      resolve(supported);
+    };
+    const onEvent = (event: DeviceOrientationEvent) => {
+      if (toAngle(event.beta) !== undefined) finish(true);
+    };
+    const restart = () => {
+      clearTimeout(timer);
+      timer =
+        document.visibilityState === "visible"
+          ? setTimeout(() => finish(false), timeoutMs)
+          : undefined;
+    };
+    window.addEventListener("deviceorientation", onEvent);
+    document.addEventListener("visibilitychange", restart);
+    restart();
+  });
 }
 
 /**

@@ -1,14 +1,26 @@
 // スマホのページの状態。React の外に置く、純粋な関数だけ
 import type { ConnectionState, PhoneReceived } from "../net/client.ts";
+import { MAX_DELAY_MS, type CountdownKind } from "../shared/countdown.ts";
 import { isRoomCode, normalizeRoomCode } from "../shared/room.ts";
-import type { Joint, PhaseMessage, PlayResult, RejectedMessage } from "../shared/messages.ts";
+import {
+  ROOM_CLOSED_CODE,
+  LEFT_CODE,
+  type Joint,
+  type PhaseMessage,
+  type PlayResult,
+} from "../shared/messages.ts";
 
-export type RejectReason = RejectedMessage["reason"];
+export interface PhoneCountdown {
+  kind: CountdownKind;
+  durationMs: number;
+  /** スマホの performance.now() で数えた開始時刻 */
+  endsAt: number;
+}
 
 /** ルームの進行。サーバーが phase を送らないうちは lobby とみなす */
 export type RoomPhase =
-  | { kind: "lobby" }
-  | { kind: "playing" }
+  | { kind: "lobby"; howto?: { ready: readonly Joint[] } }
+  | { kind: "playing"; countdown?: PhoneCountdown }
   | { kind: "result"; result: PlayResult };
 
 /** ページが取りうる状態は、この中のどれか1つだけ */
@@ -19,6 +31,10 @@ export type PhoneState =
   | { kind: "ready" }
   /** 傾きの読み取りの許可を求めている（iOS） */
   | { kind: "asking-permission" }
+  /** 許可のあと、傾きが届くかを確かめている。届かない端末は、ルームにつながずに断る */
+  | { kind: "checking-tilt" }
+  /** 傾きを読み取れない端末。ルームにはつないでいない */
+  | { kind: "unsupported" }
   /**
    * 許可されなかった。iOS は一度断ると Safari を開いているあいだ覚えていて、
    * もう一度求めても許可の画面を出さずにすぐ断るので、ページからはやり直せない。Safari を開き直してもらう
@@ -26,30 +42,58 @@ export type PhoneState =
   | { kind: "permission-denied" }
   /** つないでいる。joined か rejected を待つ */
   | { kind: "connecting" }
+  /** 満員かプレイ中。席が空くまで自動でつなぎ直す */
+  | { kind: "waiting" }
   | {
       kind: "joined";
       joint: Joint;
       /** 接続中のスマホの数 */
       count: number;
       phase: RoomPhase;
+      /** 「抜ける」を押して、サーバーの受け付け（left）を待っている。つなぎ直しても残す */
+      leaving: boolean;
+      /** 遊び方の間に、このスマホで準備OK を押した。スクリーンの返事（howto の ready）を待たずに表示を変える */
+      readyPressed: boolean;
       /** 自分の関節の入力がスクリーンに届いている（プレイ中だけ意味がある） */
       active: boolean;
-      /** reconnecting のあいだも、関節などの表示は残す */
-      link: "open" | "reconnecting";
+      /**
+       * 切れてから、つなぎ直して joined を受け取るまでは reconnecting。
+       * トランスポートが開いただけでは、まだ参加できていない（断られることもある）ので open にしない。
+       * joined のあと、room を受け取るまでは rejoining。サーバーは joined → phase（あれば）→ howto（あれば）→ room の順に送るので、
+       * room が届けばルームの状態はそろっている。
+       * reconnecting と rejoining のあいだも、関節などの表示は残す
+       */
+      link: "open" | "reconnecting" | "rejoining";
+      /** つなぎ直しの残り秒数を数え始めた時刻（ミリ秒）。open のあいだは undefined */
+      reconnectingSince: number | undefined;
     }
-  /** 断られた。playing のときだけ、自動でつなぎ直している */
-  | { kind: "rejected"; reason: RejectReason }
+  /** ルームが無いので、つなぎ直さない */
+  | { kind: "rejected"; reason: "no-room" }
   /** 閉じた。もうつなぎ直さない。replaced は別のタブに置き換えられたとき */
-  | { kind: "closed"; replaced: boolean };
+  | { kind: "closed"; replaced: boolean }
+  | { kind: "ended"; reason: "left" | "room-closed"; joint?: Joint };
 
 export type PhoneEvent =
   | { type: "tap-join" }
+  | { type: "cancel-wait" }
+  | { type: "tap-leave" }
+  | { type: "tap-ready" }
   | { type: "permission"; granted: boolean }
-  | { type: "connection"; state: ConnectionState }
-  | { type: "message"; message: PhoneReceived };
+  | { type: "tilt-check"; supported: boolean }
+  /** at は、接続の状態が変わった時刻（ミリ秒） */
+  | { type: "connection"; state: ConnectionState; at: number }
+  | { type: "message"; message: PhoneReceived; at: number };
 
 /** サーバーが、同じ ID の新しい接続に置き換えて閉じたときの close コード（docs/api.md） */
 const REPLACED = 4000;
+
+/** サーバーが、切れたスマホの関節を取っておく時間（docs/api.md の「スマホの ID と関節の予約」） */
+export const RECONNECT_GRACE_MS = 60_000;
+
+/** つなぎ直しの残り秒数。切り上げて、0 より下にはしない */
+export function reconnectRemainingSeconds(since: number, now: number): number {
+  return Math.max(0, Math.ceil((since + RECONNECT_GRACE_MS - now) / 1000));
+}
 
 /** ?room= のルームコード。無い・形が違うときは undefined */
 export function parseRoom(search: string): string | undefined {
@@ -63,42 +107,84 @@ export function initialState(room: string | undefined): PhoneState {
   return room === undefined ? { kind: "invalid-room" } : { kind: "ready" };
 }
 
+export function isHowtoReady(state: Extract<PhoneState, { kind: "joined" }>): boolean {
+  return (
+    state.phase.kind === "lobby" &&
+    state.phase.howto !== undefined &&
+    (state.readyPressed || state.phase.howto.ready.includes(state.joint))
+  );
+}
+
 export function reduce(state: PhoneState, event: PhoneEvent): PhoneState {
   switch (event.type) {
     case "tap-join":
       return state.kind === "ready" ? { kind: "asking-permission" } : state;
+    case "cancel-wait":
+      // 押したのと同時に joined が届いて、先に反映されることがある。押した人はやめたいので、それでも参加前に戻す
+      return state.kind === "waiting" || state.kind === "joined" ? { kind: "ready" } : state;
+    case "tap-leave":
+      // 押した直後に phase が変わっても、送る session とずれないよう phase は見ない
+      return state.kind === "joined" && !state.leaving ? { ...state, leaving: true } : state;
+    case "tap-ready":
+      return state.kind === "joined" && state.phase.kind === "lobby" && state.phase.howto
+        ? { ...state, readyPressed: true }
+        : state;
     case "permission":
       if (state.kind !== "asking-permission") return state;
-      return event.granted ? { kind: "connecting" } : { kind: "permission-denied" };
+      return event.granted ? { kind: "checking-tilt" } : { kind: "permission-denied" };
+    case "tilt-check":
+      if (state.kind !== "checking-tilt") return state;
+      return event.supported ? { kind: "connecting" } : { kind: "unsupported" };
     case "connection":
-      return onConnection(state, event.state);
+      return onConnection(state, event.state, event.at);
     case "message":
-      return onMessage(state, event.message);
+      return onMessage(state, event.message, event.at);
   }
 }
 
-function onConnection(state: PhoneState, connection: ConnectionState): PhoneState {
+function onConnection(state: PhoneState, connection: ConnectionState, at: number): PhoneState {
+  if (state.kind === "ended") return state;
   switch (connection.status) {
     case "connecting":
-      return state;
     case "open":
-      return state.kind === "joined" && state.link !== "open" ? { ...state, link: "open" } : state;
+      // 参加し直せたかは joined で分かる
+      return state;
     case "reconnecting":
+      // reconnecting のあいだは、最初に切れた時刻を残す。rejoining で切れたら、サーバーが予約し直すので数え直す
       return state.kind === "joined" && state.link !== "reconnecting"
-        ? { ...state, link: "reconnecting" }
+        ? { ...state, link: "reconnecting", reconnectingSince: at }
         : state;
     case "closed":
+      if (connection.code === ROOM_CLOSED_CODE || connection.code === LEFT_CODE) {
+        return {
+          kind: "ended",
+          reason: connection.code === LEFT_CODE ? "left" : "room-closed",
+          joint: state.kind === "joined" ? state.joint : undefined,
+        };
+      }
+      // つなぎ直しを諦めるころには、サーバーの予約も切れている。抜けたものとして扱う
+      if (state.kind === "joined" && state.leaving) {
+        return { kind: "ended", reason: "left", joint: state.joint };
+      }
       // 断られたあとに閉じるので、断った理由を残す
       if (state.kind === "rejected" || state.kind === "invalid-room") return state;
-      if (state.kind === "joined" || state.kind === "connecting") {
+      if (state.kind === "joined" || state.kind === "connecting" || state.kind === "waiting") {
         return { kind: "closed", replaced: connection.code === REPLACED };
       }
       return state;
   }
 }
 
-function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
+function onMessage(state: PhoneState, message: PhoneReceived, at: number): PhoneState {
+  if (state.kind === "ended") return state;
   switch (message.type) {
+    case "room-closed":
+    case "left":
+      return {
+        kind: "ended",
+        reason: message.type,
+        joint: state.kind === "joined" ? state.joint : undefined,
+      };
     case "joined":
       if (state.kind === "joined") {
         // つなぎ直したとき。phase はこのあと届くので、届かなければロビーに戻す
@@ -106,31 +192,69 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
           ...state,
           joint: message.joint,
           phase: { kind: "lobby" },
+          readyPressed: state.joint === message.joint && state.readyPressed,
           active: false,
-          link: "open",
+          link: state.link === "open" ? "open" : "rejoining",
         };
       }
-      if (state.kind === "connecting" || state.kind === "rejected") {
+      if (state.kind === "connecting" || state.kind === "rejected" || state.kind === "waiting") {
         return {
           kind: "joined",
           joint: message.joint,
           count: 1,
           phase: { kind: "lobby" },
+          leaving: false,
+          readyPressed: false,
           active: false,
           link: "open",
+          reconnectingSince: undefined,
         };
       }
       return state;
     case "rejected":
+      if (state.kind === "joined" && state.leaving) {
+        return { kind: "ended", reason: "left", joint: state.joint };
+      }
       // 参加していたスマホも、つなぎ直したときに断られることがある（60秒を過ぎて、次のプレイが始まっていたなど）
-      return state.kind === "connecting" || state.kind === "rejected" || state.kind === "joined"
-        ? { kind: "rejected", reason: message.reason }
-        : state;
+      if (
+        state.kind !== "connecting" &&
+        state.kind !== "joined" &&
+        state.kind !== "rejected" &&
+        state.kind !== "waiting"
+      ) {
+        return state;
+      }
+      if (message.reason === "no-room") {
+        return state.kind === "rejected" ? state : { kind: "rejected", reason: message.reason };
+      }
+      return state.kind === "waiting" ? state : { kind: "waiting" };
     case "room":
-      return state.kind === "joined" ? { ...state, count: message.joints.length } : state;
+      if (state.kind !== "joined") return state;
+      return state.link === "rejoining"
+        ? {
+            ...state,
+            count: message.joints.length,
+            readyPressed:
+              state.phase.kind === "lobby" && state.phase.howto !== undefined && state.readyPressed,
+            link: "open",
+            reconnectingSince: undefined,
+          }
+        : { ...state, count: message.joints.length };
     case "phase":
       return state.kind === "joined"
-        ? { ...state, phase: toRoomPhase(message), active: false }
+        ? {
+            ...state,
+            phase: toRoomPhase(message, state.joint, at),
+            active: false,
+            // つなぎ直したときにサーバーが送り直す lobby では消さない。遊び方の間なら、このあと howto が届く
+            readyPressed:
+              state.link === "rejoining" && message.phase === "lobby" ? state.readyPressed : false,
+          }
+        : state;
+    case "howto":
+      // カウントダウンや結果のあとに遅れて届いたものでは、遊び方の画面に戻さない
+      return state.kind === "joined" && state.phase.kind === "lobby"
+        ? { ...state, phase: { kind: "lobby", howto: { ready: message.ready } } }
         : state;
     case "status": {
       if (state.kind !== "joined") return state;
@@ -140,12 +264,19 @@ function onMessage(state: PhoneState, message: PhoneReceived): PhoneState {
   }
 }
 
-function toRoomPhase(message: PhaseMessage): RoomPhase {
+function toRoomPhase(message: PhaseMessage, joint: Joint, at: number): RoomPhase {
   switch (message.phase) {
     case "lobby":
       return { kind: "lobby" };
-    case "playing":
-      return { kind: "playing" };
+    case "playing": {
+      if (message.countdown === undefined) return { kind: "playing" };
+      const { kind, durationMs, remainingMs, delayMs } = message.countdown;
+      const delay = Math.min(MAX_DELAY_MS, Math.max(0, delayMs[joint] ?? 0));
+      const endsAt = at + remainingMs - delay;
+      return endsAt > at
+        ? { kind: "playing", countdown: { kind, durationMs, endsAt } }
+        : { kind: "playing" };
+    }
     case "result":
       return { kind: "result", result: message.result };
   }

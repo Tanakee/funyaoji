@@ -25,6 +25,14 @@ function acceptedBy(message: unknown): Direction[] {
 
 // docs/api.md の例と、フィールドの表から作った例。期待する送信方向は、メッセージの表（送信元 → 送信先）から取る
 const accepted: { name: string; message: unknown; directions: Direction[] }[] = [
+  { name: "close-room", message: { type: "close-room" }, directions: ["ScreenToServerMessage"] },
+  { name: "leave", message: { type: "leave" }, directions: ["PhoneToServerMessage"] },
+  { name: "left", message: { type: "left" }, directions: ["ServerToPhoneMessage"] },
+  {
+    name: "room-closed",
+    message: { type: "room-closed" },
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage"],
+  },
   {
     name: "joined",
     message: { type: "joined", joint: "rightHip" },
@@ -78,6 +86,41 @@ const accepted: { name: string; message: unknown; directions: Direction[] }[] = 
     name: "phase: result (disconnected)",
     message: { type: "phase", phase: "result", result: { outcome: "disconnected", distanceM: 3 } },
     directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
+  },
+  {
+    name: "howto",
+    message: { type: "howto", ready: ["rightHip"] },
+    directions: ["ServerToPhoneMessage", "ServerToScreenMessage", "ScreenToServerMessage"],
+  },
+  {
+    name: "ready (スマホの送信)",
+    message: { type: "ready" },
+    directions: ["PhoneToServerMessage"],
+  },
+  {
+    name: "ready (スクリーンの受信)",
+    message: { type: "ready", joint: "rightHip" },
+    directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
+  },
+  {
+    name: "start (スマホの送信)",
+    message: { type: "start" },
+    directions: ["PhoneToServerMessage"],
+  },
+  {
+    name: "start (スクリーンの受信)",
+    message: { type: "start", joint: "rightHip" },
+    directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
+  },
+  {
+    name: "retry (スマホの送信)",
+    message: { type: "retry" },
+    directions: ["PhoneToServerMessage"],
+  },
+  {
+    name: "retry (スクリーンの受信)",
+    message: { type: "retry", joint: "rightHip" },
+    directions: ["ServerToScreenMessage", "PhoneToServerMessage"],
   },
   {
     name: "tilt (スマホの送信)",
@@ -154,6 +197,7 @@ const rejected: { name: string; message: unknown }[] = [
   { name: "未知の joint (room)", message: { type: "room", roomCode: "K7Q2", joints: ["head"] } },
   { name: "未知の joint (ping)", message: { type: "ping", id: 7, joint: "head" } },
   { name: "未知の joint (status)", message: { type: "status", active: ["head"] } },
+  { name: "未知の joint (howto)", message: { type: "howto", ready: ["rightHip", "head"] } },
   { name: "未知の reason", message: { type: "rejected", reason: "banned" } },
   { name: "phase が未知", message: { type: "phase", phase: "paused" } },
   { name: "playing に mode が無い", message: { type: "phase", phase: "playing" } },
@@ -175,6 +219,52 @@ const rejected: { name: string; message: unknown }[] = [
 ];
 
 describe("メッセージのスキーマ", () => {
+  test("抜けるで空いた関節を room に付けられる", () => {
+    const room = { type: "room", roomCode: "K7Q2", joints: ["rightHip"], vacated: "leftHip" };
+    expect(v.parse(ServerToPhoneMessage, room)).toEqual(room);
+    expect(v.parse(ServerToScreenMessage, room)).toEqual(room);
+    expect(acceptedBy({ ...room, vacated: "head" })).toEqual([]);
+  });
+
+  const playing = { type: "phase", phase: "playing", mode: "10m" };
+  const countdown = {
+    kind: "count",
+    durationMs: 3_000,
+    remainingMs: 2_192,
+    delayMs: { rightHip: 42, leftKnee: 130 },
+  };
+
+  test.each([countdown, { kind: "readyGo", durationMs: 1_500, remainingMs: 0, delayMs: {} }])(
+    "phase の countdown をスクリーンとサーバーとスマホが受け取れる",
+    (value) => {
+      const message = { ...playing, countdown: value };
+      expect(acceptedBy(message)).toEqual([
+        "ServerToPhoneMessage",
+        "ServerToScreenMessage",
+        "ScreenToServerMessage",
+      ]);
+      expect(v.parse(ScreenToServerMessage, message)).toEqual(message);
+    },
+  );
+
+  test.each([
+    null,
+    { ...countdown, kind: "unknown" },
+    { ...countdown, durationMs: undefined },
+    { ...countdown, durationMs: -1 },
+    { ...countdown, durationMs: Infinity },
+    { ...countdown, remainingMs: 10_001 },
+    { ...countdown, remainingMs: -1 },
+    { ...countdown, remainingMs: NaN },
+    { ...countdown, delayMs: undefined },
+    { ...countdown, delayMs: { head: 42 } },
+    { ...countdown, delayMs: { rightHip: -1 } },
+    { ...countdown, delayMs: { rightHip: 0.5 } },
+    { ...countdown, delayMs: { rightHip: Infinity } },
+  ])("形の違う countdown はどの方向でも拒否する (%j)", (value) => {
+    expect(acceptedBy({ ...playing, countdown: value })).toEqual([]);
+  });
+
   test("関節の順番は参加順の割り当て", () => {
     expect(JOINTS).toEqual(["rightHip", "leftHip", "rightKnee", "leftKnee"]);
   });
@@ -206,6 +296,7 @@ describe("メッセージのスキーマ", () => {
   test.each([
     { name: "tilt", message: { type: "tilt", seq: 1, angle: 0, joint: "head" } },
     { name: "pong", message: { type: "pong", id: 7, joint: "head" } },
+    { name: "ready", message: { type: "ready", joint: "head" } },
   ])("スクリーンが受信する $name は、未知の joint を拒否する", (c) => {
     expect(v.safeParse(ServerToScreenMessage, c.message).success).toBe(false);
   });
@@ -225,5 +316,9 @@ describe("メッセージのスキーマ", () => {
       joint: "leftKnee",
     });
     expect(result).toEqual({ type: "tilt", seq: 1, angle: 10 });
+  });
+
+  test.each(["start", "retry", "ready"])("スマホの %s に付いた joint は捨てる", (type) => {
+    expect(v.parse(PhoneToServerMessage, { type, joint: "leftKnee" })).toEqual({ type });
   });
 });

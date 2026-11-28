@@ -1,4 +1,5 @@
 import type { ConnectionState } from "../../net/client.ts";
+import { TEAM_NAME_MAX_LENGTH } from "../../shared/api.ts";
 import { JOINTS } from "../../shared/messages.ts";
 import { isFull } from "./flow.ts";
 import { QrCode } from "./QrCode.tsx";
@@ -7,6 +8,7 @@ import { canOperate, type RoomState, type ScreenSession, type ScreenView } from 
 export function Lobby({ session, view }: { session: ScreenSession; view: ScreenView }) {
   const { room, joints } = view;
   const full = isFull(joints);
+  const ready = full && view.teamName !== undefined;
   const notice = noticeText(view);
   return (
     <main className="overlay lobby">
@@ -33,9 +35,15 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
             <strong>{joints.length}</strong> / {JOINTS.length} 人
           </h1>
           <div className="lobby-start">
-            <p className={full ? "start-row start-row--ready" : "start-row"}>
+            <p className={ready ? "start-row start-row--ready" : "start-row"}>
               <kbd>Space</kbd>
-              <span>{full ? "押して開始" : "4人そろったら、押して開始"}</span>
+              <span>
+                {full
+                  ? ready
+                    ? "押して開始"
+                    : "チーム名を入れてから開始"
+                  : "4人そろったら、押して開始"}
+              </span>
             </p>
             <p className="start-row start-row--debug">
               <kbd>Enter</kbd>
@@ -56,6 +64,26 @@ export function Lobby({ session, view }: { session: ScreenSession; view: ScreenV
         </section>
       </div>
 
+      <footer className="lobby-settings">
+        <div className="team-name-field">
+          <label htmlFor="team-name">チーム名</label>
+          <input
+            id="team-name"
+            type="text"
+            required
+            value={view.teamNameInput}
+            onChange={(event) => session.setTeamName(event.target.value)}
+            aria-invalid={Boolean(view.teamNameError)}
+            aria-describedby="team-name-message"
+            autoComplete="off"
+            placeholder={`1〜${TEAM_NAME_MAX_LENGTH}文字`}
+          />
+          <p id="team-name-message" role="status">
+            {view.teamNameError ?? `ランキングに使う名前（${TEAM_NAME_MAX_LENGTH}文字まで）`}
+          </p>
+        </div>
+        <span className="lobby-mode">10m モード</span>
+      </footer>
       {notice && <p className="lobby-notice">{notice}</p>}
     </main>
   );
