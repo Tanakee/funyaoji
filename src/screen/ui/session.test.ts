@@ -168,6 +168,7 @@ describe("seatsOf", () => {
     teamNameInput: "",
     teamNameError: undefined,
     teamName: undefined,
+    input: "tilt",
   };
 
   it("ロビーでは空席・入力中・入力なし・予約中の各席に部位名を出す", () => {
@@ -250,6 +251,46 @@ describe("ScreenSession", () => {
     session.dispose();
   });
 
+  it("操作方法はロビーでだけ変えられ、phase でスマホに知らせ、ランキングも分ける", async () => {
+    const session = await open();
+    session.setInputMethod("camera");
+    expect(session.getSnapshot().input).toBe("camera");
+    // phase のすぐあとに status も送り直す
+    expect(sent.filter((m) => m.type === "phase").at(-1)).toEqual({
+      type: "phase",
+      phase: "lobby",
+      input: "camera",
+    });
+    press("Enter");
+    expect(sent.find((m) => m.type === "phase" && m.phase === "playing")).toMatchObject({
+      input: "camera",
+    });
+    // プレイ中は変えられない
+    session.setInputMethod("tilt");
+    expect(session.getSnapshot().input).toBe("camera");
+    await vi.advanceTimersByTimeAsync(3000);
+    game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    expect(submitRanking).toHaveBeenCalledWith(expect.objectContaining({ input: "camera" }));
+    session.dispose();
+  });
+
+  it("つながっていないときに変えた操作方法は、つながったときに送り直す", async () => {
+    const session = await open();
+    connectionOpen = false;
+    handlers.onStateChange?.({ status: "reconnecting", attempt: 1 });
+    session.setInputMethod("camera");
+    expect(sent.some((m) => m.type === "phase")).toBe(false);
+    connectionOpen = true;
+    handlers.onStateChange?.({ status: "open" });
+    expect(sent.filter((m) => m.type === "phase")).toEqual([
+      { type: "phase", phase: "lobby", input: "camera" },
+    ]);
+    // 届いたあとは、つなぎ直しても送らない
+    handlers.onStateChange?.({ status: "open" });
+    expect(sent.filter((m) => m.type === "phase")).toHaveLength(1);
+    session.dispose();
+  });
+
   it("ロビーでゲームができると練習を始め、スマホの傾きを受け取る", async () => {
     const session = await open();
     expect(session.getSnapshot().flow.kind).toBe("lobby");
@@ -290,7 +331,7 @@ describe("ScreenSession", () => {
     press("Space");
     await vi.advanceTimersByTimeAsync(3000);
     room(["leftHip", "rightKnee", "leftKnee"]);
-    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m" });
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m", input: "tilt" });
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     await vi.advanceTimersByTimeAsync(2000);
     expect(inputs().rightHip).toBe(NEUTRAL_INPUTS.rightHip);
@@ -303,7 +344,7 @@ describe("ScreenSession", () => {
     const start = () => handlers.onMessage({ type: "start", joint: "rightHip" });
     const retry = (joint: Joint = "rightHip") => handlers.onMessage({ type: "retry", joint });
     const phases = () => sent.filter((message) => message.type === "phase");
-    const playing = { type: "phase", phase: "playing", mode: "10m" };
+    const playing = { type: "phase", phase: "playing", mode: "10m", input: "tilt" };
 
     it("4人いるロビーで start を受け取ると、一度だけカウントダウンを始める", async () => {
       const session = await open();
@@ -423,6 +464,7 @@ describe("ScreenSession", () => {
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
     expect(submitRanking).toHaveBeenCalledExactlyOnceWith({
       mode: "10m",
+      input: "tilt",
       teamName: "ABC",
       timeMs: 4000,
     });
@@ -729,7 +771,7 @@ describe("ScreenSession", () => {
     game.onEnd({ outcome: "fell", distanceM: 1 });
     connectionOpen = true;
     // つなぎ直すと、サーバーは持っている phase（playing のまま）を送ってくる
-    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m" });
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m", input: "tilt" });
 
     expect(session.getSnapshot().flow.kind).toBe("result");
     expect(sent).toContainEqual({
@@ -841,7 +883,7 @@ describe("ScreenSession", () => {
     await vi.advanceTimersByTimeAsync(3000);
     session.grab("leftHip", true);
     // つなぎ直すと、サーバーが持つ playing が届き、ロビーに戻る。つまみは消え、離したことは届かない
-    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m" });
+    handlers.onMessage({ type: "phase", phase: "playing", mode: "10m", input: "tilt" });
     expect(session.getSnapshot().flow.kind).toBe("lobby");
     press("Enter");
 
@@ -988,6 +1030,7 @@ describe("ScreenSession", () => {
         type: "phase",
         phase: "playing",
         mode: "10m",
+        input: "tilt",
         countdown: {
           kind: "count",
           durationMs: 3_000,
@@ -1000,6 +1043,7 @@ describe("ScreenSession", () => {
         type: "phase",
         phase: "playing",
         mode: "10m",
+        input: "tilt",
         countdown: { kind: "readyGo", durationMs: 1_500, remainingMs: 1_500, delayMs: {} },
       },
     ]);

@@ -7,10 +7,20 @@ export interface JointLabel extends JointDisplay {
   hip: boolean;
   /** 傾け方の1文 */
   tiltHint: string;
+  /** カメラで遊ぶときの、指の動かし方の1文 */
+  cameraHint: string;
 }
 
-const HIP = { hip: true, tiltHint: "立てると、脚が前に出る" };
-const KNEE = { hip: false, tiltHint: "立てると、ひざが曲がる" };
+const HIP = {
+  hip: true,
+  tiltHint: "立てると、脚が前に出る",
+  cameraHint: "人差し指を曲げると、脚が前に出る",
+};
+const KNEE = {
+  hip: false,
+  tiltHint: "立てると、ひざが曲がる",
+  cameraHint: "人差し指を曲げると、ひざが曲がる",
+};
 
 export const JOINT_LABELS: Record<Joint, JointLabel> = {
   rightHip: { ...JOINT_DISPLAY.rightHip, ...HIP },

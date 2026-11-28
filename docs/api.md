@@ -137,11 +137,12 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `mode` | `string` | モード。現在は `10m` のみ |
+| `input` | `string` | 操作方法。`tilt`（傾き）か `camera`（カメラ）。ランキングは、モードと操作方法の組ごとに分かれる |
 | `teamName` | `string` | チーム名。下の決まりで整えて保存する |
 | `timeMs` | `number` | ゴールまでの時間（ミリ秒）。`phase` の `result.timeMs` をそのまま送る |
 
 ```json
-{ "mode": "10m", "teamName": "ふにゃーず", "timeMs": 32500 }
+{ "mode": "10m", "input": "tilt", "teamName": "ふにゃーず", "timeMs": 32500 }
 ```
 
 - チーム名は、NFKC で正規化し（全角の英数字と空白を半角にする）、前後の空白を除いてから調べる。1〜10文字（絵文字や濁点の付いた文字も1文字と数える）。改行・タブなどの制御文字と、文字の向きを変える文字や幅のない空白などの書式の文字（Unicode の `Cf`）は使えない。ただし絵文字をつなぐ ZWJ（U+200D）は使える。空白と見えない文字（ZWJ や異体字セレクタなど）だけの名前は断る。整える前で100文字（UTF-16 のコード単位で数える）を超えるものと、孤立したサロゲートを含むものも断る
@@ -159,12 +160,12 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 }
 ```
 
-### GET /api/rankings?mode=&lt;モード&gt;
+### GET /api/rankings?mode=&lt;モード&gt;&input=&lt;操作方法&gt;
 
-ランキングの上位10件を、速い順に返す。型定義は `src/shared/api.ts` の `RankingsResponse`。`mode` が無いか `10m` でなければ、400 を返す。
+ランキングの上位10件を、速い順に返す。型定義は `src/shared/api.ts` の `RankingsResponse`。`mode` が無いか `10m` でないとき、`input` が無いか `tilt`・`camera` でないときは、400 を返す。
 
 ```json
-{ "mode": "10m", "rankings": [{ "rank": 1, "teamName": "FUNYA", "timeMs": 28000, "createdAt": 1795771597510 }] }
+{ "mode": "10m", "input": "tilt", "rankings": [{ "rank": 1, "teamName": "FUNYA", "timeMs": 28000, "createdAt": 1795771597510 }] }
 ```
 
 | フィールド | 型 | 説明 |
@@ -175,11 +176,12 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | `createdAt` | `number` | 保存した時刻（Unix 時間のミリ秒） |
 
 - 同じタイムは、先に保存したものを上にする。順位は並べた順の番号で、同じタイムでも同じ順位にはしない
-- モードごとに1,000件まで残す。超えたら、いちばん遅いもの（同じタイムなら後に保存したもの）から消す
+- モードと操作方法の組ごとに1,000件まで残す。超えたら、いちばん遅いもの（同じタイムなら後に保存したもの）から消す
 - 1,000位より下は残らない。POST が `rank` 1001 以上を返した記録は、保存した直後に消えている
 - データはプレビューと本番で分かれる（[設計](design.md) の「ランキング」）
 - 同じチーム名でも、別の記録として保存する（チームごとにまとめない）。残す件数の上限は同じく効く
 - 自動ではリセットしない。発表の直前に、シーズン（Durable Object の名前）を変えて空にする（[設計](design.md) の「ランキング」）
+- 操作方法を分ける前に保存した記録は、傾き（`tilt`）の記録として扱う
 
 ## メッセージ
 
@@ -257,6 +259,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 |---|---|---|
 | `phase` | `string` | `lobby`：ロビー。`playing`：カウントダウンかプレイ中。`result`：結果 |
 | `mode` | `string` | `playing` のときだけ。現在は `10m` のみ |
+| `input` | `string` | `lobby` と `playing` のとき。操作方法。`tilt`（傾き）か `camera`（カメラ）。スマホは受け取ると、その方法で読み始める（[ゲームの進行](game.md)の「操作方法」） |
 | `countdown` | `object` | `playing` のときだけ。無ければプレイ中 |
 | `countdown.kind` | `string` | `count` は「3・2・1、GO!」、`readyGo` は「よーい、ドン！」 |
 | `countdown.durationMs` | `number` | カウントダウンの長さ。`count` は3000ms、`readyGo` は1500ms |
@@ -267,13 +270,15 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | `result.timeMs` | `number` | ゴールまでの時間（ミリ秒）。`goal` のときだけ |
 
 ```json
-{ "type": "phase", "phase": "playing", "mode": "10m",
+{ "type": "phase", "phase": "lobby", "input": "camera" }
+{ "type": "phase", "phase": "playing", "mode": "10m", "input": "tilt",
   "countdown": { "kind": "count", "durationMs": 3000, "remainingMs": 3130,
                  "delayMs": { "rightHip": 42, "leftKnee": 130 } } }
-{ "type": "phase", "phase": "playing", "mode": "10m" }
+{ "type": "phase", "phase": "playing", "mode": "10m", "input": "tilt" }
 { "type": "phase", "phase": "result", "result": { "outcome": "goal", "distanceM": 10, "timeMs": 32500 } }
 ```
 
+- スクリーンは、ロビーで操作方法を変えたときにも `phase`（`lobby`）を送る。送れなかったら、つながったときにロビーのままなら送り直す。サーバーは保持し、あとから参加したスマホにも届く。サーバーが `phase` を保持していない（ルームを作った直後）あいだ、スマホは傾きで読む
 - スクリーンはカウントダウンを始めるとき、`delayMs` に、その時点で分かっている `ping`・`pong` の片道の遅延を入れる。中央値を使い、無ければ直近の値を使う
 - スクリーンは、`delayMs` のいちばん大きい値（1000ms まで）だけ待ってから、最初の表示（「3」「よーい」）を出す。`remainingMs` は、その待つ時間に `durationMs` を足した値。待たないと、遅いスマホは `phase` が届くまで最初の表示を出せず、そのぶん遅れる
 - `durationMs` と `remainingMs` は、どちらも0〜10000の有限の数を受け付ける
@@ -367,7 +372,7 @@ wss://<ホスト名>/api/rooms/K7Q2/ws?role=phone&client=3f2b9c1e-8a4d-4e6f-9b0a
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `seq` | `number` | シーケンス番号。受信側は受信済みの番号より小さいものを破棄する |
-| `angle` | `number` | 傾きの角度（度）。0 が水平、90 が手前に立てた状態 |
+| `angle` | `number` | 傾きの角度（度）。0 が水平、90 が手前に立てた状態。カメラで遊ぶときは、人差し指の曲げを同じ 0〜90 に直した値（伸ばすと 0、曲げきると 90） |
 | `joint` | `Joint` | サーバーがスクリーンに中継するときに付与する。スマホは送らない |
 
 ```json
