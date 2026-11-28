@@ -4,6 +4,7 @@ import type { Expression } from "./art.ts";
 import type { Pose } from "./body.ts";
 import type { Scene } from "./camera.ts";
 import { UncleExpression } from "./expression.ts";
+import { modeSimOptions } from "./modes.ts";
 import { Sim, initPhysics } from "./sim.ts";
 import { SPEECH, SpeechPicker, speechTrigger } from "./speech.ts";
 import type { Game, GameOptions } from "./types.ts";
@@ -117,7 +118,7 @@ export async function createGame({
     reset(nextMode) {
       mode = nextMode;
       sim.free();
-      sim = new Sim({ hard: mode === "hard" });
+      sim = new Sim(modeSimOptions(mode));
       practicing = false;
       reported = false;
       stopped = false;
@@ -133,7 +134,7 @@ export async function createGame({
     practice(nextMode) {
       mode = nextMode;
       sim.free();
-      sim = new Sim({ practice: true, hard: mode === "hard" });
+      sim = new Sim({ ...modeSimOptions(mode), practice: true });
       practicing = true;
       reported = false;
       stopped = false;
