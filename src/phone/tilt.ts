@@ -87,6 +87,42 @@ export async function requestTiltPermission(): Promise<boolean> {
 }
 
 /**
+ * 傾きが届くかを待つ時間。スマホは許可のあとすぐ（数十ms で）毎秒60回ほど届き始める。
+ * PC のブラウザは、値が null のイベントを1回送るか、何も送らない
+ */
+export const TILT_CHECK_TIMEOUT_MS = 2_000;
+
+/**
+ * 読める傾き（beta が数）が届けば true、timeoutMs のうちに届かなければ false。
+ * 傾きを読み取れない端末を、ルームにつなぐ前に見分ける。許可のあとに呼ぶこと。
+ * 裏に回ったページには傾きが届かないので、表に出ているあいだだけ数え、表に戻ったら数え直す
+ */
+export function waitForTilt(timeoutMs = TILT_CHECK_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (supported: boolean) => {
+      clearTimeout(timer);
+      window.removeEventListener("deviceorientation", onEvent);
+      document.removeEventListener("visibilitychange", restart);
+      resolve(supported);
+    };
+    const onEvent = (event: DeviceOrientationEvent) => {
+      if (toAngle(event.beta) !== undefined) finish(true);
+    };
+    const restart = () => {
+      clearTimeout(timer);
+      timer =
+        document.visibilityState === "visible"
+          ? setTimeout(() => finish(false), timeoutMs)
+          : undefined;
+    };
+    window.addEventListener("deviceorientation", onEvent);
+    document.addEventListener("visibilitychange", restart);
+    restart();
+  });
+}
+
+/**
  * 開いているあいだ、最新の角度を一定の間隔で送る。
  * 角度が変わらなくても送る。スクリーンは直近0.5秒に tilt を受け取った関節を「入力あり」にする
  */
