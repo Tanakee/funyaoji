@@ -1,4 +1,4 @@
-// モードごとの物理（Sim）の設定の一覧（docs/ml.md の「モードの一覧」）。DOM にも Node にも依存しない。
+// モードごとの設定の一覧（docs/ml.md の「モードの一覧」）。DOM にも Node にも依存しない。
 // 強化学習の道具（学習・物理の指紋・理論値の記録・再生の一致のテスト・CI の学習し直し）は、この一覧を回る。
 // モードを1つ足すと、CI がそのモードの理論値の記録を作り、差し替える PR を出す
 import type { Mode } from "../../shared/messages.ts";
@@ -8,18 +8,27 @@ import type { SimOptions } from "./sim.ts";
 export type ModeSimOptions = Omit<SimOptions, "stepS" | "practice">;
 
 /**
- * モードごとの Sim の設定。キーはゲームのモード（src/shared/messages.ts の MODES）と同じ値。
+ * 1つのモードの設定。今は物理（sim）だけ。
+ * 障害物モードなどで、観測の形・学習の設定・土台の歩き方がモードで変わるときは、ここに足す
+ */
+export interface ModeSettings {
+  /** Sim に渡す設定 */
+  sim: ModeSimOptions;
+}
+
+/**
+ * モードごとの設定。キーはゲームのモード（src/shared/messages.ts の MODES）と同じ値。
  * まだ物理の無いモードは載せない（ハードは物理ができてから足す）
  */
-export const MODE_SIM_OPTIONS = {
-  normal: {},
-} as const satisfies Partial<Record<Mode, ModeSimOptions>>;
+export const MODE_SETTINGS = {
+  normal: { sim: {} },
+} as const satisfies Partial<Record<Mode, ModeSettings>>;
 
 /** 一覧に載っているモード */
-export type SimMode = keyof typeof MODE_SIM_OPTIONS;
+export type SimMode = keyof typeof MODE_SETTINGS;
 
 /** 一覧に載っているモード。並びは一覧の順 */
-export const SIM_MODES = Object.keys(MODE_SIM_OPTIONS) as SimMode[];
+export const SIM_MODES = Object.keys(MODE_SETTINGS) as SimMode[];
 
 /** 省いたときのモード */
 export const DEFAULT_SIM_MODE: SimMode = "normal";
@@ -34,5 +43,6 @@ export function toSimMode(name: string): SimMode {
 
 /** モードの Sim の設定。new Sim({ ...modeSimOptions(mode), stepS }) のように使う */
 export function modeSimOptions(mode: SimMode): ModeSimOptions {
-  return MODE_SIM_OPTIONS[mode];
+  const settings: ModeSettings = MODE_SETTINGS[mode];
+  return settings.sim;
 }
