@@ -1,7 +1,8 @@
 // スクリーンのページの React の外側。通信・入力・ゲームをつなぎ、進行（flow.ts）の遷移に合わせて副作用を起こす。
 // React には、画面を変える値（view）だけを渡す。tilt のたびに state は変えない（docs/design.md の「フロントエンド」）
 import * as v from "valibot";
-import { createRoom } from "../../net/api.ts";
+import { createRoom, submitRanking } from "../../net/api.ts";
+import type { SubmitRankingResponse } from "../../shared/api.ts";
 import { TeamName } from "../../shared/api.ts";
 import {
   connectScreen,
@@ -84,6 +85,9 @@ export interface ScreenView {
   debug: DebugState;
   audio: AudioState;
   /** 入力中のチーム名。正規化前の文字列を保ち、日本語の変換を妨げない */
+  ranking:
+    | { status: "idle" | "loading" | "failed" }
+    | { status: "ready"; data: SubmitRankingResponse };
   teamNameInput: string;
   teamNameError: string | undefined;
   /** ランキング保存側が読める正規化済みの名前。入力が不正なら undefined */
@@ -137,6 +141,7 @@ export class ScreenSession {
     audio: { ready: false, muted: false, unavailable: false },
     recreation: { status: "idle" },
     debug: { enabled: false, autoplay: false },
+    ranking: { status: "idle" },
     teamNameInput: "",
     teamNameError: undefined,
     teamName: undefined,
@@ -709,6 +714,22 @@ export class ScreenSession {
         this.game?.start();
         break;
       case "result":
+        if (next.result.outcome === "goal" && this.view.teamName) {
+          this.update({ ranking: { status: "loading" } });
+          void submitRanking({
+            mode: "10m",
+            teamName: this.view.teamName,
+            timeMs: next.result.timeMs,
+          })
+            .then((data) => {
+              if (this.view.flow === next) this.update({ ranking: { status: "ready", data } });
+            })
+            .catch(() => {
+              if (this.view.flow === next) this.update({ ranking: { status: "failed" } });
+            });
+        } else {
+          this.update({ ranking: { status: "idle" } });
+        }
         clearTimeout(this.countdownTimer);
         if (next.result.outcome === "goal" || next.result.outcome === "fell") {
           this.audio.play(next.result.outcome);

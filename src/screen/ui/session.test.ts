@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { createRoom } from "../../net/api.ts";
+import { createRoom, submitRanking } from "../../net/api.ts";
 import type { ConnectionState, Latency, ScreenReceived, ScreenSent } from "../../net/client.ts";
 import { GO_DISPLAY_MS } from "../../shared/countdown.ts";
 import type { Joint } from "../../shared/messages.ts";
@@ -31,7 +31,10 @@ let keyboardControls: (joint: Joint) => boolean = () => false;
 let nextFrame: FrameRequestCallback | undefined;
 let frameTime = 0;
 
-vi.mock("../../net/api.ts", () => ({ createRoom: vi.fn(async () => "ABCD") }));
+vi.mock("../../net/api.ts", () => ({
+  createRoom: vi.fn(async () => "ABCD"),
+  submitRanking: vi.fn(),
+}));
 vi.mock("../../net/client.ts", () => ({
   connectScreen: (roomCode: string, h: typeof handlers) => {
     handlers = h;
@@ -85,6 +88,12 @@ beforeEach(() => {
   sent.length = 0;
   connections.length = 0;
   vi.mocked(createRoom).mockReset().mockResolvedValue("ABCD");
+  vi.mocked(submitRanking)
+    .mockReset()
+    .mockResolvedValue({
+      entry: { rank: 1, teamName: "テスト", timeMs: 4000, createdAt: 1 },
+      rankings: [],
+    });
   calls.length = 0;
   connectionOpen = true;
   for (const type of Object.keys(listeners)) delete listeners[type];
@@ -163,6 +172,11 @@ describe("ScreenSession", () => {
     await vi.advanceTimersByTimeAsync(3000);
     session.setTeamName("プレイ中の変更");
     game.onEnd({ outcome: "goal", distanceM: 10, timeMs: 4000 });
+    expect(submitRanking).toHaveBeenCalledExactlyOnceWith({
+      mode: "10m",
+      teamName: "ABC",
+      timeMs: 4000,
+    });
     session.setTeamName("結果での変更");
     expect(session.getSnapshot().teamName).toBe("ABC");
     press("KeyR");
